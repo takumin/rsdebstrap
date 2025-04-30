@@ -1,0 +1,15 @@
+[package]
+name = "rsdebstrap"
+description = "declarative mmdebstrap runner"
+license = "Apache-2.0"
+version = "0.1.0"
+edition = "2024"
+readme = "README.md"
+repository = "https://github.com/takumin/rsdebstrap"
+categories = ["command-line-utilities"]
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.37", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_yaml = "0.9.34"

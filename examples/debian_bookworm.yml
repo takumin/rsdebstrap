@@ -1,0 +1,13 @@
+---
+dir: /tmp/debian-bookworm-server-amd64
+mmdebstrap:
+  suite: bookworm
+  target: rootfs.tar.zst
+  components:
+  - main
+  - contrib
+  architectures:
+  - amd64
+  include:
+  - curl
+  - ca-certificates

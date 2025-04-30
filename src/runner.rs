@@ -1,0 +1,52 @@
+use crate::cli::ApplyArgs;
+use crate::config::Profile;
+use anyhow::{Context, Result};
+use std::ffi::OsString;
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+
+pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
+    let mut cmd = Command::new("mmdebstrap");
+
+    let mut cmd_args = Vec::<OsString>::new();
+
+    // suite
+    cmd_args.push(profile.mmdebstrap.suite.clone().into());
+
+    // target
+    let target = PathBuf::from(profile.dir.clone()).join(profile.mmdebstrap.target.clone());
+    cmd_args.push(target.clone().into_os_string());
+
+    // debug print
+    let display = format!(
+        "mmdebstrap {}",
+        cmd_args
+            .iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    if args.debug || args.dry_run {
+        println!("[DEBUG] would run: {}", display);
+    }
+
+    if args.dry_run {
+        return Ok(());
+    }
+
+    let dir = PathBuf::from(profile.dir.clone());
+    if !dir.exists() {
+        fs::create_dir_all(dir).expect("failed to create directory");
+    }
+
+    let status = cmd
+        .args(&cmd_args)
+        .status()
+        .with_context(|| "failed to start mmdebstrap")?;
+    if !status.success() {
+        anyhow::bail!("mmdebstrap exited with non-zero status: {}", status);
+    }
+
+    Ok(())
+}
