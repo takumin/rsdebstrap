@@ -3,6 +3,7 @@ dir: /tmp/debian-bookworm-server-amd64
 mmdebstrap:
   suite: bookworm
   target: rootfs.tar.zst
+  variant: apt
   components:
   - main
   - contrib

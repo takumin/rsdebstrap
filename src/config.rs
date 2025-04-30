@@ -13,6 +13,14 @@ pub struct Profile {
 pub struct Mmdebstrap {
     pub suite: String,
     pub target: String,
+    #[serde(default)]
+    pub variant: String,
+    #[serde(default)]
+    pub components: Vec<String>,
+    #[serde(default)]
+    pub architectures: Vec<String>,
+    #[serde(default)]
+    pub include: Vec<String>,
 }
 
 pub fn load_profile(path: &str) -> Result<Profile> {
