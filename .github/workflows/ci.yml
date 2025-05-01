@@ -50,7 +50,7 @@ jobs:
     - name: Build release
       run: cargo zigbuild --release --verbose --target=${{ matrix.target }}.2.17
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: rsdebstrap-${{ matrix.target }}
         path: target/${{ matrix.target }}/release/rsdebstrap
