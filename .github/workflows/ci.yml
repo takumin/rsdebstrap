@@ -49,3 +49,12 @@ jobs:
       run: rustup target add ${{ matrix.target }}
     - name: Build release
       run: cargo zigbuild --release --verbose --target=${{ matrix.target }}.2.17
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rsdebstrap-${{ matrix.target }}
+        path: target/${{ matrix.target }}/release/rsdebstrap
+    - name: File info
+      run: |-
+        ls -lah target/${{ matrix.target }}/release/rsdebstrap
+        file target/${{ matrix.target }}/release/rsdebstrap
