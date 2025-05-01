@@ -1,0 +1,5 @@
+---
+packages:
+- name: rhysd/actionlint@v1.7.7
+  tags:
+  - reviewdog:actionlint

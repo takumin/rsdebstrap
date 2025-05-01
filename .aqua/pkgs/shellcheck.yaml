@@ -1,0 +1,5 @@
+---
+packages:
+- name: koalaman/shellcheck@v0.10.0
+  tags:
+  - reviewdog:shellcheck

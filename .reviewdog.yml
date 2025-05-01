@@ -1,0 +1,29 @@
+---
+runner:
+  editorconfig-checker:
+    cmd: ec -no-color
+    errorformat:
+    - '%-G%+P%f:'
+    - '%\s%+%l: %m'
+    - '%-Q'
+    - '%-G%.%#'
+  shellcheck:
+    cmd: fd -H -E .git/ -E .task/ -t f -e sh -e bash -X shellcheck -f json {} | jq -M -f scripts/reviewdog-shellcheck.jq
+    format: rdjson
+  actionlint:
+    cmd: actionlint -shellcheck shellcheck -oneline -no-color
+    errorformat:
+    - '%f:%l:%c: %m'
+  ghalint-run:
+    cmd: ghalint --log-color never run
+    errorformat:
+    - '%.%#error="%m" job_name=%.%#workflow_file_path=%f'
+    - '%-G%.%#'
+  ghalint-act:
+    cmd: ghalint --log-color never act
+    errorformat:
+    - '%.%#action_file_path=%f error="%m" policy_name=%.%#'
+    - '%-G%.%#'
+  hadolint:
+    cmd: fd -H -E .git/ -E .task/ -t f -g Dockerfile -X hadolint -f json {} | jq -M -f scripts/reviewdog-hadolint.jq
+    format: rdjson

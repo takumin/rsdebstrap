@@ -1,0 +1,6 @@
+---
+packages:
+- name: suzuki-shunsuke/ghalint@v1.3.0
+  tags:
+  - reviewdog:ghalint-run
+  - reviewdog:ghalint-act

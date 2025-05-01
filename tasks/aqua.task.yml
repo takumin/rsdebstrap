@@ -1,0 +1,45 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+tasks:
+  default:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task: install:all
+
+  install:
+    silent: true
+    internal: true
+    label: aqua:install:{{.TAG}}
+    dir: '{{.ROOT_DIR}}'
+    sources:
+    - .aqua/*.yml
+    - .aqua/*.yaml
+    - .aqua/**/*.yml
+    - .aqua/**/*.yaml
+    generates:
+    - .task/.done_{{.TASK}}:{{.TAG}}
+    cmds:
+    - aqua install {{.ARGS}}
+    - cmd: touch .task/.done_{{.TASK}}:{{.TAG}}
+      silent: true
+
+  install:all:
+    desc: '{{.TASK}}'
+    cmds:
+    - task: install
+      vars:
+        TAG: all
+        ARGS: -a
+
+  install:tag:*:
+    desc: '{{.TASK}}'
+    cmds:
+    - task: install
+      vars:
+        TAG: '{{index .MATCH 0}}'
+        ARGS: -t {{index .MATCH 0}}

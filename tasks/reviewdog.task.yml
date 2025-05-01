@@ -1,0 +1,137 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+includes:
+  aqua:
+    taskfile: aqua.task.yml
+    internal: true
+
+vars:
+  REVIEWDOG_ARGS:
+  - -filter-mode 'nofilter'
+  - -log-level 'warning'
+  - -fail-level 'any'
+
+tasks:
+  default:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task: editorconfig-checker
+    - task: shellcheck
+    - task: actionlint
+    - task: ghalint-run
+    - task: ghalint-act
+
+  matrix:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task -aj | jq -cM -f scripts/actions-matrix.jq
+
+  reviewdog:
+    internal: true
+    label: 'reviewdog:{{.REVIEWDOG_RUNNER}}'
+    deps:
+    - task: aqua:install:tag:{{.TASK}}
+      silent: true
+    cmds:
+    - >-
+      reviewdog
+      -runners '{{.REVIEWDOG_RUNNER}}'
+      -reporter '{{env "REVIEWDOG_REPORTER" | default "local"}}'
+      {{env "REVIEWDOG_ARGS" | default (.REVIEWDOG_ARGS | join " ")}}
+
+  editorconfig-checker:
+    desc: '{{.TASK}}'
+    deps:
+    - task: aqua:install:tag:{{.TASK}}
+      silent: true
+    sources:
+    - '**/*'
+    - '.*/**/*'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  shellcheck:
+    desc: '{{.TASK}}'
+    deps:
+    - task: aqua:install:tag:{{.TASK}}
+      silent: true
+    sources:
+    - '**/*.sh'
+    - '**/*.bash'
+    - '.*/**/*.sh'
+    - '.*/**/*.bash'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  actionlint:
+    desc: '{{.TASK}}'
+    deps:
+    - task: aqua:install:tag:{{.TASK}}
+      silent: true
+    sources:
+    - '.github/**/*.yml'
+    - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  ghalint-run:
+    desc: '{{.TASK}}'
+    deps:
+    - task: aqua:install:tag:{{.TASK}}
+      silent: true
+    sources:
+    - '.github/**/*.yml'
+    - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  ghalint-act:
+    desc: '{{.TASK}}'
+    deps:
+    - task: aqua:install:tag:{{.TASK}}
+      silent: true
+    sources:
+    - '.github/**/*.yml'
+    - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true

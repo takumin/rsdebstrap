@@ -1,0 +1,3 @@
+---
+packages:
+- name: mvdan/sh@v3.11.0
