@@ -1,5 +1,5 @@
 ---
-name: Autofix
+name: autofix.ci
 on:
   workflow_call:
 permissions: {}
