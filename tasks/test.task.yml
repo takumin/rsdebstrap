@@ -29,8 +29,8 @@ tasks:
     sources:
     - 'Cargo.toml'
     - 'Cargo.lock'
-    - '**/*.rs'
-    - '.*/**/*.rs'
+    - 'src/**/*.rs'
+    - 'tests/**/*.rs'
     - exclude: '.git/**/*'
     - exclude: '.task/**/*'
     - exclude: 'target/**/*'
