@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
+      contents: write
     steps:
     - name: Checkout
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -49,3 +49,10 @@ jobs:
         sha256sum -c SHA256SUMS
     - name: Check artifacts
       run: tree --charset ASCII dist/
+    - name: Release
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |-
+        gh release create "${VERSION}" --generate-notes dist/*
+      env:
+        VERSION: ${{ github.ref_name }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

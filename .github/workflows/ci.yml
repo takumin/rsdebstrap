@@ -4,6 +4,8 @@ on:
   push:
     branches:
     - main
+    tags:
+    - 'v*'
   pull_request:
 permissions: {}
 jobs:
@@ -52,7 +54,7 @@ jobs:
     - build
     name: Release
     permissions:
-      contents: read
+      contents: write
     uses: ./.github/workflows/wc-release.yml
   ##############################################################################
   # Status Check
