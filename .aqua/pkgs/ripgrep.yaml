@@ -1,0 +1,3 @@
+---
+packages:
+- name: BurntSushi/ripgrep@14.1.1
