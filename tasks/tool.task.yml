@@ -9,12 +9,12 @@ tasks:
     desc: '{{.TASK}}'
     silent: true
     cmds:
-    - task: install:all
+    - task: aqua:all
 
-  install:
+  aqua:
     silent: true
     internal: true
-    label: tool:install:{{.TAG}}
+    label: aqua:{{.TAG}}
     dir: '{{.ROOT_DIR}}'
     sources:
     - .aqua/*.yml
@@ -28,18 +28,18 @@ tasks:
     - cmd: touch .task/.done_{{.TASK}}:{{.TAG}}
       silent: true
 
-  install:all:
+  aqua:all:
     desc: '{{.TASK}}'
     cmds:
-    - task: install
+    - task: aqua
       vars:
         TAG: all
         ARGS: -a
 
-  install:tag:*:
+  aqua:tag:*:
     desc: '{{.TASK}}'
     cmds:
-    - task: install
+    - task: aqua
       vars:
         TAG: '{{index .MATCH 0}}'
         ARGS: -t {{index .MATCH 0}}

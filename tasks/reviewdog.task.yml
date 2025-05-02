@@ -36,7 +36,7 @@ tasks:
     internal: true
     label: 'reviewdog:{{.REVIEWDOG_RUNNER}}'
     deps:
-    - task: tool:install:tag:{{.TASK}}
+    - task: tool:aqua:tag:{{.TASK}}
       silent: true
     cmds:
     - >-
@@ -48,7 +48,7 @@ tasks:
   editorconfig-checker:
     desc: '{{.TASK}}'
     deps:
-    - task: tool:install:tag:{{.TASK}}
+    - task: tool:aqua:tag:{{.TASK}}
       silent: true
     sources:
     - '**/*'
@@ -67,7 +67,7 @@ tasks:
   shellcheck:
     desc: '{{.TASK}}'
     deps:
-    - task: tool:install:tag:{{.TASK}}
+    - task: tool:aqua:tag:{{.TASK}}
       silent: true
     sources:
     - '**/*.sh'
@@ -88,7 +88,7 @@ tasks:
   actionlint:
     desc: '{{.TASK}}'
     deps:
-    - task: tool:install:tag:{{.TASK}}
+    - task: tool:aqua:tag:{{.TASK}}
       silent: true
     sources:
     - '.github/**/*.yml'
@@ -105,7 +105,7 @@ tasks:
   ghalint-run:
     desc: '{{.TASK}}'
     deps:
-    - task: tool:install:tag:{{.TASK}}
+    - task: tool:aqua:tag:{{.TASK}}
       silent: true
     sources:
     - '.github/**/*.yml'
@@ -122,7 +122,7 @@ tasks:
   ghalint-act:
     desc: '{{.TASK}}'
     deps:
-    - task: tool:install:tag:{{.TASK}}
+    - task: tool:aqua:tag:{{.TASK}}
       silent: true
     sources:
     - '.github/**/*.yml'
