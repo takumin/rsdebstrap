@@ -16,6 +16,7 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
             components: vec!["main".to_string(), "contrib".to_string()],
             architectures: vec!["amd64".to_string()],
             include: vec!["curl".to_string(), "ca-certificates".to_string()],
+            setup_hook: vec![],
         },
     };
 
@@ -47,6 +48,7 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
             components: vec!["main".to_string(), "contrib".to_string()],
             architectures: vec!["amd64".to_string()],
             include: vec!["curl".to_string(), "ca-certificates".to_string()],
+            setup_hook: vec![],
         },
     };
 
