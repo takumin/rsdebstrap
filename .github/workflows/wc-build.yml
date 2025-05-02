@@ -53,11 +53,17 @@ jobs:
     - name: Generate sha256sum
       run: |-
         cd dist
-        sha256sum rsdebstrap | tee rsdebstrap.sha256sum
+        sha256sum "rsdebstrap-${PROFILE}-${TARGET}" | tee "rsdebstrap-${PROFILE}-${TARGET}.sha256sum"
+      env:
+        PROFILE: ${{ matrix.profile }}
+        TARGET: ${{ matrix.target }}
     - name: Verify sha256sum
       run: |-
         cd dist
-        sha256sum -c rsdebstrap.sha256sum
+        sha256sum -c "rsdebstrap-${PROFILE}-${TARGET}.sha256sum"
+      env:
+        PROFILE: ${{ matrix.profile }}
+        TARGET: ${{ matrix.target }}
     - name: Upload artifact
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
