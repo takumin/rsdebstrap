@@ -10,6 +10,7 @@ includes:
   reviewdog: ./tasks/reviewdog.task.yml
   test: ./tasks/test.task.yml
   build: ./tasks/build.task.yml
+  release: ./tasks/release.task.yml
 
 tasks:
   default:

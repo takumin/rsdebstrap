@@ -1,0 +1,11 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+tasks:
+  default:
+    desc: '{{.TASK}}'
+    cmds:
+    - git tag "$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')"
