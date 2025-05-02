@@ -10,6 +10,11 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
 jobs:
+  autofix:
+    name: autofix.ci
+    permissions:
+      contents: read
+    uses: ./.github/workflows/autofix.yml
   ci:
     name: CI
     runs-on: ubuntu-latest
