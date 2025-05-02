@@ -51,7 +51,7 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
     }
 
     if !profile.mmdebstrap.extract_hook.is_empty() {
-        for extract_hook in profile.mmdebstrap.setup_hook.iter() {
+        for extract_hook in profile.mmdebstrap.extract_hook.iter() {
             cmd_args.push("--extract-hook".into());
             cmd_args.push(extract_hook.into());
         }
