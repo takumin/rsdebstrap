@@ -27,6 +27,8 @@ tasks:
     label: test:workspace
     dir: '{{.ROOT_DIR}}'
     sources:
+    - 'Cargo.toml'
+    - 'Cargo.lock'
     - '**/*.rs'
     - '.*/**/*.rs'
     - exclude: '.git/**/*'
