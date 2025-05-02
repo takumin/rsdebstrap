@@ -18,6 +18,7 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
             include: vec!["curl".to_string(), "ca-certificates".to_string()],
             setup_hook: vec![],
             extract_hook: vec![],
+            essential_hook: vec![],
         },
     };
 
@@ -51,6 +52,7 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
             include: vec!["curl".to_string(), "ca-certificates".to_string()],
             setup_hook: vec![],
             extract_hook: vec![],
+            essential_hook: vec![],
         },
     };
 

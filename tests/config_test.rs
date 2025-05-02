@@ -26,6 +26,7 @@ mmdebstrap:
     assert!(profile.mmdebstrap.include.is_empty());
     assert!(profile.mmdebstrap.setup_hook.is_empty());
     assert!(profile.mmdebstrap.extract_hook.is_empty());
+    assert!(profile.mmdebstrap.essential_hook.is_empty());
 
     Ok(())
 }
@@ -52,6 +53,8 @@ mmdebstrap:
   - 'echo ok'
   extract_hook:
   - 'echo ok'
+  essential_hook:
+  - 'echo ok'
 "#
     )?;
 
@@ -65,6 +68,7 @@ mmdebstrap:
     assert_eq!(profile.mmdebstrap.include, vec!["curl", "ca-certificates"]);
     assert_eq!(profile.mmdebstrap.setup_hook, vec!["echo ok"]);
     assert_eq!(profile.mmdebstrap.extract_hook, vec!["echo ok"]);
+    assert_eq!(profile.mmdebstrap.essential_hook, vec!["echo ok"]);
 
     Ok(())
 }

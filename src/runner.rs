@@ -57,6 +57,13 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         }
     }
 
+    if !profile.mmdebstrap.essential_hook.is_empty() {
+        for essential_hook in profile.mmdebstrap.essential_hook.iter() {
+            cmd_args.push("--essential-hook".into());
+            cmd_args.push(essential_hook.into());
+        }
+    }
+
     // suite
     cmd_args.push(profile.mmdebstrap.suite.clone().into());
 
