@@ -8,7 +8,6 @@ use std::process::Command;
 
 pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
     let mut cmd = Command::new("mmdebstrap");
-
     let mut cmd_args = Vec::<OsString>::new();
 
     let mode = profile.mmdebstrap.mode.trim();
