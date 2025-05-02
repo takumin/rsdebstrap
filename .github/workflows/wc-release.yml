@@ -28,6 +28,16 @@ jobs:
         path: dist
         pattern: rsdebstrap-release-*
         merge-multiple: true
-    - name: Check files
+    - name: Check artifacts
+      run: tree --charset ASCII dist/
+    - name: Merge sha256sum
       run: |-
-        tree dist
+        cd dist
+        echo -n > SHA256SUMS
+        for f in $(find . -type f -name '*.sha256sum' -printf '%f\n' | sort); do
+          cat "$f" | tee -a SHA256SUMS
+        done
+    - name: Verify sha256sum
+      run: |-
+        cd dist
+        sha256sum -c SHA256SUMS
