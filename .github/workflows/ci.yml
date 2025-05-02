@@ -41,6 +41,8 @@ jobs:
     name: Build
     permissions:
       contents: read
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/wc-build.yml
   ##############################################################################
   # Release
