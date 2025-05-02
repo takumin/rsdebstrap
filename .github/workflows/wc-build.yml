@@ -48,6 +48,25 @@ jobs:
       env:
         BUILD_PROFILE: ${{ matrix.profile }}
         BUILD_TARGET: ${{ matrix.target }}
+    - name: Generate sha256sum
+      run: |-
+        cd "${DIR}"
+        sha256sum rsdebstrap | tee rsdebstrap.sha256sum
+      env:
+        DIR: target/${{ matrix.target }}/${{ matrix.profile }}
+    - name: Verify sha256sum
+      run: |-
+        cd "${DIR}"
+        sha256sum -c rsdebstrap.sha256sum
+      env:
+        DIR: target/${{ matrix.target }}/${{ matrix.profile }}
+    - name: Upload artifact
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: rsdebstrap-${{ matrix.profile }}-${{ matrix.target }}
+        path: |-
+          target/${{ matrix.target }}/${{ matrix.profile }}/rsdebstrap
+          target/${{ matrix.target }}/${{ matrix.profile }}/rsdebstrap.sha256sum
     - name: Save build cache
       if: github.ref == 'refs/heads/main' && steps.cache-restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3

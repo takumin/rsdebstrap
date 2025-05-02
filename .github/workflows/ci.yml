@@ -43,14 +43,24 @@ jobs:
       contents: read
     uses: ./.github/workflows/wc-build.yml
   ##############################################################################
-  # Status Check
+  # Release
   ##############################################################################
-  ci:
+  release:
     needs:
     - format
     - reviewdog
     - test
     - build
+    name: Release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wc-release.yml
+  ##############################################################################
+  # Status Check
+  ##############################################################################
+  ci:
+    needs:
+    - release
     name: CI
     runs-on: ubuntu-latest
     timeout-minutes: 3
