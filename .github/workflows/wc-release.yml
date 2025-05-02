@@ -30,12 +30,17 @@ jobs:
         merge-multiple: true
     - name: Check artifacts
       run: tree --charset ASCII dist/
+    - name: Rename artifacts
+      run: |-
+        cd dist
+        for f in ./*; do mv -n "$f" "${f/-release-/-}"; done
+        sed -i -E 's/-release-/-/' ./*.sha256sum
     - name: Merge sha256sum
       run: |-
         cd dist
         echo -n > SHA256SUMS
         for f in $(find . -type f -name '*.sha256sum' -printf '%f\n' | sort); do
-          cat "$f" | tee -a SHA256SUMS
+          < "$f" tee -a SHA256SUMS
           rm "$f"
         done
     - name: Verify sha256sum
