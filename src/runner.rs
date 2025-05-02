@@ -48,6 +48,11 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         cmd_args.push(profile.mmdebstrap.setup_hook.join(",").into());
     }
 
+    if !profile.mmdebstrap.extract_hook.is_empty() {
+        cmd_args.push("--extract-hook".into());
+        cmd_args.push(profile.mmdebstrap.extract_hook.join(",").into());
+    }
+
     // suite
     cmd_args.push(profile.mmdebstrap.suite.clone().into());
 

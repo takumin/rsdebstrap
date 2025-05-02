@@ -27,6 +27,8 @@ pub struct Mmdebstrap {
     pub include: Vec<String>,
     #[serde(default)]
     pub setup_hook: Vec<String>,
+    #[serde(default)]
+    pub extract_hook: Vec<String>,
 }
 
 pub fn load_profile(path: &str) -> Result<Profile> {
