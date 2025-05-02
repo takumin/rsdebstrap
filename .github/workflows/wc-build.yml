@@ -2,8 +2,7 @@
 name: Build
 on:
   workflow_call:
-permissions:
-  contents: read
+permissions: {}
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -12,6 +11,8 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
