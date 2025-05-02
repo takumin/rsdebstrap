@@ -1,0 +1,76 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  PROJNAME:
+    sh: cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].name'
+  TARGET:
+    sh: 'rustc --version --verbose | rg -r "" "^host: "'
+
+includes:
+  tool:
+    taskfile: tool.task.yml
+    internal: true
+
+tasks:
+  default:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task: build
+
+  build:
+    internal: true
+    dir: '{{.ROOT_DIR}}'
+    sources:
+    - '**/*.rs'
+    - '.*/**/*.rs'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'target/**/*'
+    generates:
+    - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}
+    vars:
+      TARGET: '{{.TARGET}}'
+      PROFILE: '{{.PROFILE | default "debug"}}'
+      BUILD_ARGS: >-
+        {{if eq .PROFILE "release"}}--release{{end}}
+        --target={{.TARGET}}.2.17
+    label: 'build:{{.PROFILE}}:{{.TARGET}}'
+    cmds:
+    - cargo zigbuild {{.BUILD_ARGS}}
+
+  debug:
+    desc: '{{.TASK}}'
+    cmds:
+    - task: build
+      vars:
+        PROFILE: debug
+        TARGET: '{{.TARGET}}'
+
+  debug:*:
+    desc: '{{.TASK}}'
+    cmds:
+    - task: build
+      vars:
+        PROFILE: debug
+        TARGET: '{{index .MATCH 0}}'
+
+  release:
+    desc: '{{.TASK}}'
+    cmds:
+    - task: build
+      vars:
+        PROFILE: release
+        TARGET: '{{.TARGET}}'
+
+  release:*:
+    desc: '{{.TASK}}'
+    cmds:
+    - task: build
+      vars:
+        PROFILE: release
+        TARGET: '{{index .MATCH 0}}'

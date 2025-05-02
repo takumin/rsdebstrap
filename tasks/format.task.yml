@@ -33,6 +33,7 @@ tasks:
     - '.*/**/*.bash'
     - exclude: '.git/**/*'
     - exclude: '.task/**/*'
+    - exclude: 'target/**/*'
     generates:
     - .task/.done_{{.TASK}}
     cmds:
@@ -53,6 +54,7 @@ tasks:
     - '.*/**/*.yaml'
     - exclude: '.git/**/*'
     - exclude: '.task/**/*'
+    - exclude: 'target/**/*'
     generates:
     - .task/.done_{{.TASK}}
     cmds:
@@ -71,6 +73,7 @@ tasks:
     - '.*/**/*.toml'
     - exclude: '.git/**/*'
     - exclude: '.task/**/*'
+    - exclude: 'target/**/*'
     generates:
     - .task/.done_{{.TASK}}
     cmds:
@@ -102,6 +105,7 @@ tasks:
     - '.*/**/*.rs'
     - exclude: '.git/**/*'
     - exclude: '.task/**/*'
+    - exclude: 'target/**/*'
     generates:
     - .task/.done_{{.TASK}}
     cmds:

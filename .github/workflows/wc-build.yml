@@ -1,0 +1,38 @@
+---
+name: Build
+on:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+        - debug
+        - release
+        target:
+        - x86_64-unknown-linux-gnu
+        - aarch64-unknown-linux-gnu
+    steps:
+    - name: Checkout
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@5e54e5cee8a95ee2ce7c04cb993da6dfad13e59c # v3.1.2
+      with:
+        aqua_version: v2.50.0
+    - name: Build ${{ matrix.profile }} ${{ matrix.target }}
+      run: |-
+        task "build:${BUILD_PROFILE}:${BUILD_TARGET}"
+      env:
+        BUILD_PROFILE: ${{ matrix.profile }}
+        BUILD_TARGET: ${{ matrix.target }}
