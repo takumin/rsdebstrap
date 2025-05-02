@@ -25,6 +25,9 @@ tasks:
   build:
     internal: true
     dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: tool:rustup:target:{{.TARGET}}
+      silent: true
     sources:
     - '**/*.rs'
     - '.*/**/*.rs'

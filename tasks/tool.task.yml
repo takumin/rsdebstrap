@@ -43,3 +43,8 @@ tasks:
       vars:
         TAG: '{{index .MATCH 0}}'
         ARGS: -t {{index .MATCH 0}}
+
+  rustup:target:*:
+    desc: '{{.TASK}}'
+    cmds:
+    - rustup target list --installed | rg -q '^{{index .MATCH 0}}$' || rustup target add '{{index .MATCH 0}}'
