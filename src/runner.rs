@@ -17,9 +17,10 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         cmd_args.push(mode.into());
     }
 
-    if !profile.mmdebstrap.variant.trim().is_empty() {
+    let variant = profile.mmdebstrap.variant.trim();
+    if !variant.is_empty() {
         cmd_args.push("--variant".into());
-        cmd_args.push(profile.mmdebstrap.variant.trim().into());
+        cmd_args.push(variant.into());
     }
 
     if !profile.mmdebstrap.components.is_empty() {
