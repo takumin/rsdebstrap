@@ -14,10 +14,15 @@ pub struct Mmdebstrap {
     pub suite: String,
     pub target: String,
     /// Specifies the mode in which mmdebstrap operates.
-    /// Expected values include "auto", "sudo", "root", "unshare", "fakeroot", "fakechroot", and "chrootless".
+    /// Expected values include:
+    /// "auto", "sudo", "root", "unshare", "fakeroot", "fakechroot", and "chrootless"
     /// Defaults to an empty string if not specified.
     #[serde(default)]
     pub mode: String,
+    /// Choose which package set to install.
+    /// Expected values include:
+    /// "extract", "custom", "essential", "apt", "required", "minbase", "buildd", "important", and "standard"
+    /// Defaults to an empty string if not specified.
     #[serde(default)]
     pub variant: String,
     #[serde(default)]
