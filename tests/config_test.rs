@@ -27,6 +27,7 @@ mmdebstrap:
     assert!(profile.mmdebstrap.setup_hook.is_empty());
     assert!(profile.mmdebstrap.extract_hook.is_empty());
     assert!(profile.mmdebstrap.essential_hook.is_empty());
+    assert!(profile.mmdebstrap.customize_hook.is_empty());
 
     Ok(())
 }
@@ -55,6 +56,8 @@ mmdebstrap:
   - 'echo extract'
   essential_hook:
   - 'echo essential'
+  customize_hook:
+  - 'echo customize'
 "#
     )?;
 
@@ -69,6 +72,7 @@ mmdebstrap:
     assert_eq!(profile.mmdebstrap.setup_hook, vec!["echo setup"]);
     assert_eq!(profile.mmdebstrap.extract_hook, vec!["echo extract"]);
     assert_eq!(profile.mmdebstrap.essential_hook, vec!["echo essential"]);
+    assert_eq!(profile.mmdebstrap.customize_hook, vec!["echo customize"]);
 
     Ok(())
 }

@@ -64,6 +64,13 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         }
     }
 
+    if !profile.mmdebstrap.customize_hook.is_empty() {
+        for customize_hook in profile.mmdebstrap.customize_hook.iter() {
+            cmd_args.push("--customize-hook".into());
+            cmd_args.push(customize_hook.into());
+        }
+    }
+
     // suite
     cmd_args.push(profile.mmdebstrap.suite.clone().into());
 

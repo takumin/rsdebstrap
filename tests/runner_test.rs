@@ -19,6 +19,7 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
             setup_hook: vec![],
             extract_hook: vec![],
             essential_hook: vec![],
+            customize_hook: vec![],
         },
     };
 
@@ -53,6 +54,7 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
             setup_hook: vec![],
             extract_hook: vec![],
             essential_hook: vec![],
+            customize_hook: vec![],
         },
     };
 
