@@ -14,6 +14,8 @@ pub struct Mmdebstrap {
     pub suite: String,
     pub target: String,
     #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
     pub variant: String,
     #[serde(default)]
     pub components: Vec<String>,
