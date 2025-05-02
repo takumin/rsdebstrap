@@ -50,11 +50,11 @@ mmdebstrap:
   - curl
   - ca-certificates
   setup_hook:
-  - 'echo ok'
+  - 'echo setup'
   extract_hook:
-  - 'echo ok'
+  - 'echo extract'
   essential_hook:
-  - 'echo ok'
+  - 'echo essential'
 "#
     )?;
 
@@ -66,9 +66,9 @@ mmdebstrap:
     assert_eq!(profile.mmdebstrap.components, vec!["main", "contrib"]);
     assert_eq!(profile.mmdebstrap.architectures, vec!["amd64"]);
     assert_eq!(profile.mmdebstrap.include, vec!["curl", "ca-certificates"]);
-    assert_eq!(profile.mmdebstrap.setup_hook, vec!["echo ok"]);
-    assert_eq!(profile.mmdebstrap.extract_hook, vec!["echo ok"]);
-    assert_eq!(profile.mmdebstrap.essential_hook, vec!["echo ok"]);
+    assert_eq!(profile.mmdebstrap.setup_hook, vec!["echo setup"]);
+    assert_eq!(profile.mmdebstrap.extract_hook, vec!["echo extract"]);
+    assert_eq!(profile.mmdebstrap.essential_hook, vec!["echo essential"]);
 
     Ok(())
 }
