@@ -10,6 +10,7 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
         mmdebstrap: Mmdebstrap {
             suite: "bookworm".to_string(),
             target: "rootfs.tar.zst".to_string(),
+            mode: "auto".to_string(),
             variant: "apt".to_string(),
             components: vec!["main".to_string(), "contrib".to_string()],
             architectures: vec!["amd64".to_string()],
@@ -39,6 +40,7 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
         mmdebstrap: Mmdebstrap {
             suite: "bookworm".to_string(),
             target: "rootfs.tar.zst".to_string(),
+            mode: "auto".to_string(),
             variant: "apt".to_string(),
             components: vec!["main".to_string(), "contrib".to_string()],
             architectures: vec!["amd64".to_string()],

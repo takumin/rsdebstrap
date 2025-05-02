@@ -13,6 +13,11 @@ pub struct Profile {
 pub struct Mmdebstrap {
     pub suite: String,
     pub target: String,
+    /// Specifies the mode in which mmdebstrap operates.
+    /// Expected values include "auto", "sudo", "root", "unshare", "fakeroot", "fakechroot", and "chrootless".
+    /// Defaults to an empty string if not specified.
+    #[serde(default)]
+    pub mode: String,
     #[serde(default)]
     pub variant: String,
     #[serde(default)]

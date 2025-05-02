@@ -11,6 +11,12 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
 
     let mut cmd_args = Vec::<OsString>::new();
 
+    let mode = profile.mmdebstrap.mode.trim();
+    if !mode.is_empty() {
+        cmd_args.push("--mode".into());
+        cmd_args.push(mode.into());
+    }
+
     if !profile.mmdebstrap.variant.trim().is_empty() {
         cmd_args.push("--variant".into());
         cmd_args.push(profile.mmdebstrap.variant.trim().into());
