@@ -44,13 +44,17 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
     }
 
     if !profile.mmdebstrap.setup_hook.is_empty() {
-        cmd_args.push("--setup-hook".into());
-        cmd_args.push(profile.mmdebstrap.setup_hook.join(",").into());
+        for setup_hook in profile.mmdebstrap.setup_hook.iter() {
+            cmd_args.push("--setup-hook".into());
+            cmd_args.push(setup_hook.into());
+        }
     }
 
     if !profile.mmdebstrap.extract_hook.is_empty() {
-        cmd_args.push("--extract-hook".into());
-        cmd_args.push(profile.mmdebstrap.extract_hook.join(",").into());
+        for extract_hook in profile.mmdebstrap.setup_hook.iter() {
+            cmd_args.push("--extract-hook".into());
+            cmd_args.push(extract_hook.into());
+        }
     }
 
     // suite
