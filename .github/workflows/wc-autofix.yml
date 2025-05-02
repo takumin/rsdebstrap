@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   autofix:
-    name: AutoFix
+    name: autofix.ci
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
