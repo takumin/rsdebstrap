@@ -8,6 +8,7 @@ includes:
   tool: ./tasks/tool.task.yml
   format: ./tasks/format.task.yml
   reviewdog: ./tasks/reviewdog.task.yml
+  test: ./tasks/test.task.yml
   build: ./tasks/build.task.yml
 
 tasks:
@@ -19,4 +20,5 @@ tasks:
     - task: tool
     - task: format
     - task: reviewdog
+    - task: test
     - task: build

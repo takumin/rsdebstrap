@@ -1,0 +1,40 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  PROJNAME:
+    sh: cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].name'
+  TARGET:
+    sh: 'rustc --version --verbose | rg -r "" "^host: "'
+
+includes:
+  tool:
+    taskfile: tool.task.yml
+    internal: true
+
+tasks:
+  default:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task: test
+
+  test:
+    desc: '{{.TASK}}'
+    label: test:workspace
+    dir: '{{.ROOT_DIR}}'
+    sources:
+    - '**/*.rs'
+    - '.*/**/*.rs'
+    - exclude: '.git/**/*'
+    - exclude: '.task/**/*'
+    - exclude: 'target/**/*'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - cargo test --workspace
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
