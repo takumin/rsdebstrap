@@ -47,9 +47,6 @@ jobs:
   ##############################################################################
   release:
     needs:
-    - format
-    - reviewdog
-    - test
     - build
     name: Release
     permissions:
@@ -60,6 +57,10 @@ jobs:
   ##############################################################################
   ci:
     needs:
+    - format
+    - reviewdog
+    - test
+    - build
     - release
     name: CI
     runs-on: ubuntu-latest
