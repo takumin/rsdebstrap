@@ -6,6 +6,7 @@ use tempfile::NamedTempFile;
 #[test]
 fn test_load_profile_basic() -> Result<()> {
     let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
     writeln!(
         file,
         r#"---
@@ -15,6 +16,7 @@ mmdebstrap:
   target: rootfs.tar.zst
 "#
     )?;
+    // editorconfig-checker-enable
 
     let profile = load_profile(file.path().to_str().unwrap())?;
 
@@ -35,6 +37,7 @@ mmdebstrap:
 #[test]
 fn test_load_profile_full() -> Result<()> {
     let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
     writeln!(
         file,
         r#"---
@@ -60,6 +63,7 @@ mmdebstrap:
   - 'echo customize'
 "#
     )?;
+    // editorconfig-checker-enable
 
     let profile = load_profile(file.path().to_str().unwrap())?;
 
@@ -86,6 +90,7 @@ fn test_load_profile_invalid_file() {
 #[test]
 fn test_load_profile_invalid_yaml() -> Result<()> {
     let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
     writeln!(
         file,
         r#"---
@@ -93,6 +98,7 @@ invalid: yaml
   no_proper_structure
 "#
     )?;
+    // editorconfig-checker-enable
 
     let result = load_profile(file.path().to_str().unwrap());
     assert!(result.is_err());
