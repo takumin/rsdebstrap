@@ -16,6 +16,17 @@ jobs:
       contents: read
     uses: ./.github/workflows/wc-format.yml
   ##############################################################################
+  # Reviewdog
+  ##############################################################################
+  reviewdog:
+    name: Reviewdog
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/wc-reviewdog.yml
+  ##############################################################################
   # Test
   ##############################################################################
   test:
@@ -37,6 +48,7 @@ jobs:
   ci:
     needs:
     - format
+    - reviewdog
     - test
     - build
     name: CI

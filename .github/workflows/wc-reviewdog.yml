@@ -1,0 +1,79 @@
+---
+name: Reviewdog
+on:
+  workflow_call:
+permissions: {}
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  ##############################################################################
+  # Matrix
+  ##############################################################################
+  matrix:
+    name: Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.matrix.outputs.result }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@5e54e5cee8a95ee2ce7c04cb993da6dfad13e59c # v3.1.2
+      with:
+        aqua_version: v2.50.0
+    - name: Generate Matrix
+      id: matrix
+      run: echo "result=$(task reviewdog:matrix)" >> "$GITHUB_OUTPUT"
+    - name: Check Matrix
+      env:
+        REVIEWDOG_MATRIX: ${{ steps.matrix.outputs.result }}
+      run: |-
+        echo "${REVIEWDOG_MATRIX}" | jq
+  ##############################################################################
+  # Runner
+  ##############################################################################
+  reviewdog:
+    needs: matrix
+    name: Reviewdog (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.targets) }}
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@5e54e5cee8a95ee2ce7c04cb993da6dfad13e59c # v3.1.2
+      with:
+        aqua_version: v2.50.0
+        aqua_opts: -t reviewdog,${{ matrix.target }}
+    - name: Setup reporter
+      id: reporter
+      run: |-
+        case "${{ github.event_name }}" in
+        "push" )                echo "type=github-check" >> "$GITHUB_OUTPUT" ;;
+        "pull_request" )        echo "type=github-pr-review" >> "$GITHUB_OUTPUT" ;;
+        "pull_request_target" ) echo "type=github-pr-review" >> "$GITHUB_OUTPUT" ;;
+        * )                     echo "type=local" >> "$GITHUB_OUTPUT" ;;
+        esac
+    - name: Running reviewdog
+      run: task "${REVIEWDOG_TARGET}"
+      env:
+        REVIEWDOG_TARGET: ${{ matrix.target }}
+        REVIEWDOG_REPORTER: ${{ steps.reporter.outputs.type }}
+        REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REVIEWDOG_ARGS: -log-level 'debug' -tee
