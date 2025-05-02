@@ -97,7 +97,8 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
 
     let dir = PathBuf::from(profile.dir.clone());
     if !dir.exists() {
-        fs::create_dir_all(dir).expect("failed to create directory");
+        fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create directory: {}", dir.display()))?;
     }
 
     let status = cmd
