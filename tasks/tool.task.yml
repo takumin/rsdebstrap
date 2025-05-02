@@ -14,7 +14,7 @@ tasks:
   install:
     silent: true
     internal: true
-    label: aqua:install:{{.TAG}}
+    label: tool:install:{{.TAG}}
     dir: '{{.ROOT_DIR}}'
     sources:
     - .aqua/*.yml

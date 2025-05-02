@@ -5,7 +5,7 @@
 version: '3'
 
 includes:
-  aqua: ./tasks/aqua.task.yml
+  tool: ./tasks/tool.task.yml
   format: ./tasks/format.task.yml
   reviewdog: ./tasks/reviewdog.task.yml
 
@@ -15,6 +15,6 @@ tasks:
     silent: true
     aliases: [all]
     cmds:
-    - task: aqua
+    - task: tool
     - task: format
     - task: reviewdog
