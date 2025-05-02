@@ -10,6 +10,11 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
 jobs:
+  autofix:
+    name: Autofix
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wc-autofix.yml
   ci:
     name: CI
     runs-on: ubuntu-latest
@@ -39,8 +44,6 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: Check formatting
-      run: cargo fmt --all --check
     - name: Lint with clippy
       run: cargo clippy --all-targets --all-features
     - name: Run tests
