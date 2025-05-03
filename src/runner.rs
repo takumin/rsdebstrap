@@ -28,14 +28,14 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         cmd_args.push(variant.into());
     }
 
-    if !profile.mmdebstrap.components.is_empty() {
-        cmd_args.push("--components".into());
-        cmd_args.push(profile.mmdebstrap.components.join(",").into());
-    }
-
     if !profile.mmdebstrap.architectures.is_empty() {
         cmd_args.push("--architectures".into());
         cmd_args.push(profile.mmdebstrap.architectures.join(",").into());
+    }
+
+    if !profile.mmdebstrap.components.is_empty() {
+        cmd_args.push("--components".into());
+        cmd_args.push(profile.mmdebstrap.components.join(",").into());
     }
 
     if !profile.mmdebstrap.include.is_empty() {
