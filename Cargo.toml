@@ -1,6 +1,6 @@
 [package]
 name = "rsdebstrap"
-description = "declarative mmdebstrap runner"
+description = "rsdebstrap is a declarative CLI tool that builds Debian-based rootfs images using mmdebstrap and YAML manifests"
 license = "Apache-2.0"
 version = "0.1.0"
 edition = "2024"
