@@ -26,6 +26,9 @@ tasks:
     desc: '{{.TASK}}'
     label: test:workspace
     dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: tool:aqua:tag:build
+      silent: true
     sources:
     - 'Cargo.toml'
     - 'Cargo.lock'

@@ -26,6 +26,8 @@ tasks:
     internal: true
     dir: '{{.ROOT_DIR}}'
     deps:
+    - task: tool:aqua:tag:build
+      silent: true
     - task: tool:rustup:target:{{.TARGET}}
       silent: true
     sources:
