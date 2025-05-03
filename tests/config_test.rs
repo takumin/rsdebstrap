@@ -27,6 +27,7 @@ mmdebstrap:
     assert!(profile.mmdebstrap.architectures.is_empty());
     assert!(profile.mmdebstrap.include.is_empty());
     assert!(profile.mmdebstrap.aptopt.is_empty());
+    assert!(profile.mmdebstrap.dpkgopt.is_empty());
     assert!(profile.mmdebstrap.setup_hook.is_empty());
     assert!(profile.mmdebstrap.extract_hook.is_empty());
     assert!(profile.mmdebstrap.essential_hook.is_empty());
@@ -56,6 +57,8 @@ mmdebstrap:
   - ca-certificates
   aptopt:
   - 'Apt::Install-Recommends "true"'
+  dpkgopt:
+  - 'path-exclude=/usr/share/man/*'
   setup_hook:
   - 'echo setup'
   extract_hook:
@@ -79,6 +82,10 @@ mmdebstrap:
     assert_eq!(
         profile.mmdebstrap.aptopt,
         vec!["Apt::Install-Recommends \"true\""]
+    );
+    assert_eq!(
+        profile.mmdebstrap.dpkgopt,
+        vec!["path-exclude=/usr/share/man/*"]
     );
     assert_eq!(profile.mmdebstrap.setup_hook, vec!["echo setup"]);
     assert_eq!(profile.mmdebstrap.extract_hook, vec!["echo extract"]);

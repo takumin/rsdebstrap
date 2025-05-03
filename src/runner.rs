@@ -50,6 +50,13 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         }
     }
 
+    if !profile.mmdebstrap.dpkgopt.is_empty() {
+        for dpkgopt in profile.mmdebstrap.dpkgopt.iter() {
+            cmd_args.push("--dpkgopt".into());
+            cmd_args.push(dpkgopt.into());
+        }
+    }
+
     if !profile.mmdebstrap.setup_hook.is_empty() {
         for setup_hook in profile.mmdebstrap.setup_hook.iter() {
             cmd_args.push("--setup-hook".into());
