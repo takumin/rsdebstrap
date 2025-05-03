@@ -1,2 +1,2 @@
 # rsdebstrap
-rsdebstrap is a declarative CLI tool that builds Debian-based rootfs images using mmdebstrap and YAML manifests.
+A declarative CLI tool to build Debian-based rootfs images using mmdebstrap and YAML manifests
