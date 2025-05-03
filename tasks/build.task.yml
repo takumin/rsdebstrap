@@ -47,7 +47,7 @@ tasks:
         --target={{.TARGET}}.2.17
     label: 'build:{{.PROFILE}}:{{.TARGET}}'
     cmds:
-    - cargo zigbuild {{.BUILD_ARGS}}
+    - mold -run cargo zigbuild {{.BUILD_ARGS}}
 
   debug:
     desc: '{{.TASK}}'
