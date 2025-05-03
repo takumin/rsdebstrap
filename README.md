@@ -1,2 +1,2 @@
 # rsdebstrap
-declarative mmdebstrap runner
+rsdebstrap is a declarative CLI tool that builds Debian-based rootfs images using YAML manifests.
