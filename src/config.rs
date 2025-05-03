@@ -26,6 +26,8 @@ pub struct Mmdebstrap {
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]
+    pub aptopt: Vec<String>,
+    #[serde(default)]
     pub setup_hook: Vec<String>,
     #[serde(default)]
     pub extract_hook: Vec<String>,

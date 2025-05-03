@@ -43,6 +43,13 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         cmd_args.push(profile.mmdebstrap.include.join(",").into());
     }
 
+    if !profile.mmdebstrap.aptopt.is_empty() {
+        for aptopt in profile.mmdebstrap.aptopt.iter() {
+            cmd_args.push("--aptopt".into());
+            cmd_args.push(aptopt.into());
+        }
+    }
+
     if !profile.mmdebstrap.setup_hook.is_empty() {
         for setup_hook in profile.mmdebstrap.setup_hook.iter() {
             cmd_args.push("--setup-hook".into());

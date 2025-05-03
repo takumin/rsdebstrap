@@ -26,6 +26,7 @@ mmdebstrap:
     assert!(profile.mmdebstrap.components.is_empty());
     assert!(profile.mmdebstrap.architectures.is_empty());
     assert!(profile.mmdebstrap.include.is_empty());
+    assert!(profile.mmdebstrap.aptopt.is_empty());
     assert!(profile.mmdebstrap.setup_hook.is_empty());
     assert!(profile.mmdebstrap.extract_hook.is_empty());
     assert!(profile.mmdebstrap.essential_hook.is_empty());
@@ -53,6 +54,8 @@ mmdebstrap:
   include:
   - curl
   - ca-certificates
+  aptopt:
+  - 'Apt::Install-Recommends "true"'
   setup_hook:
   - 'echo setup'
   extract_hook:
@@ -73,6 +76,10 @@ mmdebstrap:
     assert_eq!(profile.mmdebstrap.components, vec!["main", "contrib"]);
     assert_eq!(profile.mmdebstrap.architectures, vec!["amd64"]);
     assert_eq!(profile.mmdebstrap.include, vec!["curl", "ca-certificates"]);
+    assert_eq!(
+        profile.mmdebstrap.aptopt,
+        vec!["Apt::Install-Recommends \"true\""]
+    );
     assert_eq!(profile.mmdebstrap.setup_hook, vec!["echo setup"]);
     assert_eq!(profile.mmdebstrap.extract_hook, vec!["echo extract"]);
     assert_eq!(profile.mmdebstrap.essential_hook, vec!["echo essential"]);
