@@ -28,19 +28,26 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         cmd_args.push(variant.into());
     }
 
-    if !profile.mmdebstrap.components.is_empty() {
-        cmd_args.push("--components".into());
-        cmd_args.push(profile.mmdebstrap.components.join(",").into());
-    }
-
     if !profile.mmdebstrap.architectures.is_empty() {
         cmd_args.push("--architectures".into());
         cmd_args.push(profile.mmdebstrap.architectures.join(",").into());
     }
 
+    if !profile.mmdebstrap.components.is_empty() {
+        cmd_args.push("--components".into());
+        cmd_args.push(profile.mmdebstrap.components.join(",").into());
+    }
+
     if !profile.mmdebstrap.include.is_empty() {
         cmd_args.push("--include".into());
         cmd_args.push(profile.mmdebstrap.include.join(",").into());
+    }
+
+    if !profile.mmdebstrap.aptopt.is_empty() {
+        for aptopt in profile.mmdebstrap.aptopt.iter() {
+            cmd_args.push("--aptopt".into());
+            cmd_args.push(aptopt.into());
+        }
     }
 
     if !profile.mmdebstrap.setup_hook.is_empty() {

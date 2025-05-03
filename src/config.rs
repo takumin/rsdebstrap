@@ -20,11 +20,13 @@ pub struct Mmdebstrap {
     #[serde(default)]
     pub variant: String,
     #[serde(default)]
-    pub components: Vec<String>,
-    #[serde(default)]
     pub architectures: Vec<String>,
     #[serde(default)]
+    pub components: Vec<String>,
+    #[serde(default)]
     pub include: Vec<String>,
+    #[serde(default)]
+    pub aptopt: Vec<String>,
     #[serde(default)]
     pub setup_hook: Vec<String>,
     #[serde(default)]
