@@ -43,6 +43,13 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         cmd_args.push(profile.mmdebstrap.include.join(",").into());
     }
 
+    if !profile.mmdebstrap.keyring.is_empty() {
+        for keyring in profile.mmdebstrap.keyring.iter() {
+            cmd_args.push("--keyring".into());
+            cmd_args.push(keyring.into());
+        }
+    }
+
     if !profile.mmdebstrap.aptopt.is_empty() {
         for aptopt in profile.mmdebstrap.aptopt.iter() {
             cmd_args.push("--aptopt".into());

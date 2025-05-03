@@ -26,6 +26,7 @@ mmdebstrap:
     assert!(profile.mmdebstrap.components.is_empty());
     assert!(profile.mmdebstrap.architectures.is_empty());
     assert!(profile.mmdebstrap.include.is_empty());
+    assert!(profile.mmdebstrap.keyring.is_empty());
     assert!(profile.mmdebstrap.aptopt.is_empty());
     assert!(profile.mmdebstrap.dpkgopt.is_empty());
     assert!(profile.mmdebstrap.setup_hook.is_empty());
@@ -55,6 +56,8 @@ mmdebstrap:
   include:
   - curl
   - ca-certificates
+  keyring:
+  - '/etc/apt/trusted.gpg'
   aptopt:
   - 'Apt::Install-Recommends "true"'
   dpkgopt:
@@ -79,6 +82,7 @@ mmdebstrap:
     assert_eq!(profile.mmdebstrap.components, vec!["main", "contrib"]);
     assert_eq!(profile.mmdebstrap.architectures, vec!["amd64"]);
     assert_eq!(profile.mmdebstrap.include, vec!["curl", "ca-certificates"]);
+    assert_eq!(profile.mmdebstrap.keyring, vec!["/etc/apt/trusted.gpg"]);
     assert_eq!(
         profile.mmdebstrap.aptopt,
         vec!["Apt::Install-Recommends \"true\""]

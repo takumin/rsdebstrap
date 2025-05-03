@@ -26,6 +26,8 @@ pub struct Mmdebstrap {
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]
+    pub keyring: Vec<String>,
+    #[serde(default)]
     pub aptopt: Vec<String>,
     #[serde(default)]
     pub dpkgopt: Vec<String>,
