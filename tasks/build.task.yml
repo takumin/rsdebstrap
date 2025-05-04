@@ -7,6 +7,9 @@ version: '3'
 vars:
   PROJNAME:
     sh: cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].name'
+  # default profile
+  PROFILE: debug
+  # default target
   TARGET:
     sh: 'rustc --version --verbose | rg -r "" "^host: "'
 
@@ -34,14 +37,11 @@ tasks:
     - 'Cargo.toml'
     - 'Cargo.lock'
     - 'src/**/*.rs'
-    - exclude: '.git/**/*'
-    - exclude: '.task/**/*'
-    - exclude: 'target/**/*'
     generates:
     - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}
     vars:
       TARGET: '{{.TARGET}}'
-      PROFILE: '{{.PROFILE | default "debug"}}'
+      PROFILE: '{{.PROFILE}}'
       BUILD_ARGS: >-
         {{if eq .PROFILE "release"}}--release{{end}}
         --target={{.TARGET}}.2.17
@@ -72,6 +72,10 @@ tasks:
       vars:
         PROFILE: release
         TARGET: '{{.TARGET}}'
+    - task: cosign
+      vars:
+        PROFILE: release
+        TARGET: '{{.TARGET}}'
 
   release:*:
     desc: '{{.TASK}}'
@@ -80,3 +84,27 @@ tasks:
       vars:
         PROFILE: release
         TARGET: '{{index .MATCH 0}}'
+    - task: cosign
+      vars:
+        PROFILE: release
+        TARGET: '{{index .MATCH 0}}'
+
+  cosign:
+    desc: '{{.TASK}}'
+    dir: '{{.ROOT_DIR}}'
+    label: cosign:{{.PROFILE}}:{{.TARGET}}
+    vars:
+      PROFILE: '{{.PROFILE}}'
+      TARGET: '{{.TARGET}}'
+    sources:
+    - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}
+    generates:
+    - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}.cert
+    - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}.sig
+    cmds:
+    - cmd: >-
+        cosign
+        sign-blob target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}
+        --yes
+        --output-certificate target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}.cert
+        --output-signature target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}.sig
