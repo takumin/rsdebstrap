@@ -13,9 +13,6 @@ vars:
   TARGET: '{{env "BUILD_TARGET" | default "x86_64-unknown-linux-gnu"}}'
 
 includes:
-  tool:
-    taskfile: tool.task.yml
-    internal: true
   setup:
     taskfile: setup.task.yml
     internal: true
