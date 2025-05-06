@@ -25,7 +25,6 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     sources:
     - '**/*.sh'
     - '**/*.bash'
@@ -46,7 +45,6 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     sources:
     - '.*.yml'
     - '.*.yaml'
@@ -69,7 +67,6 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     sources:
     - '.*.toml'
     - '**/*.toml'
@@ -89,7 +86,6 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     sources:
     - '.github/**/*.yml'
     - '.github/**/*.yaml'
