@@ -1,0 +1,3 @@
+---
+packages:
+- name: uutils/coreutils@0.0.30
