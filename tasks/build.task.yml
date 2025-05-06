@@ -44,42 +44,48 @@ tasks:
       TARGET_ARG: '--target={{.TARGET}}{{if contains .TARGET "-linux-" }}.2.17{{end}}'
     cmds:
     - cargo zigbuild {{.PROFILE_ARG}} {{.TARGET_ARG}}
+    - mkdir -p dist
+    - cp target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}} dist/{{.PROJNAME}}-{{.PROFILE}}-{{.TARGET}}
 
   sha256sum:
     desc: '{{.TASK}}'
     label: sha256sum:{{.PROFILE}}:{{.TARGET}}
-    dir: '{{.ROOT_DIR}}/target/{{.TARGET}}/{{.PROFILE}}'
+    dir: '{{.ROOT_DIR}}/dist'
     deps:
     - task: tool:aqua:tag:coreutils
     - task: build
       vars:
         PROFILE: '{{.PROFILE}}'
         TARGET: '{{.TARGET}}'
+    vars:
+      ARTIFACT: '{{.PROJNAME}}-{{.PROFILE}}-{{.TARGET}}'
     sources:
-    - '{{.PROJNAME}}'
+    - '{{.ARTIFACT}}'
     generates:
-    - '{{.PROJNAME}}.sha256sum'
+    - '{{.ARTIFACT}}.sha256sum'
     cmds:
-    - coreutils sha256sum "{{.PROJNAME}}" > "{{.PROJNAME}}.sha256sum"
+    - coreutils sha256sum "{{.ARTIFACT}}" > "{{.ARTIFACT}}.sha256sum"
 
   cosign:
     desc: '{{.TASK}}'
     label: cosign:{{.PROFILE}}:{{.TARGET}}
-    dir: '{{.ROOT_DIR}}/target/{{.TARGET}}/{{.PROFILE}}'
+    dir: '{{.ROOT_DIR}}/dist'
     deps:
     - task: tool:aqua:tag:cosign
     - task: build
       vars:
         PROFILE: '{{.PROFILE}}'
         TARGET: '{{.TARGET}}'
+    vars:
+      ARTIFACT: '{{.PROJNAME}}-{{.PROFILE}}-{{.TARGET}}'
     sources:
-    - '{{.PROJNAME}}'
+    - '{{.ARTIFACT}}'
     generates:
-    - '{{.PROJNAME}}.cert'
-    - '{{.PROJNAME}}.sig'
+    - '{{.ARTIFACT}}.cert'
+    - '{{.ARTIFACT}}.sig'
     cmds:
     - >-
-      cosign sign-blob {{.PROJNAME}}
+      cosign sign-blob {{.ARTIFACT}}
       -y
-      --output-certificate {{.PROJNAME}}.cert
-      --output-signature {{.PROJNAME}}.sig
+      --output-certificate {{.ARTIFACT}}.cert
+      --output-signature {{.ARTIFACT}}.sig
