@@ -4,12 +4,6 @@
 
 version: '3'
 
-vars:
-  PROJNAME:
-    sh: cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].name'
-  TARGET:
-    sh: 'rustc --version --verbose | rg -r "" "^host: "'
-
 includes:
   tool:
     taskfile: tool.task.yml
