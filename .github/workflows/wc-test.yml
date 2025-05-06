@@ -33,24 +33,16 @@ jobs:
       uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         key: test-${{ hashFiles('**/Cargo.lock') }}
-        path: target.tar
-    - name: Extract test cache
-      if: steps.test-cache-restore.outputs.cache-hit == 'true'
-      run: |-
-        tar -xf target.tar
+        path: target/
     - name: Setup test
       run: |-
         task setup:test
     - name: Test
       run: |-
         task test
-    - name: Archive test cache
-      if: github.ref == 'refs/heads/main' && steps.test-cache-restore.outputs.cache-hit != 'true'
-      run: |-
-        tar -cf target.tar --posix ./target/
     - name: Save test cache
       if: github.ref == 'refs/heads/main' && steps.test-cache-restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         key: ${{ steps.test-cache-restore.outputs.cache-primary-key }}
-        path: target.tar
+        path: target/
