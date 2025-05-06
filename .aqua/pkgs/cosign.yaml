@@ -1,3 +1,5 @@
 ---
 packages:
 - name: sigstore/cosign@v2.5.0
+  tags:
+  - cosign
