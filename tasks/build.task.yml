@@ -8,10 +8,9 @@ vars:
   PROJNAME:
     sh: cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].name'
   # default profile
-  PROFILE: debug
+  PROFILE: '{{env "BUILD_PROFILE" | default "debug"}}'
   # default target
-  TARGET:
-    sh: 'rustc --version --verbose | rg -r "" "^host: "'
+  TARGET: '{{env "BUILD_TARGET" | default "x86_64-unknown-linux-gnu"}}'
 
 includes:
   tool:
@@ -24,70 +23,27 @@ tasks:
     silent: true
     cmds:
     - task: build
+    - task: sha256sum
 
   build:
-    internal: true
+    desc: '{{.TASK}}'
     dir: '{{.ROOT_DIR}}'
+    label: build:{{.PROFILE}}:{{.TARGET}}
     deps:
     - task: tool:aqua:tag:build
-      silent: true
     - task: tool:rustup:target:{{.TARGET}}
-      silent: true
     sources:
     - 'Cargo.toml'
     - 'Cargo.lock'
     - 'src/**/*.rs'
     generates:
     - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}
+    - dist/{{.PROJNAME}}-{{.PROFILE}}-{{.TARGET}}
     vars:
-      TARGET: '{{.TARGET}}'
-      PROFILE: '{{.PROFILE}}'
-      BUILD_ARGS: >-
-        {{if eq .PROFILE "release"}}--release{{end}}
-        --target={{.TARGET}}.2.17
-    label: 'build:{{.PROFILE}}:{{.TARGET}}'
+      PROFILE_ARG: '{{if eq .PROFILE "release"}}--release{{end}}'
+      TARGET_ARG: '--target={{.TARGET}}{{if contains .TARGET "-linux-" }}.2.17{{end}}'
     cmds:
-    - mold -run cargo zigbuild {{.BUILD_ARGS}}
-
-  debug:
-    desc: '{{.TASK}}'
-    cmds:
-    - task: build
-      vars:
-        PROFILE: debug
-        TARGET: '{{.TARGET}}'
-
-  debug:*:
-    desc: '{{.TASK}}'
-    cmds:
-    - task: build
-      vars:
-        PROFILE: debug
-        TARGET: '{{index .MATCH 0}}'
-
-  release:
-    desc: '{{.TASK}}'
-    cmds:
-    - task: build
-      vars:
-        PROFILE: release
-        TARGET: '{{.TARGET}}'
-    - task: cosign
-      vars:
-        PROFILE: release
-        TARGET: '{{.TARGET}}'
-
-  release:*:
-    desc: '{{.TASK}}'
-    cmds:
-    - task: build
-      vars:
-        PROFILE: release
-        TARGET: '{{index .MATCH 0}}'
-    - task: cosign
-      vars:
-        PROFILE: release
-        TARGET: '{{index .MATCH 0}}'
+    - cargo zigbuild {{.PROFILE_ARG}} {{.TARGET_ARG}}
 
   sha256sum:
     desc: '{{.TASK}}'
