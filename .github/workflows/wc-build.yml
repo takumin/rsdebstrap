@@ -46,32 +46,35 @@ jobs:
           target/
     - name: Build ${{ matrix.profile }} ${{ matrix.target }}
       run: |-
-        task "build:${PROFILE}:${TARGET}"
-        mkdir dist
-        cp "target/${TARGET}/${PROFILE}/rsdebstrap" "dist/rsdebstrap-${PROFILE}-${TARGET}"
+        task build:build
       env:
-        PROFILE: ${{ matrix.profile }}
-        TARGET: ${{ matrix.target }}
+        BUILD_PROFILE: ${{ matrix.profile }}
+        BUILD_TARGET: ${{ matrix.target }}
+    - name: Generate sha256sum
+      run: |-
+        task build:sha256sum
+      env:
+        BUILD_PROFILE: ${{ matrix.profile }}
+        BUILD_TARGET: ${{ matrix.target }}
+    - name: Verify sha256sum
+      run: |-
+        task build:sha256sum:verify
+      env:
+        BUILD_PROFILE: ${{ matrix.profile }}
+        BUILD_TARGET: ${{ matrix.target }}
+    - name: Generate cosign
+      if: ${{ !startsWith(github.event_name, 'pull') && matrix.profile == 'release' }}
+      run: |-
+        task build:cosign
+      env:
+        BUILD_PROFILE: ${{ matrix.profile }}
+        BUILD_TARGET: ${{ matrix.target }}
     - name: Generate artifact attestation
       if: ${{ !startsWith(github.event_name, 'pull') && matrix.profile == 'release' }}
       uses: actions/attest-build-provenance@db473fddc028af60658334401dc6fa3ffd8669fd # v2.3.0
       with:
         subject-name: rsdebstrap-${{ matrix.target }}
         subject-path: dist/rsdebstrap-release-${{ matrix.target }}
-    - name: Generate sha256sum
-      run: |-
-        cd dist
-        sha256sum "rsdebstrap-${PROFILE}-${TARGET}" | tee "rsdebstrap-${PROFILE}-${TARGET}.sha256sum"
-      env:
-        PROFILE: ${{ matrix.profile }}
-        TARGET: ${{ matrix.target }}
-    - name: Verify sha256sum
-      run: |-
-        cd dist
-        sha256sum -c "rsdebstrap-${PROFILE}-${TARGET}.sha256sum"
-      env:
-        PROFILE: ${{ matrix.profile }}
-        TARGET: ${{ matrix.target }}
     - name: Upload artifact
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
