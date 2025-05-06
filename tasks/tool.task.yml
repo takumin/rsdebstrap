@@ -52,5 +52,3 @@ tasks:
     - rustup target list --installed | rg -q '^{{index .MATCH 0}}$'
     cmds:
     - rustup target add '{{index .MATCH 0}}'
-    - cmd: touch ".task/.done_rustup:target:{{index .MATCH 0}}"
-      silent: true
