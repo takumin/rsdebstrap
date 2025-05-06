@@ -48,6 +48,9 @@ jobs:
     - name: Setup build
       run: |-
         task setup:build
+      env:
+        BUILD_PROFILE: ${{ matrix.profile }}
+        BUILD_TARGET: ${{ matrix.target }}
     - name: Build ${{ matrix.profile }} ${{ matrix.target }}
       run: |-
         task build:build
