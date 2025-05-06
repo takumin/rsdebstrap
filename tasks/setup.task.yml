@@ -16,3 +16,18 @@ tasks:
     deps:
     - task: tool:aqua:tag:rustup
     - task: tool:cargo:fetch
+
+  build:
+    desc: '{{.TASK}}'
+    silent: true
+    vars:
+      TARGET: '{{env "BUILD_TARGET" | default "x86_64-unknown-linux-gnu"}}'
+    deps:
+    - task: tool:aqua:tag:rustup
+    - task: tool:aqua:tag:cargo-zigbuild
+    - task: tool:aqua:tag:zig
+    - task: tool:aqua:tag:mold
+    - task: tool:aqua:tag:coreutils
+    - task: tool:aqua:tag:cosign
+    - task: tool:rustup:target:{{.TARGET}}
+    - task: tool:cargo:fetch

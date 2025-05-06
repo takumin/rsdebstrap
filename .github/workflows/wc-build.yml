@@ -39,9 +39,9 @@ jobs:
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
         path: ~/.cargo/registry
-    - name: Fetch dependencies
+    - name: Setup build
       run: |-
-        task tool:cargo:fetch
+        task setup:build
     - name: Build ${{ matrix.profile }} ${{ matrix.target }}
       run: |-
         task build:build
