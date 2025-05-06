@@ -54,6 +54,7 @@ tasks:
     - exclude: '.git/**/*'
     - exclude: '.task/**/*'
     - exclude: 'target/**/*'
+    - exclude: 'dist/**/*'
     generates:
     - .task/.done_{{.TASK}}
     cmds:
@@ -75,6 +76,7 @@ tasks:
     - exclude: '.git/**/*'
     - exclude: '.task/**/*'
     - exclude: 'target/**/*'
+    - exclude: 'dist/**/*'
     generates:
     - .task/.done_{{.TASK}}
     cmds:
