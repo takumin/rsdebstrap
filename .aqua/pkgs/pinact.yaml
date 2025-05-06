@@ -2,4 +2,4 @@
 packages:
 - name: suzuki-shunsuke/pinact@v3.1.0
   tags:
-  - format:pinact
+  - pinact
