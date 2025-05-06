@@ -21,10 +21,10 @@ tasks:
     - .aqua/**/*.yml
     - .aqua/**/*.yaml
     generates:
-    - .task/.done_{{.TASK}}:{{.TAG}}
+    - .task/.done_aqua:install:{{.TAG}}
     cmds:
     - aqua install {{.ARGS}}
-    - cmd: touch .task/.done_{{.TASK}}:{{.TAG}}
+    - cmd: touch .task/.done_aqua:install:{{.TAG}}
       silent: true
 
   aqua:all:
