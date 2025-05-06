@@ -66,6 +66,20 @@ tasks:
     cmds:
     - coreutils sha256sum "{{.ARTIFACT}}" > "{{.ARTIFACT}}.sha256sum"
 
+  sha256sum:verify:
+    desc: '{{.TASK}}'
+    label: sha256sum:verify:{{.PROFILE}}:{{.TARGET}}
+    dir: '{{.ROOT_DIR}}/dist'
+    deps:
+    - task: sha256sum
+      vars:
+        PROFILE: '{{.PROFILE}}'
+        TARGET: '{{.TARGET}}'
+    vars:
+      ARTIFACT: '{{.PROJNAME}}-{{.PROFILE}}-{{.TARGET}}'
+    cmds:
+    - coreutils sha256sum -c "{{.ARTIFACT}}.sha256sum"
+
   cosign:
     desc: '{{.TASK}}'
     label: cosign:{{.PROFILE}}:{{.TARGET}}
