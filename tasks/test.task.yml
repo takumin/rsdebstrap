@@ -5,8 +5,8 @@
 version: '3'
 
 includes:
-  tool:
-    taskfile: tool.task.yml
+  setup:
+    taskfile: setup.task.yml
     internal: true
 
 tasks:
@@ -21,8 +21,7 @@ tasks:
     label: test:workspace
     dir: '{{.ROOT_DIR}}'
     deps:
-    - task: tool:aqua:tag:rustup
-    - task: tool:cargo:fetch
+    - task: setup:test
     sources:
     - 'Cargo.toml'
     - 'Cargo.lock'

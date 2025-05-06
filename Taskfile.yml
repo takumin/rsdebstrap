@@ -6,6 +6,7 @@ version: '3'
 
 includes:
   tool: ./tasks/tool.task.yml
+  setup: ./tasks/setup.task.yml
   format: ./tasks/format.task.yml
   reviewdog: ./tasks/reviewdog.task.yml
   test: ./tasks/test.task.yml
