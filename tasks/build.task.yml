@@ -89,6 +89,23 @@ tasks:
         PROFILE: release
         TARGET: '{{index .MATCH 0}}'
 
+  sha256sum:
+    desc: '{{.TASK}}'
+    label: sha256sum:{{.PROFILE}}:{{.TARGET}}
+    dir: '{{.ROOT_DIR}}/target/{{.TARGET}}/{{.PROFILE}}'
+    deps:
+    - task: tool:aqua:tag:coreutils
+    - task: build
+      vars:
+        PROFILE: '{{.PROFILE}}'
+        TARGET: '{{.TARGET}}'
+    sources:
+    - '{{.PROJNAME}}'
+    generates:
+    - '{{.PROJNAME}}.sha256sum'
+    cmds:
+    - coreutils sha256sum "{{.PROJNAME}}" > "{{.PROJNAME}}.sha256sum"
+
   cosign:
     desc: '{{.TASK}}'
     dir: '{{.ROOT_DIR}}'
