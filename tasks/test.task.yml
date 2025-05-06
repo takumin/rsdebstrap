@@ -34,9 +34,6 @@ tasks:
     - 'Cargo.lock'
     - 'src/**/*.rs'
     - 'tests/**/*.rs'
-    - exclude: '.git/**/*'
-    - exclude: '.task/**/*'
-    - exclude: 'target/**/*'
     generates:
     - .task/.done_{{.TASK}}
     cmds:
