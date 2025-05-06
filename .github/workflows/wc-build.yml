@@ -55,6 +55,7 @@ jobs:
       run: |-
         task build:build
       env:
+        CARGO_INCREMENTAL: ${{ !startsWith(github.ref, 'refs/tag/') && '1' || '0' }}
         BUILD_PROFILE: ${{ matrix.profile }}
         BUILD_TARGET: ${{ matrix.target }}
     - name: Generate sha256sum
