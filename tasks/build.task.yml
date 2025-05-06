@@ -32,6 +32,7 @@ tasks:
     deps:
     - task: tool:aqua:tag:build
     - task: tool:rustup:target:{{.TARGET}}
+    - task: tool:cargo:fetch
     sources:
     - 'Cargo.toml'
     - 'Cargo.lock'
@@ -43,7 +44,7 @@ tasks:
       PROFILE_ARG: '{{if eq .PROFILE "release"}}--release{{end}}'
       TARGET_ARG: '--target={{.TARGET}}{{if contains .TARGET "-linux-" }}.2.17{{end}}'
     cmds:
-    - cargo zigbuild {{.PROFILE_ARG}} {{.TARGET_ARG}}
+    - cargo zigbuild --frozen {{.PROFILE_ARG}} {{.TARGET_ARG}}
     - mkdir -p dist
     - cp target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}} dist/{{.PROJNAME}}-{{.PROFILE}}-{{.TARGET}}
 

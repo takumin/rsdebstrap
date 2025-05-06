@@ -22,6 +22,7 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     deps:
     - task: tool:aqua:tag:build
+    - task: tool:cargo:fetch
     sources:
     - 'Cargo.toml'
     - 'Cargo.lock'
@@ -30,6 +31,6 @@ tasks:
     generates:
     - .task/.done_{{.TASK}}
     cmds:
-    - cargo test --workspace
+    - cargo test --frozen --workspace
     - cmd: touch .task/.done_{{.TASK}}
       silent: true
