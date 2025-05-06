@@ -12,7 +12,6 @@ tasks:
     - task: aqua:all
 
   aqua:
-    silent: true
     internal: true
     label: aqua:{{.TAG}}
     dir: '{{.ROOT_DIR}}'

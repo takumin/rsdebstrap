@@ -37,7 +37,6 @@ tasks:
     label: 'reviewdog:{{.REVIEWDOG_RUNNER}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     cmds:
     - >-
       reviewdog
@@ -49,7 +48,6 @@ tasks:
     desc: '{{.TASK}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     sources:
     - '**/*'
     - '.*/**/*'
@@ -69,7 +67,6 @@ tasks:
     desc: '{{.TASK}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     sources:
     - '**/*.sh'
     - '**/*.bash'
@@ -91,7 +88,6 @@ tasks:
     desc: '{{.TASK}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     sources:
     - '.github/**/*.yml'
     - '.github/**/*.yaml'
@@ -108,7 +104,6 @@ tasks:
     desc: '{{.TASK}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     sources:
     - '.github/**/*.yml'
     - '.github/**/*.yaml'
@@ -125,7 +120,6 @@ tasks:
     desc: '{{.TASK}}'
     deps:
     - task: tool:aqua:tag:{{.TASK}}
-      silent: true
     sources:
     - '.github/**/*.yml'
     - '.github/**/*.yaml'
