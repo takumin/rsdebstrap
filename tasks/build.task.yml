@@ -16,6 +16,9 @@ includes:
   tool:
     taskfile: tool.task.yml
     internal: true
+  setup:
+    taskfile: setup.task.yml
+    internal: true
 
 tasks:
   default:
@@ -30,12 +33,10 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     label: build:{{.PROFILE}}:{{.TARGET}}
     deps:
-    - task: tool:aqua:tag:rustup
-    - task: tool:aqua:tag:cargo-zigbuild
-    - task: tool:aqua:tag:zig
-    - task: tool:aqua:tag:mold
-    - task: tool:rustup:target:{{.TARGET}}
-    - task: tool:cargo:fetch
+    - task: setup:build
+      vars:
+        PROFILE: '{{.PROFILE}}'
+        TARGET: '{{.TARGET}}'
     sources:
     - 'Cargo.toml'
     - 'Cargo.lock'
@@ -57,7 +58,10 @@ tasks:
     label: sha256sum:{{.PROFILE}}:{{.TARGET}}
     dir: '{{.ROOT_DIR}}/dist'
     deps:
-    - task: tool:aqua:tag:coreutils
+    - task: setup:build
+      vars:
+        PROFILE: '{{.PROFILE}}'
+        TARGET: '{{.TARGET}}'
     - task: build
       vars:
         PROFILE: '{{.PROFILE}}'
@@ -76,7 +80,10 @@ tasks:
     label: sha256sum:verify:{{.PROFILE}}:{{.TARGET}}
     dir: '{{.ROOT_DIR}}/dist'
     deps:
-    - task: tool:aqua:tag:coreutils
+    - task: setup:build
+      vars:
+        PROFILE: '{{.PROFILE}}'
+        TARGET: '{{.TARGET}}'
     - task: sha256sum
       vars:
         PROFILE: '{{.PROFILE}}'
@@ -91,7 +98,10 @@ tasks:
     label: cosign:{{.PROFILE}}:{{.TARGET}}
     dir: '{{.ROOT_DIR}}/dist'
     deps:
-    - task: tool:aqua:tag:cosign
+    - task: setup:build
+      vars:
+        PROFILE: '{{.PROFILE}}'
+        TARGET: '{{.TARGET}}'
     - task: build
       vars:
         PROFILE: '{{.PROFILE}}'
