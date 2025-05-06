@@ -44,10 +44,11 @@ tasks:
     - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}
     - dist/{{.PROJNAME}}-{{.PROFILE}}-{{.TARGET}}
     vars:
+      MOLD_RUN: '{{if contains "-linux-" .TARGET}}mold -run{{end}}'
       PROFILE_ARG: '{{if eq .PROFILE "release"}}--release{{end}}'
-      TARGET_ARG: '--target={{.TARGET}}{{if contains .TARGET "-linux-" }}.2.17{{end}}'
+      TARGET_ARG: '--target={{.TARGET}}{{if contains "-linux-" .TARGET}}.2.17{{end}}'
     cmds:
-    - cargo zigbuild --frozen {{.PROFILE_ARG}} {{.TARGET_ARG}}
+    - '{{.MOLD_RUN}} cargo zigbuild --frozen {{.PROFILE_ARG}} {{.TARGET_ARG}}'
     - mkdir -p dist
     - cp target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}} dist/{{.PROJNAME}}-{{.PROFILE}}-{{.TARGET}}
 
