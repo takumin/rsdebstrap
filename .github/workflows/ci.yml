@@ -42,8 +42,6 @@ jobs:
   # Test
   ##############################################################################
   test:
-    needs:
-    - fetch
     name: Test
     if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     permissions:
@@ -53,8 +51,6 @@ jobs:
   # Build
   ##############################################################################
   build:
-    needs:
-    - fetch
     name: Build
     permissions:
       contents: read
