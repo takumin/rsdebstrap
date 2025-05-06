@@ -46,5 +46,11 @@ tasks:
 
   rustup:target:*:
     desc: '{{.TASK}}'
+    label: rustup:target:{{index .MATCH 0}}
+    dir: '{{.ROOT_DIR}}'
+    status:
+    - rustup target list --installed | rg -q '^{{index .MATCH 0}}$'
     cmds:
-    - rustup target list --installed | rg -q '^{{index .MATCH 0}}$' || rustup target add '{{index .MATCH 0}}'
+    - rustup target add '{{index .MATCH 0}}'
+    - cmd: touch ".task/.done_rustup:target:{{index .MATCH 0}}"
+      silent: true
