@@ -2,4 +2,4 @@
 packages:
 - name: rui314/mold@v2.39.0
   tags:
-  - build
+  - mold

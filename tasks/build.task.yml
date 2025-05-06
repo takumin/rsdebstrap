@@ -30,7 +30,10 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     label: build:{{.PROFILE}}:{{.TARGET}}
     deps:
-    - task: tool:aqua:tag:build
+    - task: tool:aqua:tag:rustup
+    - task: tool:aqua:tag:cargo-zigbuild
+    - task: tool:aqua:tag:zig
+    - task: tool:aqua:tag:mold
     - task: tool:rustup:target:{{.TARGET}}
     - task: tool:cargo:fetch
     sources:
@@ -72,6 +75,7 @@ tasks:
     label: sha256sum:verify:{{.PROFILE}}:{{.TARGET}}
     dir: '{{.ROOT_DIR}}/dist'
     deps:
+    - task: tool:aqua:tag:coreutils
     - task: sha256sum
       vars:
         PROFILE: '{{.PROFILE}}'

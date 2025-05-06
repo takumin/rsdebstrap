@@ -21,7 +21,7 @@ tasks:
     label: test:workspace
     dir: '{{.ROOT_DIR}}'
     deps:
-    - task: tool:aqua:tag:build
+    - task: tool:aqua:tag:rustup
     - task: tool:cargo:fetch
     sources:
     - 'Cargo.toml'

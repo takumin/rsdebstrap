@@ -2,4 +2,4 @@
 packages:
 - name: ziglang/zig@0.14.0
   tags:
-  - build
+  - zig
