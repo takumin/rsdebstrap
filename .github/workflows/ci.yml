@@ -31,9 +31,19 @@ jobs:
       pull-requests: write
     uses: ./.github/workflows/wc-reviewdog.yml
   ##############################################################################
+  # Fetch
+  ##############################################################################
+  fetch:
+    name: Fetch
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wc-fetch.yml
+  ##############################################################################
   # Test
   ##############################################################################
   test:
+    needs:
+    - fetch
     name: Test
     if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     permissions:
@@ -43,6 +53,8 @@ jobs:
   # Build
   ##############################################################################
   build:
+    needs:
+    - fetch
     name: Build
     permissions:
       contents: read
@@ -66,6 +78,7 @@ jobs:
     needs:
     - format
     - reviewdog
+    - fetch
     - test
     - build
     - release

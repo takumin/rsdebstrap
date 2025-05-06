@@ -1,14 +1,14 @@
 ---
-name: Test
+name: Fetch
 on:
   workflow_call:
 permissions: {}
 concurrency:
-  group: test-${{ github.ref }}
+  group: fetch-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  test:
-    name: Test
+  fetch:
+    name: Fetch
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -18,6 +18,9 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       with:
         persist-credentials: false
+        sparse-checkout: |-
+          .aqua
+          tasks
     - name: Setup aqua
       uses: aquaproj/aqua-installer@5e54e5cee8a95ee2ce7c04cb993da6dfad13e59c # v3.1.2
       with:
@@ -28,6 +31,12 @@ jobs:
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
         path: ~/.cargo/registry
-    - name: Test
+    - name: Fetch dependencies
       run: |-
-        task test
+        task tool:cargo:fetch
+    - name: Save dependencies cache
+      if: github.ref == 'refs/heads/main' && steps.cache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        key: ${{ steps.cache-restore.outputs.cache-primary-key }}
+        path: ~/.cargo/registry

@@ -60,3 +60,16 @@ tasks:
     - rustup target list --installed | rg -q '^{{index .MATCH 0}}$'
     cmds:
     - rustup target add '{{index .MATCH 0}}'
+
+  cargo:fetch:
+    desc: '{{.TASK}}'
+    label: cargo:fetch
+    dir: '{{.ROOT_DIR}}'
+    sources:
+    - 'Cargo.lock'
+    generates:
+    - .task/.done_cargo:fetch
+    cmds:
+    - cargo fetch --locked
+    - cmd: touch .task/.done_cargo:fetch
+      silent: true
