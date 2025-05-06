@@ -40,6 +40,6 @@ tasks:
     generates:
     - .task/.done_{{.TASK}}
     cmds:
-    - mold -run cargo test --workspace
+    - cargo test --workspace
     - cmd: touch .task/.done_{{.TASK}}
       silent: true
