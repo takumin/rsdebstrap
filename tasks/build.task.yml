@@ -108,20 +108,22 @@ tasks:
 
   cosign:
     desc: '{{.TASK}}'
-    dir: '{{.ROOT_DIR}}'
     label: cosign:{{.PROFILE}}:{{.TARGET}}
-    vars:
-      PROFILE: '{{.PROFILE}}'
-      TARGET: '{{.TARGET}}'
+    dir: '{{.ROOT_DIR}}/target/{{.TARGET}}/{{.PROFILE}}'
+    deps:
+    - task: tool:aqua:tag:cosign
+    - task: build
+      vars:
+        PROFILE: '{{.PROFILE}}'
+        TARGET: '{{.TARGET}}'
     sources:
-    - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}
+    - '{{.PROJNAME}}'
     generates:
-    - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}.cert
-    - target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}.sig
+    - '{{.PROJNAME}}.cert'
+    - '{{.PROJNAME}}.sig'
     cmds:
-    - cmd: >-
-        cosign
-        sign-blob target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}
-        --yes
-        --output-certificate target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}.cert
-        --output-signature target/{{.TARGET}}/{{.PROFILE}}/{{.PROJNAME}}.sig
+    - >-
+      cosign sign-blob {{.PROJNAME}}
+      -y
+      --output-certificate {{.PROJNAME}}.cert
+      --output-signature {{.PROJNAME}}.sig
