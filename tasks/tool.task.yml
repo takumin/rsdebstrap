@@ -13,7 +13,7 @@ tasks:
 
   aqua:
     internal: true
-    label: aqua:{{.TAG}}
+    label: aqua:install:{{.TAG}}
     dir: '{{.ROOT_DIR}}'
     sources:
     - .aqua/*.yml
