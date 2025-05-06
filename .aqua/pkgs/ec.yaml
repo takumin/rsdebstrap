@@ -2,4 +2,4 @@
 packages:
 - name: editorconfig-checker/editorconfig-checker@v3.2.1
   tags:
-  - reviewdog:editorconfig-checker
+  - editorconfig-checker
