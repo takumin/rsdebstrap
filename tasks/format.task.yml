@@ -102,6 +102,8 @@ tasks:
   rustfmt:
     desc: '{{.TASK}}'
     dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: tool:rustup:component:rustfmt
     sources:
     - '**/*.rs'
     - '.*/**/*.rs'

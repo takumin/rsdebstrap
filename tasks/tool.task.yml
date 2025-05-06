@@ -43,6 +43,15 @@ tasks:
         TAG: '{{index .MATCH 0}}'
         ARGS: -t {{index .MATCH 0}}
 
+  rustup:component:*:
+    desc: '{{.TASK}}'
+    label: rustup:component:{{index .MATCH 0}}
+    dir: '{{.ROOT_DIR}}'
+    status:
+    - rustup component list --installed | rg -q '^{{index .MATCH 0}}'
+    cmds:
+    - rustup component add '{{index .MATCH 0}}'
+
   rustup:target:*:
     desc: '{{.TASK}}'
     label: rustup:target:{{index .MATCH 0}}
