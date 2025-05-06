@@ -2,4 +2,4 @@
 packages:
 - name: google/yamlfmt@v0.16.0
   tags:
-  - format:yamlfmt
+  - yamlfmt

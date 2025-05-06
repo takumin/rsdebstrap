@@ -24,7 +24,7 @@ tasks:
     desc: '{{.TASK}}'
     dir: '{{.ROOT_DIR}}'
     deps:
-    - task: tool:aqua:tag:{{.TASK}}
+    - task: tool:aqua:tag:shfmt
     sources:
     - '**/*.sh'
     - '**/*.bash'
@@ -45,7 +45,7 @@ tasks:
     desc: '{{.TASK}}'
     dir: '{{.ROOT_DIR}}'
     deps:
-    - task: tool:aqua:tag:{{.TASK}}
+    - task: tool:aqua:tag:yamlfmt
     sources:
     - '.*.yml'
     - '.*.yaml'
@@ -68,7 +68,7 @@ tasks:
     desc: '{{.TASK}}'
     dir: '{{.ROOT_DIR}}'
     deps:
-    - task: tool:aqua:tag:{{.TASK}}
+    - task: tool:aqua:tag:taplo
     sources:
     - '.*.toml'
     - '**/*.toml'
@@ -88,7 +88,7 @@ tasks:
     desc: '{{.TASK}}'
     dir: '{{.ROOT_DIR}}'
     deps:
-    - task: tool:aqua:tag:{{.TASK}}
+    - task: tool:aqua:tag:pinact
     sources:
     - '.github/**/*.yml'
     - '.github/**/*.yaml'
