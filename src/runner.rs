@@ -1,4 +1,3 @@
-use crate::cli::ApplyArgs;
 use crate::config::Profile;
 use anyhow::{Context, Result};
 use std::ffi::OsString;
@@ -69,7 +68,7 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     }
 }
 
-pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
+pub fn run_mmdebstrap(profile: &Profile, dry_run: &bool, debug: &bool) -> Result<()> {
     let mut cmd = Command::new("mmdebstrap");
     let mut cmd_args = Vec::<OsString>::new();
 
@@ -106,11 +105,11 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
             .collect::<Vec<_>>()
             .join(" ")
     );
-    if args.debug || args.dry_run {
+    if *debug || *dry_run {
         println!("[DEBUG] would run: {}", display);
     }
 
-    if args.dry_run {
+    if *dry_run {
         return Ok(());
     }
 

@@ -34,7 +34,7 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
     };
 
     // This should succeed as we're not actually running mmdebstrap
-    let result = run_mmdebstrap(&profile, &args);
+    let result = run_mmdebstrap(&profile, &args.dry_run, &args.debug);
     assert!(result.is_ok());
 
     Ok(())
@@ -71,7 +71,7 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
         debug: false,
     };
 
-    let result = run_mmdebstrap(&profile, &args);
+    let result = run_mmdebstrap(&profile, &args.dry_run, &args.debug);
     assert!(result.is_ok());
 
     Ok(())
