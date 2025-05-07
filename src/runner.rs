@@ -8,7 +8,9 @@ use std::process::Command;
 
 pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
     // Check if mmdebstrap is available
-    let status = Command::new("which").arg("mmdebstrap").status()
+    let status = Command::new("which")
+        .arg("mmdebstrap")
+        .status()
         .context("Failed to execute 'which' command")?;
     if !status.success() {
         bail!("mmdebstrap command not found. Please install mmdebstrap first.");
