@@ -58,18 +58,16 @@ jobs:
       uses: aquaproj/aqua-installer@5e54e5cee8a95ee2ce7c04cb993da6dfad13e59c # v3.1.2
       with:
         aqua_version: v2.51.1
-    - name: Restore dependencies cache
-      id: deps-cache-restore
+    - name: Restore cargo deps cache
       uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
-        path: ~/.cargo/registry
-    - name: Restore setup build cache
-      id: setup-build-cache-restore
+        path: ~/.cargo/registry/
+    - name: Restore setup build aqua cache
       uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
-        key: setup-build-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
-        path: ~/.local/share/aquaproj-aqua
+        key: setup-build-aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
+        path: ~/.local/share/aquaproj-aqua/
     - name: Restore build cache
       id: build-cache-restore
       uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
