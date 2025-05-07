@@ -27,7 +27,7 @@ fn main() -> Result<()> {
                 println!("dry run enabled. Command will not be executed.");
                 return Ok(());
             }
-            match runner::run_mmdebstrap(&profile, opts) {
+            match runner::run_mmdebstrap(&profile, opts.dry_run, opts.debug) {
                 Ok(_) => {}
                 Err(e) => {
                     eprintln!("error running mmdebstrap: {}", e);
