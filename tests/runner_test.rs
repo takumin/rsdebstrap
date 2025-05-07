@@ -1,8 +1,8 @@
 use anyhow::Result;
 use camino::Utf8PathBuf;
-use rsdebstrap::cli::{ApplyArgs, LogLevel};
+use rsdebstrap::command::MockCommandExecutor;
 use rsdebstrap::config::{Format, Mmdebstrap, Mode, Profile, Variant};
-use rsdebstrap::runner::run_mmdebstrap;
+use rsdebstrap::runner::run_mmdebstrap_exec;
 
 #[test]
 fn test_run_mmdebstrap_dry_run() -> Result<()> {
@@ -27,25 +27,22 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
         },
     };
 
-    let args = ApplyArgs {
-        file: Utf8PathBuf::from("test.yml"),
-        log_level: LogLevel::Info,
-        dry_run: true,
+    // Mock executor that would succeed if called
+    let executor = MockCommandExecutor {
+        expect_success: true,
     };
 
-    // This should succeed as we're not actually running mmdebstrap
-    let result = run_mmdebstrap(&profile, args.dry_run);
+    // This should succeed as we're using dry_run: true, so executor won't be used
+    let result = run_mmdebstrap_exec(&profile, true, &executor);
     assert!(result.is_ok());
 
     Ok(())
 }
 
-// Skip this test by default since it would require mmdebstrap to be installed
 #[test]
-#[ignore]
-fn test_run_mmdebstrap_command_building() -> Result<()> {
+fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
     let profile = Profile {
-        dir: Utf8PathBuf::from("/tmp/test-run"),
+        dir: Utf8PathBuf::from("/tmp/test-success"),
         mmdebstrap: Mmdebstrap {
             suite: "bookworm".to_string(),
             target: "rootfs.tar.zst".to_string(),
@@ -65,14 +62,49 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
         },
     };
 
-    let args = ApplyArgs {
-        file: Utf8PathBuf::from("test.yml"),
-        log_level: LogLevel::Info,
-        dry_run: true,
+    // Create a mock executor that will "succeed"
+    let executor = MockCommandExecutor {
+        expect_success: true,
     };
 
-    let result = run_mmdebstrap(&profile, args.dry_run);
+    // This should succeed because our mock is configured to succeed
+    let result = run_mmdebstrap_exec(&profile, false, &executor);
     assert!(result.is_ok());
+
+    Ok(())
+}
+
+#[test]
+fn test_run_mmdebstrap_with_mock_failure() -> Result<()> {
+    let profile = Profile {
+        dir: Utf8PathBuf::from("/tmp/test-failure"),
+        mmdebstrap: Mmdebstrap {
+            suite: "bookworm".to_string(),
+            target: "rootfs.tar.zst".to_string(),
+            mode: Mode::Auto,
+            format: Format::Auto,
+            variant: Variant::Debootstrap,
+            components: vec!["main".to_string(), "contrib".to_string()],
+            architectures: vec!["amd64".to_string()],
+            include: vec!["curl".to_string(), "ca-certificates".to_string()],
+            keyring: vec![],
+            aptopt: vec![],
+            dpkgopt: vec![],
+            setup_hook: vec![],
+            extract_hook: vec![],
+            essential_hook: vec![],
+            customize_hook: vec![],
+        },
+    };
+
+    // Create a mock executor that will "fail"
+    let executor = MockCommandExecutor {
+        expect_success: false,
+    };
+
+    // This should fail because our mock is configured to fail
+    let result = run_mmdebstrap_exec(&profile, false, &executor);
+    assert!(result.is_err());
 
     Ok(())
 }
