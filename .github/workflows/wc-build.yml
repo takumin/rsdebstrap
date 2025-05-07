@@ -63,13 +63,13 @@ jobs:
       uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
-        path: ~/.cargo/registry
+        path: ~/.cargo/registry/
     - name: Restore setup build cache
       id: setup-build-cache-restore
       uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
-        key: setup-build-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
-        path: ~/.local/share/aquaproj-aqua
+        key: setup-build-aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
+        path: ~/.local/share/aquaproj-aqua/
     - name: Restore build cache
       id: build-cache-restore
       uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
