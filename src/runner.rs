@@ -22,6 +22,26 @@ fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
     }
 }
 
+/// Adds a flag and its associated values to the command arguments.
+///
+/// This function iterates over the provided `values` slice and, for each non-empty string,
+/// appends the `flag` and the `value` to the `cmd_args` vector. It does not perform any
+/// trimming or preprocessing on the `values`; the caller is responsible for ensuring that
+/// the input is in the desired format.
+///
+/// # Arguments
+/// * `cmd_args` - A mutable reference to the vector of command-line arguments.
+/// * `flag` - The flag to be added for each value.
+/// * `values` - A slice of strings representing the values to be associated with the flag.
+///
+/// # Example
+/// ```
+/// let mut cmd_args = Vec::new();
+/// let flag = "--example";
+/// let values = vec!["value1".to_string(), "".to_string(), "value2".to_string()];
+/// add_flags(&mut cmd_args, flag, &values);
+/// assert_eq!(cmd_args, vec!["--example", "value1", "--example", "value2"]);
+/// ```
 fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     for value in values {
         if !value.is_empty() {
