@@ -1,4 +1,5 @@
 use anyhow::Result;
+use camino::Utf8PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -26,7 +27,7 @@ pub enum Commands {
 pub struct ApplyArgs {
     /// Path to the YAML file defining the profile
     #[arg(short, long)]
-    pub file: Option<String>,
+    pub file: Option<Utf8PathBuf>,
 
     /// Do not run, just show what would be done
     #[arg(long)]
@@ -41,7 +42,7 @@ pub struct ApplyArgs {
 pub struct ValidateArgs {
     /// Path to the YAML file to validate
     #[arg(short, long)]
-    pub file: String,
+    pub file: Utf8PathBuf,
 }
 
 pub fn parse_args() -> Result<Cli> {

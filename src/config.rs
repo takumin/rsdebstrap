@@ -1,4 +1,5 @@
 use anyhow::{Context, Ok, Result};
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs::File;
@@ -6,7 +7,7 @@ use std::io::BufReader;
 
 #[derive(Debug, Deserialize)]
 pub struct Profile {
-    pub dir: String,
+    pub dir: Utf8PathBuf,
     pub mmdebstrap: Mmdebstrap,
 }
 
@@ -167,7 +168,7 @@ pub struct Mmdebstrap {
     pub customize_hook: Vec<String>,
 }
 
-pub fn load_profile(path: &str) -> Result<Profile> {
+pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     let file = File::open(path).with_context(|| format!("failed to load file: {}", path))?;
     let reader = BufReader::new(file);
     let profile: Profile = serde_yaml::from_reader(reader)
