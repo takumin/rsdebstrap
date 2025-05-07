@@ -76,7 +76,7 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
 
     add_flag(&mut cmd_args, "--mode", &profile.mmdebstrap.mode.to_string());
     add_flag(&mut cmd_args, "--format", &profile.mmdebstrap.format.to_string());
-    add_flag(&mut cmd_args, "--variant", profile.mmdebstrap.variant.trim());
+    add_flag(&mut cmd_args, "--variant", &profile.mmdebstrap.variant.to_string());
 
     add_flag(&mut cmd_args, "--architectures", &profile.mmdebstrap.architectures.join(","));
     add_flag(&mut cmd_args, "--components", &profile.mmdebstrap.components.join(","));

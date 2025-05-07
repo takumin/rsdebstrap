@@ -10,6 +10,51 @@ pub struct Profile {
     pub mmdebstrap: Mmdebstrap,
 }
 
+/// Variant defines the package selection strategy for Debian bootstrap
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Variant {
+    /// The `required` set plus all packages with `Priority:important` (default)
+    #[serde(alias = "")]
+    #[default]
+    Debootstrap,
+    /// Installs nothing by default (not even `Essential:yes` packages)
+    Extract,
+    /// Installs nothing by default (not even `Essential:yes` packages)
+    Custom,
+    /// `Essential:yes` packages
+    Essential,
+    /// The `essential` set plus `apt`
+    Apt,
+    /// The `essential` set plus all packages with `Priority:required`
+    Required,
+    /// The `essential` set plus all packages with `Priority:required`
+    Minbase,
+    /// The `essential` set plus `apt` and `build-essential`
+    Buildd,
+    /// The `required` set plus all packages with `Priority:important`
+    Important,
+    /// The `important` set plus all packages with `Priority:standard`
+    Standard,
+}
+
+impl fmt::Display for Variant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Variant::Debootstrap => write!(f, "debootstrap"),
+            Variant::Extract => write!(f, "extract"),
+            Variant::Custom => write!(f, "custom"),
+            Variant::Essential => write!(f, "essential"),
+            Variant::Apt => write!(f, "apt"),
+            Variant::Required => write!(f, "required"),
+            Variant::Minbase => write!(f, "minbase"),
+            Variant::Buildd => write!(f, "buildd"),
+            Variant::Important => write!(f, "important"),
+            Variant::Standard => write!(f, "standard"),
+        }
+    }
+}
+
 /// Mode for mmdebstrap operation
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -97,7 +142,7 @@ pub struct Mmdebstrap {
     #[serde(default)]
     pub format: Format,
     #[serde(default)]
-    pub variant: String,
+    pub variant: Variant,
     #[serde(default)]
     pub architectures: Vec<String>,
     #[serde(default)]

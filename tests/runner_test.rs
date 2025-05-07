@@ -1,6 +1,6 @@
 use anyhow::Result;
 use rsdebstrap::cli::ApplyArgs;
-use rsdebstrap::config::{Format, Mmdebstrap, Mode, Profile};
+use rsdebstrap::config::{Format, Mmdebstrap, Mode, Profile, Variant};
 use rsdebstrap::runner::run_mmdebstrap;
 
 #[test]
@@ -12,7 +12,7 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
             target: "rootfs.tar.zst".to_string(),
             mode: Mode::Auto,
             format: Format::Auto,
-            variant: "apt".to_string(),
+            variant: Variant::Debootstrap,
             components: vec!["main".to_string(), "contrib".to_string()],
             architectures: vec!["amd64".to_string()],
             include: vec!["curl".to_string(), "ca-certificates".to_string()],
@@ -50,7 +50,7 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
             target: "rootfs.tar.zst".to_string(),
             mode: Mode::Auto,
             format: Format::Auto,
-            variant: "apt".to_string(),
+            variant: Variant::Debootstrap,
             components: vec!["main".to_string(), "contrib".to_string()],
             architectures: vec!["amd64".to_string()],
             include: vec!["curl".to_string(), "ca-certificates".to_string()],
