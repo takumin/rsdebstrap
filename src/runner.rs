@@ -6,91 +6,74 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
+    if !value.is_empty() {
+        cmd_args.push(flag.into());
+        cmd_args.push(value.into());
+    }
+}
+
+fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
+    for value in values {
+        if !value.is_empty() {
+            cmd_args.push(flag.into());
+            cmd_args.push(value.into());
+        }
+    }
+}
+
 pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
     let mut cmd = Command::new("mmdebstrap");
     let mut cmd_args = Vec::<OsString>::new();
 
-    let mode = profile.mmdebstrap.mode.trim();
-    if !mode.is_empty() {
-        cmd_args.push("--mode".into());
-        cmd_args.push(mode.into());
-    }
+    add_flag(&mut cmd_args, "--mode", profile.mmdebstrap.mode.trim());
+    add_flag(&mut cmd_args, "--format", profile.mmdebstrap.format.trim());
+    add_flag(
+        &mut cmd_args,
+        "--variant",
+        profile.mmdebstrap.variant.trim(),
+    );
 
-    let format = profile.mmdebstrap.format.trim();
-    if !format.is_empty() {
-        cmd_args.push("--format".into());
-        cmd_args.push(format.into());
-    }
+    add_flag(
+        &mut cmd_args,
+        "--architectures",
+        &profile.mmdebstrap.architectures.join(","),
+    );
+    add_flag(
+        &mut cmd_args,
+        "--components",
+        &profile.mmdebstrap.components.join(","),
+    );
+    add_flag(
+        &mut cmd_args,
+        "--include",
+        &profile.mmdebstrap.include.join(","),
+    );
 
-    let variant = profile.mmdebstrap.variant.trim();
-    if !variant.is_empty() {
-        cmd_args.push("--variant".into());
-        cmd_args.push(variant.into());
-    }
+    add_flags(&mut cmd_args, "--keyring", &profile.mmdebstrap.keyring);
+    add_flags(&mut cmd_args, "--aptopt", &profile.mmdebstrap.aptopt);
+    add_flags(&mut cmd_args, "--dpkgopt", &profile.mmdebstrap.dpkgopt);
 
-    if !profile.mmdebstrap.architectures.is_empty() {
-        cmd_args.push("--architectures".into());
-        cmd_args.push(profile.mmdebstrap.architectures.join(",").into());
-    }
-
-    if !profile.mmdebstrap.components.is_empty() {
-        cmd_args.push("--components".into());
-        cmd_args.push(profile.mmdebstrap.components.join(",").into());
-    }
-
-    if !profile.mmdebstrap.include.is_empty() {
-        cmd_args.push("--include".into());
-        cmd_args.push(profile.mmdebstrap.include.join(",").into());
-    }
-
-    if !profile.mmdebstrap.keyring.is_empty() {
-        for keyring in profile.mmdebstrap.keyring.iter() {
-            cmd_args.push("--keyring".into());
-            cmd_args.push(keyring.into());
-        }
-    }
-
-    if !profile.mmdebstrap.aptopt.is_empty() {
-        for aptopt in profile.mmdebstrap.aptopt.iter() {
-            cmd_args.push("--aptopt".into());
-            cmd_args.push(aptopt.into());
-        }
-    }
-
-    if !profile.mmdebstrap.dpkgopt.is_empty() {
-        for dpkgopt in profile.mmdebstrap.dpkgopt.iter() {
-            cmd_args.push("--dpkgopt".into());
-            cmd_args.push(dpkgopt.into());
-        }
-    }
-
-    if !profile.mmdebstrap.setup_hook.is_empty() {
-        for setup_hook in profile.mmdebstrap.setup_hook.iter() {
-            cmd_args.push("--setup-hook".into());
-            cmd_args.push(setup_hook.into());
-        }
-    }
-
-    if !profile.mmdebstrap.extract_hook.is_empty() {
-        for extract_hook in profile.mmdebstrap.extract_hook.iter() {
-            cmd_args.push("--extract-hook".into());
-            cmd_args.push(extract_hook.into());
-        }
-    }
-
-    if !profile.mmdebstrap.essential_hook.is_empty() {
-        for essential_hook in profile.mmdebstrap.essential_hook.iter() {
-            cmd_args.push("--essential-hook".into());
-            cmd_args.push(essential_hook.into());
-        }
-    }
-
-    if !profile.mmdebstrap.customize_hook.is_empty() {
-        for customize_hook in profile.mmdebstrap.customize_hook.iter() {
-            cmd_args.push("--customize-hook".into());
-            cmd_args.push(customize_hook.into());
-        }
-    }
+    add_flags(
+        &mut cmd_args,
+        "--setup-hook",
+        &profile.mmdebstrap.setup_hook,
+    );
+    add_flags(
+        &mut cmd_args,
+        "--extract-hook",
+        &profile.mmdebstrap.extract_hook,
+    );
+    add_flags(
+        &mut cmd_args,
+        "--essential-hook",
+        &profile.mmdebstrap.essential_hook,
+    );
+    add_flags(
+        &mut cmd_args,
+        "--customize-hook",
+        &profile.mmdebstrap.customize_hook,
+    );
 
     // suite
     cmd_args.push(profile.mmdebstrap.suite.clone().into());
