@@ -76,52 +76,20 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
 
     add_flag(&mut cmd_args, "--mode", profile.mmdebstrap.mode.trim());
     add_flag(&mut cmd_args, "--format", profile.mmdebstrap.format.trim());
-    add_flag(
-        &mut cmd_args,
-        "--variant",
-        profile.mmdebstrap.variant.trim(),
-    );
+    add_flag(&mut cmd_args, "--variant", profile.mmdebstrap.variant.trim());
 
-    add_flag(
-        &mut cmd_args,
-        "--architectures",
-        &profile.mmdebstrap.architectures.join(","),
-    );
-    add_flag(
-        &mut cmd_args,
-        "--components",
-        &profile.mmdebstrap.components.join(","),
-    );
-    add_flag(
-        &mut cmd_args,
-        "--include",
-        &profile.mmdebstrap.include.join(","),
-    );
+    add_flag(&mut cmd_args, "--architectures", &profile.mmdebstrap.architectures.join(","));
+    add_flag(&mut cmd_args, "--components", &profile.mmdebstrap.components.join(","));
+    add_flag(&mut cmd_args, "--include", &profile.mmdebstrap.include.join(","));
 
     add_flags(&mut cmd_args, "--keyring", &profile.mmdebstrap.keyring);
     add_flags(&mut cmd_args, "--aptopt", &profile.mmdebstrap.aptopt);
     add_flags(&mut cmd_args, "--dpkgopt", &profile.mmdebstrap.dpkgopt);
 
-    add_flags(
-        &mut cmd_args,
-        "--setup-hook",
-        &profile.mmdebstrap.setup_hook,
-    );
-    add_flags(
-        &mut cmd_args,
-        "--extract-hook",
-        &profile.mmdebstrap.extract_hook,
-    );
-    add_flags(
-        &mut cmd_args,
-        "--essential-hook",
-        &profile.mmdebstrap.essential_hook,
-    );
-    add_flags(
-        &mut cmd_args,
-        "--customize-hook",
-        &profile.mmdebstrap.customize_hook,
-    );
+    add_flags(&mut cmd_args, "--setup-hook", &profile.mmdebstrap.setup_hook);
+    add_flags(&mut cmd_args, "--extract-hook", &profile.mmdebstrap.extract_hook);
+    add_flags(&mut cmd_args, "--essential-hook", &profile.mmdebstrap.essential_hook);
+    add_flags(&mut cmd_args, "--customize-hook", &profile.mmdebstrap.customize_hook);
 
     // suite
     cmd_args.push(profile.mmdebstrap.suite.clone().into());
