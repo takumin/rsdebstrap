@@ -68,7 +68,7 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     }
 }
 
-pub fn run_mmdebstrap(profile: &Profile, dry_run: &bool, debug: &bool) -> Result<()> {
+pub fn run_mmdebstrap(profile: &Profile, dry_run: bool, debug: bool) -> Result<()> {
     let mut cmd = Command::new("mmdebstrap");
     let mut cmd_args = Vec::<OsString>::new();
 
@@ -105,11 +105,11 @@ pub fn run_mmdebstrap(profile: &Profile, dry_run: &bool, debug: &bool) -> Result
             .collect::<Vec<_>>()
             .join(" ")
     );
-    if *debug || *dry_run {
+    if debug || dry_run {
         println!("[DEBUG] would run: {}", display);
     }
 
-    if *dry_run {
+    if dry_run {
         return Ok(());
     }
 
