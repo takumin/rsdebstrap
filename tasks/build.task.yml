@@ -21,8 +21,10 @@ vars:
   - aarch64-unknown-linux-musl
   - armv7-unknown-linux-gnueabihf
   - armv7-unknown-linux-musleabihf
-  - riscv64gc-unknown-linux-gnu
-  - riscv64gc-unknown-linux-musl
+  # info: zig can provide libc for related target riscv64-linux.4.15.0-gnu.2.27
+  # info: zig can provide libc for related target riscv64-linux.4.15.0-musl
+  # - riscv64gc-unknown-linux-gnu
+  # - riscv64gc-unknown-linux-musl
 
 includes:
   setup:
@@ -62,7 +64,7 @@ tasks:
     vars:
       MOLD_RUN: '{{if contains "-linux-" .TARGET}}mold -run{{end}}'
       PROFILE_ARG: '{{if eq .PROFILE "release"}}--release{{end}}'
-      TARGET_ARG: '--target={{.TARGET}}{{if contains "-linux-" .TARGET}}.2.17{{end}}'
+      TARGET_ARG: '--target={{.TARGET}}{{if contains "-linux-gnu" .TARGET}}.2.17{{end}}'
     cmds:
     - '{{.MOLD_RUN}} cargo zigbuild --frozen {{.PROFILE_ARG}} {{.TARGET_ARG}}'
     - mkdir -p dist
