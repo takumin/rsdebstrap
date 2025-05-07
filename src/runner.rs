@@ -69,6 +69,7 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     }
 }
 
+#[tracing::instrument(skip(profile))]
 pub fn run_mmdebstrap(profile: &Profile, dry_run: bool) -> Result<()> {
     let mut cmd = Command::new("mmdebstrap");
     let mut cmd_args = Vec::<OsString>::new();
