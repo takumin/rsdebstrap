@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::fs;
 use std::process::Command;
+use tracing::debug;
 
 /// Adds a flag and its corresponding value to the command arguments if the value is not empty.
 ///
@@ -68,7 +69,7 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     }
 }
 
-pub fn run_mmdebstrap(profile: &Profile, dry_run: bool, debug: bool) -> Result<()> {
+pub fn run_mmdebstrap(profile: &Profile, dry_run: bool) -> Result<()> {
     let mut cmd = Command::new("mmdebstrap");
     let mut cmd_args = Vec::<OsString>::new();
 
@@ -97,7 +98,7 @@ pub fn run_mmdebstrap(profile: &Profile, dry_run: bool, debug: bool) -> Result<(
     cmd_args.push(target.clone().into_os_string());
 
     // debug print
-    let display = format!(
+    debug!(
         "mmdebstrap {}",
         cmd_args
             .iter()
@@ -105,9 +106,6 @@ pub fn run_mmdebstrap(profile: &Profile, dry_run: bool, debug: bool) -> Result<(
             .collect::<Vec<_>>()
             .join(" ")
     );
-    if debug || dry_run {
-        println!("[DEBUG] would run: {}", display);
-    }
 
     if dry_run {
         return Ok(());
