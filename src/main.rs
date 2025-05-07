@@ -25,7 +25,13 @@ fn main() -> Result<()> {
                 println!("dry run enabled. Command will not be executed.");
                 return Ok(());
             }
-            let _ = runner::run_mmdebstrap(&profile, opts);
+            match runner::run_mmdebstrap(&profile, opts) {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("error running mmdebstrap: {}", e);
+                    process::exit(1);
+                }
+            }
         }
         cli::Commands::Validate(opts) => {
             let profile = config::load_profile(&opts.file)?;
