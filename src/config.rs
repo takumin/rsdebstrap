@@ -28,12 +28,12 @@ pub enum Variant {
     Essential,
     /// The `essential` set plus `apt`
     Apt,
+    /// The `essential` set plus `apt` and `build-essential`
+    Buildd,
     /// The `essential` set plus all packages with `Priority:required`
     Required,
     /// The `essential` set plus all packages with `Priority:required`
     Minbase,
-    /// The `essential` set plus `apt` and `build-essential`
-    Buildd,
     /// The `required` set plus all packages with `Priority:important`
     Important,
     /// The `important` set plus all packages with `Priority:standard`
@@ -48,9 +48,9 @@ impl fmt::Display for Variant {
             Variant::Custom => write!(f, "custom"),
             Variant::Essential => write!(f, "essential"),
             Variant::Apt => write!(f, "apt"),
+            Variant::Buildd => write!(f, "buildd"),
             Variant::Required => write!(f, "required"),
             Variant::Minbase => write!(f, "minbase"),
-            Variant::Buildd => write!(f, "buildd"),
             Variant::Important => write!(f, "important"),
             Variant::Standard => write!(f, "standard"),
         }
