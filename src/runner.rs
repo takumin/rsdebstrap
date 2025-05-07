@@ -1,8 +1,8 @@
+use crate::command::{CommandExecutor, RealCommandExecutor};
 use crate::config::Profile;
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::fs;
-use std::process::Command;
 use tracing::debug;
 
 /// Adds a flag and its corresponding value to the command arguments if the value is not empty.
@@ -69,9 +69,12 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     }
 }
 
-#[tracing::instrument(skip(profile))]
-pub fn run_mmdebstrap(profile: &Profile, dry_run: bool) -> Result<()> {
-    let mut cmd = Command::new("mmdebstrap");
+#[tracing::instrument(skip(profile, executor))]
+pub fn run_mmdebstrap_exec<E: CommandExecutor>(
+    profile: &Profile,
+    dry_run: bool,
+    executor: &E,
+) -> Result<()> {
     let mut cmd_args = Vec::<OsString>::new();
 
     add_flag(&mut cmd_args, "--mode", &profile.mmdebstrap.mode.to_string());
@@ -118,13 +121,13 @@ pub fn run_mmdebstrap(profile: &Profile, dry_run: bool) -> Result<()> {
             .with_context(|| format!("failed to create directory: {}", profile.dir))?;
     }
 
-    let status = cmd
-        .args(&cmd_args)
-        .status()
-        .with_context(|| "failed to start mmdebstrap")?;
-    if !status.success() {
-        anyhow::bail!("mmdebstrap exited with non-zero status: {}", status);
-    }
+    executor.execute("mmdebstrap", &cmd_args)
+}
 
-    Ok(())
+/// Standard function that uses the RealCommandExecutor.
+/// This is the main entry point for running mmdebstrap.
+#[tracing::instrument(skip(profile))]
+pub fn run_mmdebstrap(profile: &Profile, dry_run: bool) -> Result<()> {
+    let executor = RealCommandExecutor;
+    run_mmdebstrap_exec(profile, dry_run, &executor)
 }
