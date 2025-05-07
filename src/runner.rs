@@ -91,16 +91,17 @@ pub fn run_mmdebstrap(profile: &Profile, dry_run: bool) -> Result<()> {
     add_flags(&mut cmd_args, "--essential-hook", &profile.mmdebstrap.essential_hook);
     add_flags(&mut cmd_args, "--customize-hook", &profile.mmdebstrap.customize_hook);
 
-    // suite
     cmd_args.push(profile.mmdebstrap.suite.clone().into());
 
-    // target
-    let target = profile.dir.join(&profile.mmdebstrap.target);
-    cmd_args.push(target.clone().into_os_string());
+    cmd_args.push(
+        profile
+            .dir
+            .join(&profile.mmdebstrap.target)
+            .into_os_string(),
+    );
 
-    // debug print
     debug!(
-        "mmdebstrap {}",
+        "mmdebstrap would run: mmdebstrap {}",
         cmd_args
             .iter()
             .map(|s| s.to_string_lossy())
