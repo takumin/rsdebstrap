@@ -24,8 +24,7 @@ fn main() -> Result<()> {
                 println!("loaded profile: {:#?}", profile);
             }
             if opts.dry_run {
-                println!("dry run enabled. Command will not be executed.");
-                return Ok(());
+                println!("dry run enabled.");
             }
             match runner::run_mmdebstrap(&profile, opts.dry_run, opts.debug) {
                 Ok(_) => {}
