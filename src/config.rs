@@ -18,9 +18,11 @@ pub enum Variant {
     #[serde(alias = "")]
     #[default]
     Debootstrap,
-    /// Installs nothing by default (not even `Essential:yes` packages). This variant is used for minimal setups where no preselected packages are required.
+    /// Installs nothing by default (not even `Essential:yes` packages)
+    /// This variant is used for minimal setups where no preselected packages are required
     Extract,
-    /// Installs nothing by default (not even `Essential:yes` packages). This variant allows for fully custom package selection strategies defined by the user.
+    /// Installs nothing by default (not even `Essential:yes` packages)
+    /// This variant allows for fully custom package selection strategies defined by the user
     Custom,
     /// `Essential:yes` packages
     Essential,
