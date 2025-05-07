@@ -23,6 +23,8 @@ mmdebstrap:
     assert_eq!(profile.dir, "/tmp/test");
     assert_eq!(profile.mmdebstrap.suite, "bookworm");
     assert_eq!(profile.mmdebstrap.target, "rootfs.tar.zst");
+    assert_eq!(profile.mmdebstrap.mode, rsdebstrap::config::Mode::Auto);
+    assert_eq!(profile.mmdebstrap.format, rsdebstrap::config::Format::Auto);
     assert!(profile.mmdebstrap.components.is_empty());
     assert!(profile.mmdebstrap.architectures.is_empty());
     assert!(profile.mmdebstrap.include.is_empty());
@@ -79,6 +81,8 @@ mmdebstrap:
     assert_eq!(profile.dir, "/tmp/debian-test");
     assert_eq!(profile.mmdebstrap.suite, "bookworm");
     assert_eq!(profile.mmdebstrap.target, "rootfs.tar.zst");
+    assert_eq!(profile.mmdebstrap.mode, rsdebstrap::config::Mode::Auto);
+    assert_eq!(profile.mmdebstrap.format, rsdebstrap::config::Format::Auto);
     assert_eq!(profile.mmdebstrap.components, vec!["main", "contrib"]);
     assert_eq!(profile.mmdebstrap.architectures, vec!["amd64"]);
     assert_eq!(profile.mmdebstrap.include, vec!["curl", "ca-certificates"]);
