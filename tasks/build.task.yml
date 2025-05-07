@@ -11,6 +11,18 @@ vars:
   PROFILE: '{{env "BUILD_PROFILE" | default "debug"}}'
   # default target
   TARGET: '{{env "BUILD_TARGET" | default "x86_64-unknown-linux-gnu"}}'
+  # target list
+  MATRIX_TARGETS:
+  - x86_64-unknown-linux-gnu
+  - x86_64-unknown-linux-musl
+  - i686-unknown-linux-gnu
+  - i686-unknown-linux-musl
+  - aarch64-unknown-linux-gnu
+  - aarch64-unknown-linux-musl
+  - armv7-unknown-linux-gnueabihf
+  - armv7-unknown-linux-musleabihf
+  - riscv64gc-unknown-linux-gnu
+  - riscv64gc-unknown-linux-musl
 
 includes:
   setup:
@@ -24,6 +36,12 @@ tasks:
     cmds:
     - task: build
     - task: sha256sum
+
+  matrix:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - echo '{{ .MATRIX_TARGETS | toJson }}' | jq -cM -f scripts/build-matrix.jq
 
   build:
     desc: '{{.TASK}}'
