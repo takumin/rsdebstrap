@@ -26,8 +26,10 @@ fn main() -> Result<()> {
         LogLevel::Error => LevelFilter::ERROR,
     };
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set global default tracing subscriber");
+    tracing::subscriber::set_global_default(
+        FmtSubscriber::builder().with_max_level(filter).finish(),
+    )
+    .expect("failed to set global default tracing subscriber");
 
     match &args.command {
         cli::Commands::Apply(opts) => {
