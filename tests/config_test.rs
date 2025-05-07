@@ -83,14 +83,8 @@ mmdebstrap:
     assert_eq!(profile.mmdebstrap.architectures, vec!["amd64"]);
     assert_eq!(profile.mmdebstrap.include, vec!["curl", "ca-certificates"]);
     assert_eq!(profile.mmdebstrap.keyring, vec!["/etc/apt/trusted.gpg"]);
-    assert_eq!(
-        profile.mmdebstrap.aptopt,
-        vec!["Apt::Install-Recommends \"true\""]
-    );
-    assert_eq!(
-        profile.mmdebstrap.dpkgopt,
-        vec!["path-exclude=/usr/share/man/*"]
-    );
+    assert_eq!(profile.mmdebstrap.aptopt, vec!["Apt::Install-Recommends \"true\""]);
+    assert_eq!(profile.mmdebstrap.dpkgopt, vec!["path-exclude=/usr/share/man/*"]);
     assert_eq!(profile.mmdebstrap.setup_hook, vec!["echo setup"]);
     assert_eq!(profile.mmdebstrap.extract_hook, vec!["echo extract"]);
     assert_eq!(profile.mmdebstrap.essential_hook, vec!["echo essential"]);

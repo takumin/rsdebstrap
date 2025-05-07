@@ -105,6 +105,7 @@ tasks:
     deps:
     - task: tool:rustup:component:rustfmt
     sources:
+    - '.rustfmt.toml'
     - '**/*.rs'
     - '.*/**/*.rs'
     - exclude: '.git/**/*'
