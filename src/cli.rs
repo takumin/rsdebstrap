@@ -26,8 +26,8 @@ pub enum Commands {
 #[derive(Args, Debug)]
 pub struct ApplyArgs {
     /// Path to the YAML file defining the profile
-    #[arg(short, long)]
-    pub file: Option<Utf8PathBuf>,
+    #[arg(short, long, default_value = "profile.yaml")]
+    pub file: Utf8PathBuf,
 
     /// Do not run, just show what would be done
     #[arg(long)]
@@ -41,7 +41,7 @@ pub struct ApplyArgs {
 #[derive(Args, Debug)]
 pub struct ValidateArgs {
     /// Path to the YAML file to validate
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "profile.yaml")]
     pub file: Utf8PathBuf,
 }
 
