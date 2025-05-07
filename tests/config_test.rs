@@ -1,4 +1,5 @@
 use anyhow::Result;
+use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::config::load_profile;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -18,7 +19,8 @@ mmdebstrap:
     )?;
     // editorconfig-checker-enable
 
-    let profile = load_profile(file.path().to_str().unwrap())?;
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
 
     assert_eq!(profile.dir, "/tmp/test");
     assert_eq!(profile.mmdebstrap.suite, "bookworm");
@@ -77,7 +79,8 @@ mmdebstrap:
     )?;
     // editorconfig-checker-enable
 
-    let profile = load_profile(file.path().to_str().unwrap())?;
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
 
     assert_eq!(profile.dir, "/tmp/debian-test");
     assert_eq!(profile.mmdebstrap.suite, "bookworm");
@@ -101,7 +104,8 @@ mmdebstrap:
 
 #[test]
 fn test_load_profile_invalid_file() {
-    let result = load_profile("/non/existent/file.yml");
+    let path = Utf8PathBuf::from("/non/existent/file.yml");
+    let result = load_profile(path.as_path());
     assert!(result.is_err());
 }
 
@@ -118,7 +122,8 @@ invalid: yaml
     )?;
     // editorconfig-checker-enable
 
-    let result = load_profile(file.path().to_str().unwrap());
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let result = load_profile(path);
     assert!(result.is_err());
 
     Ok(())

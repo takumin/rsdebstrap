@@ -1,4 +1,5 @@
 use anyhow::Result;
+use camino::Utf8PathBuf;
 use rsdebstrap::cli::ApplyArgs;
 use rsdebstrap::config::{Format, Mmdebstrap, Mode, Profile, Variant};
 use rsdebstrap::runner::run_mmdebstrap;
@@ -6,7 +7,7 @@ use rsdebstrap::runner::run_mmdebstrap;
 #[test]
 fn test_run_mmdebstrap_dry_run() -> Result<()> {
     let profile = Profile {
-        dir: "/tmp/test-dry-run".to_string(),
+        dir: Utf8PathBuf::from("/tmp/test-dry-run"),
         mmdebstrap: Mmdebstrap {
             suite: "bookworm".to_string(),
             target: "rootfs.tar.zst".to_string(),
@@ -27,7 +28,7 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
     };
 
     let args = ApplyArgs {
-        file: Some("test.yml".to_string()),
+        file: Some(Utf8PathBuf::from("test.yml")),
         dry_run: true,
         debug: true,
     };
@@ -44,7 +45,7 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
 #[ignore]
 fn test_run_mmdebstrap_command_building() -> Result<()> {
     let profile = Profile {
-        dir: "/tmp/test-run".to_string(),
+        dir: Utf8PathBuf::from("/tmp/test-run"),
         mmdebstrap: Mmdebstrap {
             suite: "bookworm".to_string(),
             target: "rootfs.tar.zst".to_string(),
@@ -65,7 +66,7 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
     };
 
     let args = ApplyArgs {
-        file: Some("test.yml".to_string()),
+        file: Some(Utf8PathBuf::from("test.yml")),
         dry_run: true,
         debug: false,
     };

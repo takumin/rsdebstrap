@@ -3,7 +3,6 @@ use crate::config::Profile;
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 /// Adds a flag and its corresponding value to the command arguments if the value is not empty.
@@ -95,7 +94,7 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
     cmd_args.push(profile.mmdebstrap.suite.clone().into());
 
     // target
-    let target = PathBuf::from(profile.dir.clone()).join(profile.mmdebstrap.target.clone());
+    let target = profile.dir.join(&profile.mmdebstrap.target);
     cmd_args.push(target.clone().into_os_string());
 
     // debug print
@@ -115,10 +114,9 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         return Ok(());
     }
 
-    let dir = PathBuf::from(profile.dir.clone());
-    if !dir.exists() {
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("failed to create directory: {}", dir.display()))?;
+    if !profile.dir.exists() {
+        fs::create_dir_all(&profile.dir)
+            .with_context(|| format!("failed to create directory: {}", profile.dir))?;
     }
 
     let status = cmd
