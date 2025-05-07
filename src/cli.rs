@@ -49,7 +49,18 @@ pub struct ValidateArgs {
     pub log_level: LogLevel,
 }
 
-/// Define log levels as an enum
+/// Represents log levels for controlling the verbosity of logging output.
+///
+/// This enum maps directly to the log levels used by the `tracing` crate:
+/// - `Trace`: Designates very detailed application-level information.
+/// - `Debug`: Designates information useful for debugging.
+/// - `Info`: Designates general operational messages.
+/// - `Warn`: Designates potentially harmful situations.
+/// - `Error`: Designates error events that might still allow the application to continue running.
+///
+/// The `LogLevel` enum is used in CLI commands (`Apply` and `Validate`) to set the desired
+/// verbosity level for logging. For example, specifying `--log-level debug` will enable
+/// debug-level logging output.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum LogLevel {
     Trace,
