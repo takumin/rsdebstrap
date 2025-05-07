@@ -1,5 +1,6 @@
 use anyhow::{Context, Ok, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
 
@@ -9,14 +10,92 @@ pub struct Profile {
     pub mmdebstrap: Mmdebstrap,
 }
 
+/// Mode for mmdebstrap operation
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// Auto detect best mode (default)
+    #[serde(alias = "")]
+    #[default]
+    Auto,
+    /// Sudo mode
+    Sudo,
+    /// Root mode
+    Root,
+    /// Unshare mode
+    Unshare,
+    /// User-mode using fakeroot
+    Fakeroot,
+    /// Fakechroot mode
+    Fakechroot,
+    /// Chrootless mode
+    Chrootless,
+}
+
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Mode::Auto => write!(f, "auto"),
+            Mode::Sudo => write!(f, "sudo"),
+            Mode::Root => write!(f, "root"),
+            Mode::Unshare => write!(f, "unshare"),
+            Mode::Fakeroot => write!(f, "fakeroot"),
+            Mode::Fakechroot => write!(f, "fakechroot"),
+            Mode::Chrootless => write!(f, "chrootless"),
+        }
+    }
+}
+
+/// Format for the target output
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Format {
+    /// Auto detect based on file extension (default)
+    #[serde(alias = "")]
+    #[default]
+    Auto,
+    /// Directory format
+    Directory,
+    /// Tarball
+    Tar,
+    /// Compressed tarball (xz)
+    TarXz,
+    /// Compressed tarball (gz)
+    TarGz,
+    /// Compressed tarball (zst)
+    TarZst,
+    /// Squashfs filesystem
+    Squashfs,
+    /// Ext2 filesystem
+    Ext2,
+    /// Null
+    Null,
+}
+
+impl fmt::Display for Format {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Format::Auto => write!(f, "auto"),
+            Format::Directory => write!(f, "directory"),
+            Format::Tar => write!(f, "tar"),
+            Format::TarXz => write!(f, "tar.xz"),
+            Format::TarGz => write!(f, "tar.gz"),
+            Format::TarZst => write!(f, "tar.zst"),
+            Format::Squashfs => write!(f, "squashfs"),
+            Format::Ext2 => write!(f, "ext2"),
+            Format::Null => write!(f, "null"),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Mmdebstrap {
     pub suite: String,
     pub target: String,
     #[serde(default)]
-    pub mode: String,
+    pub mode: Mode,
     #[serde(default)]
-    pub format: String,
+    pub format: Format,
     #[serde(default)]
     pub variant: String,
     #[serde(default)]
