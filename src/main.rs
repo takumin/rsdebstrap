@@ -4,36 +4,53 @@ mod runner;
 
 use anyhow::Result;
 use std::process;
+use tracing::{error, info};
+use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::filter::LevelFilter;
+
+use cli::LogLevel;
 
 fn main() -> Result<()> {
     let args = cli::parse_args()?;
+
+    let log_level = match &args.command {
+        cli::Commands::Apply(opts) => opts.log_level,
+        cli::Commands::Validate(opts) => opts.log_level,
+    };
+
+    let filter = match log_level {
+        LogLevel::Trace => LevelFilter::TRACE,
+        LogLevel::Debug => LevelFilter::DEBUG,
+        LogLevel::Info => LevelFilter::INFO,
+        LogLevel::Warn => LevelFilter::WARN,
+        LogLevel::Error => LevelFilter::ERROR,
+    };
+
+    tracing::subscriber::set_global_default(
+        FmtSubscriber::builder().with_max_level(filter).finish(),
+    )
+    .expect("failed to set global default tracing subscriber");
 
     match &args.command {
         cli::Commands::Apply(opts) => {
             let profile = match config::load_profile(opts.file.as_path()) {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("{}", e);
+                    error!("error load profile: {}", e);
                     process::exit(1);
                 }
             };
-            if opts.debug {
-                println!("loaded profile: {:#?}", profile);
-            }
-            if opts.dry_run {
-                println!("dry run enabled.");
-            }
-            match runner::run_mmdebstrap(&profile, opts.dry_run, opts.debug) {
+            match runner::run_mmdebstrap(&profile, opts.dry_run) {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("error running mmdebstrap: {}", e);
+                    error!("error running mmdebstrap: {}", e);
                     process::exit(1);
                 }
             }
         }
         cli::Commands::Validate(opts) => {
             let profile = config::load_profile(opts.file.as_path())?;
-            println!("validation successful:\n{:#?}", profile);
+            info!("validation successful:\n{:#?}", profile);
         }
     }
 

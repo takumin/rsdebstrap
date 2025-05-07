@@ -1,6 +1,6 @@
 use anyhow::Result;
 use camino::Utf8PathBuf;
-use rsdebstrap::cli::ApplyArgs;
+use rsdebstrap::cli::{ApplyArgs, LogLevel};
 use rsdebstrap::config::{Format, Mmdebstrap, Mode, Profile, Variant};
 use rsdebstrap::runner::run_mmdebstrap;
 
@@ -29,12 +29,12 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
 
     let args = ApplyArgs {
         file: Utf8PathBuf::from("test.yml"),
+        log_level: LogLevel::Info,
         dry_run: true,
-        debug: true,
     };
 
     // This should succeed as we're not actually running mmdebstrap
-    let result = run_mmdebstrap(&profile, args.dry_run, args.debug);
+    let result = run_mmdebstrap(&profile, args.dry_run);
     assert!(result.is_ok());
 
     Ok(())
@@ -67,11 +67,11 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
 
     let args = ApplyArgs {
         file: Utf8PathBuf::from("test.yml"),
+        log_level: LogLevel::Info,
         dry_run: true,
-        debug: false,
     };
 
-    let result = run_mmdebstrap(&profile, args.dry_run, args.debug);
+    let result = run_mmdebstrap(&profile, args.dry_run);
     assert!(result.is_ok());
 
     Ok(())

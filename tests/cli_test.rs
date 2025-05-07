@@ -1,7 +1,7 @@
 use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::Parser;
-use rsdebstrap::cli::{Cli, Commands};
+use rsdebstrap::cli::{Cli, Commands, LogLevel};
 
 #[test]
 fn test_parse_apply_command() -> Result<()> {
@@ -10,8 +10,8 @@ fn test_parse_apply_command() -> Result<()> {
     match args.command {
         Commands::Apply(opts) => {
             assert_eq!(opts.file, Utf8PathBuf::from("test.yml"));
+            assert_eq!(opts.log_level, LogLevel::Info);
             assert!(!opts.dry_run);
-            assert!(!opts.debug);
         }
         _ => panic!("Expected Apply command"),
     }
@@ -27,14 +27,15 @@ fn test_parse_apply_command_with_flags() -> Result<()> {
         "--file",
         "test.yml",
         "--dry-run",
-        "--debug",
+        "--log-level",
+        "error",
     ]);
 
     match args.command {
         Commands::Apply(opts) => {
             assert_eq!(opts.file, Utf8PathBuf::from("test.yml"));
+            assert_eq!(opts.log_level, LogLevel::Error);
             assert!(opts.dry_run);
-            assert!(opts.debug);
         }
         _ => panic!("Expected Apply command"),
     }

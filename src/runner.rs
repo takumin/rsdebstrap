@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::fs;
 use std::process::Command;
+use tracing::debug;
 
 /// Adds a flag and its corresponding value to the command arguments if the value is not empty.
 ///
@@ -68,7 +69,8 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     }
 }
 
-pub fn run_mmdebstrap(profile: &Profile, dry_run: bool, debug: bool) -> Result<()> {
+#[tracing::instrument(skip(profile))]
+pub fn run_mmdebstrap(profile: &Profile, dry_run: bool) -> Result<()> {
     let mut cmd = Command::new("mmdebstrap");
     let mut cmd_args = Vec::<OsString>::new();
 
@@ -89,25 +91,23 @@ pub fn run_mmdebstrap(profile: &Profile, dry_run: bool, debug: bool) -> Result<(
     add_flags(&mut cmd_args, "--essential-hook", &profile.mmdebstrap.essential_hook);
     add_flags(&mut cmd_args, "--customize-hook", &profile.mmdebstrap.customize_hook);
 
-    // suite
     cmd_args.push(profile.mmdebstrap.suite.clone().into());
 
-    // target
-    let target = profile.dir.join(&profile.mmdebstrap.target);
-    cmd_args.push(target.clone().into_os_string());
+    cmd_args.push(
+        profile
+            .dir
+            .join(&profile.mmdebstrap.target)
+            .into_os_string(),
+    );
 
-    // debug print
-    let display = format!(
-        "mmdebstrap {}",
+    debug!(
+        "mmdebstrap would run: mmdebstrap {}",
         cmd_args
             .iter()
             .map(|s| s.to_string_lossy())
             .collect::<Vec<_>>()
             .join(" ")
     );
-    if debug || dry_run {
-        println!("[DEBUG] would run: {}", display);
-    }
 
     if dry_run {
         return Ok(());
