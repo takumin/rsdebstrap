@@ -32,9 +32,24 @@ jobs:
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
         path: ~/.cargo/registry
+    - name: Restore setup build cache
+      id: setup-build-cache-restore
+      uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        key: setup-build-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
+        path: ~/.local/share/aquaproj-aqua
     - name: Fetch dependencies
       run: |-
         task tool:cargo:fetch
+    - name: Fetch setup build
+      run: |-
+        task setup:build
+    - name: Save setup build cache
+      if: github.ref == 'refs/heads/main' && steps.setup-build-cache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        key: ${{ steps.setup-build-cache-restore.outputs.cache-primary-key }}
+        path: ~/.local/share/aquaproj-aqua
     - name: Save dependencies cache
       if: github.ref == 'refs/heads/main' && steps.deps-cache-restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
