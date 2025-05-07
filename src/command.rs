@@ -19,7 +19,12 @@ impl CommandExecutor for RealCommandExecutor {
             .with_context(|| format!("failed to start {}", command))?;
 
         if !status.success() {
-            anyhow::bail!("{} exited with non-zero status: {}", command, status);
+            anyhow::bail!(
+                "{} exited with non-zero status: {} and args: {:?}",
+                command,
+                status,
+                args
+            );
         }
 
         Ok(())
