@@ -3,7 +3,6 @@ mod config;
 mod runner;
 
 use anyhow::Result;
-use camino::Utf8PathBuf;
 use std::process;
 
 fn main() -> Result<()> {
@@ -11,9 +10,7 @@ fn main() -> Result<()> {
 
     match &args.command {
         cli::Commands::Apply(opts) => {
-            let default_path = Utf8PathBuf::from("config.yaml");
-            let file_path = opts.file.as_ref().unwrap_or(&default_path);
-            let profile = match config::load_profile(file_path.as_path()) {
+            let profile = match config::load_profile(opts.file.as_path()) {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("{}", e);

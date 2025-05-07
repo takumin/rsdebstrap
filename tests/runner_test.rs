@@ -28,7 +28,7 @@ fn test_run_mmdebstrap_dry_run() -> Result<()> {
     };
 
     let args = ApplyArgs {
-        file: Some(Utf8PathBuf::from("test.yml")),
+        file: Utf8PathBuf::from("test.yml"),
         dry_run: true,
         debug: true,
     };
@@ -66,7 +66,7 @@ fn test_run_mmdebstrap_command_building() -> Result<()> {
     };
 
     let args = ApplyArgs {
-        file: Some(Utf8PathBuf::from("test.yml")),
+        file: Utf8PathBuf::from("test.yml"),
         dry_run: true,
         debug: false,
     };
