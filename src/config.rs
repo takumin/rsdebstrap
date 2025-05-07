@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
+use tracing::debug;
 
 #[derive(Debug, Deserialize)]
 pub struct Profile {
@@ -168,10 +169,12 @@ pub struct Mmdebstrap {
     pub customize_hook: Vec<String>,
 }
 
+#[tracing::instrument]
 pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     let file = File::open(path).with_context(|| format!("failed to load file: {}", path))?;
     let reader = BufReader::new(file);
     let profile: Profile = serde_yaml::from_reader(reader)
         .with_context(|| format!("failed to parse yaml: {}", path))?;
+    debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
 }
