@@ -6,17 +6,17 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
-    // Check if mmdebstrap is available
+// Helper function to check if mmdebstrap is available
+pub fn check_mmdebstrap_available() -> Result<bool> {
     let status = Command::new("which")
         .arg("mmdebstrap")
         .status()
         .context("Failed to execute 'which' command")?;
-    if !status.success() {
-        bail!("mmdebstrap command not found. Please install mmdebstrap first.");
-    }
+    Ok(status.success())
+}
 
-    let mut cmd = Command::new("mmdebstrap");
+// Build command arguments for mmdebstrap
+fn build_command_args(profile: &Profile) -> Result<Vec<OsString>> {
     let mut cmd_args = Vec::<OsString>::new();
 
     let mode = profile.mmdebstrap.mode.trim();
@@ -108,6 +108,43 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
     let target = PathBuf::from(profile.dir.clone()).join(profile.mmdebstrap.target.clone());
     cmd_args.push(target.clone().into_os_string());
 
+    Ok(cmd_args)
+}
+
+pub fn run_mmdebstrap_with_checker<F>(profile: &Profile, args: &ApplyArgs, checker: F) -> Result<()>
+where
+    F: FnOnce() -> Result<bool>,
+{
+    // Check if mmdebstrap is available
+    if !checker()? {
+        bail!("mmdebstrap command not found. Please install mmdebstrap first.");
+    }
+
+    // Skip execution in dry run mode
+    if args.dry_run {
+        // Build the command for display only
+        let cmd_args = build_command_args(profile)?;
+
+        // debug print
+        let display = format!(
+            "mmdebstrap {}",
+            cmd_args
+                .iter()
+                .map(|s| s.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+
+        if args.debug || args.dry_run {
+            println!("[DEBUG] would run: {}", display);
+        }
+
+        return Ok(());
+    }
+
+    let mut cmd = Command::new("mmdebstrap");
+    let cmd_args = build_command_args(profile)?;
+
     // debug print
     let display = format!(
         "mmdebstrap {}",
@@ -117,12 +154,8 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
             .collect::<Vec<_>>()
             .join(" ")
     );
-    if args.debug || args.dry_run {
+    if args.debug {
         println!("[DEBUG] would run: {}", display);
-    }
-
-    if args.dry_run {
-        return Ok(());
     }
 
     let dir = PathBuf::from(profile.dir.clone());
@@ -140,4 +173,8 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
+    run_mmdebstrap_with_checker(profile, args, check_mmdebstrap_available)
 }
