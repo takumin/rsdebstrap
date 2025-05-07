@@ -6,6 +6,15 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Adds a flag and its corresponding value to the command arguments if the value is not empty.
+/// 
+/// # Parameters
+/// - `cmd_args`: A mutable reference to the vector of command arguments.
+/// - `flag`: The flag to be added (e.g., `--mode`).
+/// - `value`: The value associated with the flag. This value should already be trimmed.
+/// 
+/// # Behavior
+/// If `value` is an empty string, the flag and value are not added to `cmd_args`.
 fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
     if !value.is_empty() {
         cmd_args.push(flag.into());
