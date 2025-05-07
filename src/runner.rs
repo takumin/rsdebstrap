@@ -1,12 +1,17 @@
 use crate::cli::ApplyArgs;
 use crate::config::Profile;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
 pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
+    // Check if mmdebstrap is available
+    if Command::new("which").arg("mmdebstrap").status().is_err() {
+        bail!("mmdebstrap command not found. Please install mmdebstrap first.");
+    }
+
     let mut cmd = Command::new("mmdebstrap");
     let mut cmd_args = Vec::<OsString>::new();
 
@@ -127,7 +132,7 @@ pub fn run_mmdebstrap(profile: &Profile, args: &ApplyArgs) -> Result<()> {
         .status()
         .with_context(|| "failed to start mmdebstrap")?;
     if !status.success() {
-        anyhow::bail!("mmdebstrap exited with non-zero status: {}", status);
+        bail!("mmdebstrap exited with non-zero status: {}", status);
     }
 
     Ok(())

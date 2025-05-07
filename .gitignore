@@ -2,3 +2,4 @@
 /target
 /target.tar
 /.task
+**/.claude/settings.local.json

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -45,5 +45,5 @@ pub struct ValidateArgs {
 }
 
 pub fn parse_args() -> Result<Cli> {
-    Ok(Cli::parse())
+    Cli::try_parse().with_context(|| "failed to parse command line arguments")
 }
