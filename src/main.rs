@@ -8,8 +8,6 @@ use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::filter::LevelFilter;
 
-use cli::LogLevel;
-
 fn main() -> Result<()> {
     let args = cli::parse_args()?;
 
@@ -19,11 +17,11 @@ fn main() -> Result<()> {
     };
 
     let filter = match log_level {
-        LogLevel::Trace => LevelFilter::TRACE,
-        LogLevel::Debug => LevelFilter::DEBUG,
-        LogLevel::Info => LevelFilter::INFO,
-        LogLevel::Warn => LevelFilter::WARN,
-        LogLevel::Error => LevelFilter::ERROR,
+        cli::LogLevel::Trace => LevelFilter::TRACE,
+        cli::LogLevel::Debug => LevelFilter::DEBUG,
+        cli::LogLevel::Info => LevelFilter::INFO,
+        cli::LogLevel::Warn => LevelFilter::WARN,
+        cli::LogLevel::Error => LevelFilter::ERROR,
     };
 
     tracing::subscriber::set_global_default(
