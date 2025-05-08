@@ -57,7 +57,7 @@ fn main() -> Result<()> {
             match executor.execute("mmdebstrap", &runner::build_mmdebstrap(&profile)) {
                 Ok(_) => {}
                 Err(e) => {
-                    error!("failed to running mmdebstrap: {}", e);
+                    error!("failed to run mmdebstrap: {}", e);
                     process::exit(1);
                 }
             }
