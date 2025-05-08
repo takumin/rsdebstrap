@@ -108,11 +108,11 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
 ///     },
 /// };
 ///
-/// let args = rsdebstrap::builder::build_mmdebstrap(&profile);
+/// let args = rsdebstrap::builder::build_mmdebstrap_args(&profile);
 /// // args now contains all necessary command-line arguments for mmdebstrap
 /// ```
 #[tracing::instrument(skip(profile))]
-pub fn build_mmdebstrap(profile: &Profile) -> Vec<OsString> {
+pub fn build_mmdebstrap_args(profile: &Profile) -> Vec<OsString> {
     let mut cmd_args = Vec::<OsString>::new();
 
     add_flag(&mut cmd_args, "--mode", &profile.mmdebstrap.mode.to_string());
