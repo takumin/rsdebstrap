@@ -22,25 +22,28 @@ impl CommandExecutor for RealCommandExecutor {
                 anyhow::bail!("command not found: {}: {}", command, e);
             }
         };
+        tracing::trace!("command found: {}: {}", command, cmd.to_string_lossy());
 
         if self.dry_run {
-            // TODO return cmd and args
+            tracing::info!("dry run: {}: {:?}", command, args);
             return Ok(());
         }
 
         let mut child = match Command::new(cmd).args(args).spawn() {
             Ok(c) => c,
             Err(e) => {
-                anyhow::bail!("failed to spawn: {}: {}", command, e);
+                anyhow::bail!("failed to spawn command `{}` with args {:?}: {}", command, args, e);
             }
         };
+        tracing::trace!("spawn command: {}: {}", command, child.id());
 
         let status = match child.wait() {
             Ok(c) => c,
             Err(e) => {
-                anyhow::bail!("failed to exec: {}: {}", command, e);
+                anyhow::bail!("failed to wait command `{}` with args {:?}: {}", command, args, e);
             }
         };
+        tracing::trace!("wait command: {}: {}", command, status.success());
 
         if !status.success() {
             anyhow::bail!(
