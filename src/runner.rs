@@ -1,6 +1,4 @@
-use crate::command::{CommandExecutor, RealCommandExecutor};
 use crate::config::Profile;
-use anyhow::Result;
 use std::ffi::OsString;
 use tracing::debug;
 
@@ -68,12 +66,8 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     }
 }
 
-#[tracing::instrument(skip(profile, executor))]
-pub fn run_mmdebstrap_exec<E: CommandExecutor>(
-    profile: &Profile,
-    dry_run: bool,
-    executor: &E,
-) -> Result<()> {
+#[tracing::instrument(skip(profile))]
+pub fn build_mmdebstrap(profile: &Profile) -> Vec<OsString> {
     let mut cmd_args = Vec::<OsString>::new();
 
     add_flag(&mut cmd_args, "--mode", &profile.mmdebstrap.mode.to_string());
@@ -111,17 +105,5 @@ pub fn run_mmdebstrap_exec<E: CommandExecutor>(
             .join(" ")
     );
 
-    if dry_run {
-        return Ok(());
-    }
-
-    executor.execute("mmdebstrap", &cmd_args)
-}
-
-/// Standard function that uses the RealCommandExecutor.
-/// This is the main entry point for running mmdebstrap.
-#[tracing::instrument(skip(profile))]
-pub fn run_mmdebstrap(profile: &Profile, dry_run: bool) -> Result<()> {
-    let executor = RealCommandExecutor;
-    run_mmdebstrap_exec(profile, dry_run, &executor)
+    cmd_args
 }
