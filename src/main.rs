@@ -1,6 +1,6 @@
 mod cli;
-mod command;
 mod config;
+mod executor;
 mod runner;
 
 use anyhow::Result;
@@ -48,11 +48,11 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            let executor: Box<dyn command::CommandExecutor> = match opts.dry_run {
-                true => Box::new(command::MockCommandExecutor {
+            let executor: Box<dyn executor::CommandExecutor> = match opts.dry_run {
+                true => Box::new(executor::MockCommandExecutor {
                     expect_success: true,
                 }),
-                false => Box::new(command::RealCommandExecutor),
+                false => Box::new(executor::RealCommandExecutor),
             };
             match executor.execute("mmdebstrap", &runner::build_mmdebstrap(&profile)) {
                 Ok(_) => {}
