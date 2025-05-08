@@ -53,7 +53,7 @@ fn main() -> Result<()> {
             let executor = executor::RealCommandExecutor {
                 dry_run: opts.dry_run,
             };
-            match executor.execute("mmdebstrap", &builder::build_mmdebstrap(&profile)) {
+            match executor.execute("mmdebstrap", &builder::build_mmdebstrap_args(&profile)) {
                 Ok(_) => {}
                 Err(e) => {
                     error!("failed to run mmdebstrap: {}", e);
