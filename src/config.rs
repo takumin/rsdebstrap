@@ -1,3 +1,12 @@
+//! Configuration module for rsdebstrap.
+//!
+//! This module provides data structures and functions for configuring
+//! the Debian bootstrapping process. It includes structures to define
+//! bootstrapping profiles, variants, modes, and output formats.
+//!
+//! The configuration is typically loaded from YAML files using the
+//! `load_profile` function.
+
 use anyhow::{Context, Ok, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
@@ -6,9 +15,15 @@ use std::fs::File;
 use std::io::BufReader;
 use tracing::debug;
 
+/// Represents a bootstrap profile configuration.
+///
+/// A profile contains the target directory and mmdebstrap configuration
+/// details needed to create a Debian-based system.
 #[derive(Debug, Deserialize)]
 pub struct Profile {
+    /// Target directory path for the bootstrap operation
     pub dir: Utf8PathBuf,
+    /// Configuration for mmdebstrap
     pub mmdebstrap: Mmdebstrap,
 }
 
@@ -137,38 +152,77 @@ impl fmt::Display for Format {
     }
 }
 
+/// Configuration for mmdebstrap operations.
+///
+/// This structure contains all settings needed to customize the Debian
+/// bootstrapping process, including package selection, format, mode,
+/// and hook scripts.
 #[derive(Debug, Deserialize)]
 pub struct Mmdebstrap {
+    /// Debian suite name (e.g., "bookworm", "sid")
     pub suite: String,
+    /// Target output path
     pub target: String,
+    /// Operation mode (defaults to Auto)
     #[serde(default)]
     pub mode: Mode,
+    /// Output format (defaults to Auto)
     #[serde(default)]
     pub format: Format,
+    /// Package selection variant (defaults to Debootstrap)
     #[serde(default)]
     pub variant: Variant,
+    /// Target architectures
     #[serde(default)]
     pub architectures: Vec<String>,
+    /// Repository components to enable (e.g., "main", "contrib", "non-free")
     #[serde(default)]
     pub components: Vec<String>,
+    /// Additional packages to include
     #[serde(default)]
     pub include: Vec<String>,
+    /// Keyring paths for repository verification
     #[serde(default)]
     pub keyring: Vec<String>,
+    /// Additional APT options
     #[serde(default)]
     pub aptopt: Vec<String>,
+    /// Additional dpkg options
     #[serde(default)]
     pub dpkgopt: Vec<String>,
+    /// Setup hook scripts
     #[serde(default)]
     pub setup_hook: Vec<String>,
+    /// Extract hook scripts
     #[serde(default)]
     pub extract_hook: Vec<String>,
+    /// Essential hook scripts
     #[serde(default)]
     pub essential_hook: Vec<String>,
+    /// Customize hook scripts
     #[serde(default)]
     pub customize_hook: Vec<String>,
 }
 
+/// Loads a bootstrap profile from a YAML file.
+///
+/// # Arguments
+///
+/// * `path` - Path to the YAML profile file
+///
+/// # Returns
+///
+/// * `Result<Profile>` - The loaded profile configuration or an error
+///
+/// # Examples
+///
+/// ```no_run
+/// use camino::Utf8Path;
+/// use rsdebstrap::config;
+///
+/// let profile = config::load_profile(Utf8Path::new("./examples/debian_bookworm.yml")).unwrap();
+/// println!("Profile directory: {}", profile.dir);
+/// ```
 #[tracing::instrument]
 pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     let file = File::open(path).with_context(|| format!("failed to load file: {}", path))?;
