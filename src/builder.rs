@@ -11,23 +11,7 @@ use tracing::debug;
 ///
 /// # Behavior
 /// If `value` is an empty string, the flag and value are not added to `cmd_args`.
-///
-/// # Example
-/// ```
-/// use std::ffi::OsString;
-///
-/// let mut cmd_args = Vec::<OsString>::new();
-/// let flag = "--example";
-///
-/// // This will add the flag and value
-/// rsdebstrap::builder::add_flag(&mut cmd_args, flag, "value1");
-/// assert_eq!(cmd_args, vec![OsString::from("--example"), OsString::from("value1")]);
-///
-/// // This will not add anything since the value is empty
-/// rsdebstrap::builder::add_flag(&mut cmd_args, flag, "");
-/// assert_eq!(cmd_args, vec![OsString::from("--example"), OsString::from("value1")]);
-/// ```
-pub fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
+fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
     if !value.is_empty() {
         cmd_args.push(flag.into());
         cmd_args.push(value.into());
@@ -45,19 +29,7 @@ pub fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
 /// * `cmd_args` - A mutable reference to the vector of command-line arguments.
 /// * `flag` - The flag to be added for each value.
 /// * `values` - A slice of strings representing the values to be associated with the flag.
-///
-/// # Example
-/// ```
-/// use std::ffi::OsString;
-///
-/// let mut cmd_args = Vec::<OsString>::new();
-/// let flag = "--example";
-/// let values = vec!["value1".to_string(), "".to_string(), "value2".to_string()];
-/// rsdebstrap::builder::add_flags(&mut cmd_args, flag, &values);
-/// assert_eq!(cmd_args, vec![OsString::from("--example"), OsString::from("value1"),
-///                           OsString::from("--example"), OsString::from("value2")]);
-/// ```
-pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
+fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     for value in values {
         if !value.is_empty() {
             cmd_args.push(flag.into());
