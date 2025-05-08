@@ -43,7 +43,7 @@ fn main() -> Result<()> {
                 match std::fs::create_dir_all(&profile.dir) {
                     Ok(_) => {}
                     Err(e) => {
-                        error!("error create directory: {}", e);
+                        error!("failed to create directory: {}: {}", profile.dir, e);
                         process::exit(1);
                     }
                 }
