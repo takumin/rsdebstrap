@@ -9,6 +9,8 @@ use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::filter::LevelFilter;
 
+use crate::executor::CommandExecutor;
+
 fn main() -> Result<()> {
     let args = cli::parse_args()?;
 
@@ -48,11 +50,8 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            let executor: Box<dyn executor::CommandExecutor> = match opts.dry_run {
-                true => Box::new(executor::MockCommandExecutor {
-                    expect_success: true,
-                }),
-                false => Box::new(executor::RealCommandExecutor),
+            let executor = executor::RealCommandExecutor {
+                dry_run: opts.dry_run,
             };
             match executor.execute("mmdebstrap", &runner::build_mmdebstrap(&profile)) {
                 Ok(_) => {}
