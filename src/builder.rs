@@ -20,11 +20,11 @@ use tracing::debug;
 /// let flag = "--example";
 ///
 /// // This will add the flag and value
-/// rsdebstrap::runner::add_flag(&mut cmd_args, flag, "value1");
+/// rsdebstrap::builder::add_flag(&mut cmd_args, flag, "value1");
 /// assert_eq!(cmd_args, vec![OsString::from("--example"), OsString::from("value1")]);
 ///
 /// // This will not add anything since the value is empty
-/// rsdebstrap::runner::add_flag(&mut cmd_args, flag, "");
+/// rsdebstrap::builder::add_flag(&mut cmd_args, flag, "");
 /// assert_eq!(cmd_args, vec![OsString::from("--example"), OsString::from("value1")]);
 /// ```
 pub fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
@@ -53,7 +53,7 @@ pub fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
 /// let mut cmd_args = Vec::<OsString>::new();
 /// let flag = "--example";
 /// let values = vec!["value1".to_string(), "".to_string(), "value2".to_string()];
-/// rsdebstrap::runner::add_flags(&mut cmd_args, flag, &values);
+/// rsdebstrap::builder::add_flags(&mut cmd_args, flag, &values);
 /// assert_eq!(cmd_args, vec![OsString::from("--example"), OsString::from("value1"),
 ///                           OsString::from("--example"), OsString::from("value2")]);
 /// ```
@@ -108,7 +108,7 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
 ///     },
 /// };
 ///
-/// let args = rsdebstrap::runner::build_mmdebstrap(&profile);
+/// let args = rsdebstrap::builder::build_mmdebstrap(&profile);
 /// // args now contains all necessary command-line arguments for mmdebstrap
 /// ```
 #[tracing::instrument(skip(profile))]

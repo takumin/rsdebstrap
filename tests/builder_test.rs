@@ -1,8 +1,8 @@
 use anyhow::Result;
 use camino::Utf8PathBuf;
+use rsdebstrap::builder::build_mmdebstrap;
 use rsdebstrap::config::{Format, Mmdebstrap, Mode, Profile, Variant};
 use rsdebstrap::executor::{CommandExecutor, RealCommandExecutor};
-use rsdebstrap::runner::build_mmdebstrap;
 
 #[test]
 fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
