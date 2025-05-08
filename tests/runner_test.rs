@@ -1,7 +1,7 @@
 use anyhow::Result;
 use camino::Utf8PathBuf;
 use rsdebstrap::config::{Format, Mmdebstrap, Mode, Profile, Variant};
-use rsdebstrap::executor::{CommandExecutor, MockCommandExecutor};
+use rsdebstrap::executor::{CommandExecutor, RealCommandExecutor};
 use rsdebstrap::runner::build_mmdebstrap;
 
 #[test]
@@ -28,12 +28,10 @@ fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
     };
 
     // Create a mock executor that will "succeed"
-    let executor = MockCommandExecutor {
-        expect_success: true,
-    };
+    let executor = RealCommandExecutor { dry_run: false };
 
     // This should succeed because our mock is configured to succeed
-    let result = executor.execute("mmdebstrap", &build_mmdebstrap(&profile));
+    let result = executor.execute("echo", &build_mmdebstrap(&profile));
     assert!(result.is_ok());
 
     Ok(())
@@ -63,12 +61,10 @@ fn test_run_mmdebstrap_with_mock_failure() -> Result<()> {
     };
 
     // Create a mock executor that will "fail"
-    let executor = MockCommandExecutor {
-        expect_success: false,
-    };
+    let executor = RealCommandExecutor { dry_run: false };
 
     // This should fail because our mock is configured to fail
-    let result = executor.execute("mmdebstrap", &build_mmdebstrap(&profile));
+    let result = executor.execute("false", &build_mmdebstrap(&profile));
     assert!(result.is_err());
 
     Ok(())
