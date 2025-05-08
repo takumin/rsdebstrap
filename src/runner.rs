@@ -66,6 +66,51 @@ pub fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
     }
 }
 
+/// Builds mmdebstrap command-line arguments from the given profile configuration.
+///
+/// This function builds a vector of command-line arguments that will be passed to the mmdebstrap
+/// utility for creating Debian-based system images. It processes various configuration parameters
+/// from the provided profile and formats them according to mmdebstrap's requirements.
+///
+/// # Arguments
+/// * `profile` - A reference to a `Profile` struct containing the configuration for mmdebstrap.
+///
+/// # Returns
+/// A `Vec<OsString>` containing all the command-line arguments to be passed to mmdebstrap.
+///
+/// # Note
+/// The function logs the complete command that would be executed at the debug level
+/// for troubleshooting purposes.
+///
+/// # Example
+/// ```
+/// use camino::Utf8PathBuf;
+/// use rsdebstrap::config::{Format, Mmdebstrap, Mode, Profile, Variant};
+///
+/// let profile = Profile {
+///     dir: Utf8PathBuf::from("/tmp"),
+///     mmdebstrap: Mmdebstrap {
+///         suite: "bookworm".to_string(),
+///         target: "output.tar".to_string(),
+///         mode: Mode::Auto,
+///         format: Format::Auto,
+///         variant: Variant::Debootstrap,
+///         architectures: vec!["amd64".to_string()],
+///         components: vec!["main".to_string()],
+///         include: vec!["base-files".to_string()],
+///         keyring: vec![],
+///         aptopt: vec![],
+///         dpkgopt: vec![],
+///         setup_hook: vec![],
+///         extract_hook: vec![],
+///         essential_hook: vec![],
+///         customize_hook: vec![],
+///     },
+/// };
+///
+/// let args = rsdebstrap::runner::build_mmdebstrap(&profile);
+/// // args now contains all necessary command-line arguments for mmdebstrap
+/// ```
 #[tracing::instrument(skip(profile))]
 pub fn build_mmdebstrap(profile: &Profile) -> Vec<OsString> {
     let mut cmd_args = Vec::<OsString>::new();
