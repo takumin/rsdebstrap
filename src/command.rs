@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::process::Command;
+use which::which;
 
 /// Trait for command execution
 pub trait CommandExecutor {
@@ -13,7 +14,14 @@ pub struct RealCommandExecutor;
 
 impl CommandExecutor for RealCommandExecutor {
     fn execute(&self, command: &str, args: &[OsString]) -> Result<()> {
-        let status = Command::new(command)
+        let cmd = match which(command) {
+            Ok(p) => p,
+            Err(e) => {
+                anyhow::bail!("command not found: {}: {}", command, e);
+            }
+        };
+
+        let status = Command::new(cmd)
             .args(args)
             .status()
             .with_context(|| format!("failed to start {}", command))?;
