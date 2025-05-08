@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::ffi::OsString;
 use std::process::Command;
 use which::which;
@@ -10,7 +10,9 @@ pub trait CommandExecutor {
 }
 
 /// Real command executor that uses std::process::Command to execute actual commands
-pub struct RealCommandExecutor;
+pub struct RealCommandExecutor {
+    pub dry_run: bool,
+}
 
 impl CommandExecutor for RealCommandExecutor {
     fn execute(&self, command: &str, args: &[OsString]) -> Result<()> {
@@ -20,11 +22,28 @@ impl CommandExecutor for RealCommandExecutor {
                 anyhow::bail!("command not found: {}: {}", command, e);
             }
         };
+        tracing::trace!("command found: {}: {}", command, cmd.to_string_lossy());
 
-        let status = Command::new(cmd)
-            .args(args)
-            .status()
-            .with_context(|| format!("failed to start {}", command))?;
+        if self.dry_run {
+            tracing::info!("dry run: {}: {:?}", command, args);
+            return Ok(());
+        }
+
+        let mut child = match Command::new(cmd).args(args).spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                anyhow::bail!("failed to spawn command `{}` with args {:?}: {}", command, args, e);
+            }
+        };
+        tracing::trace!("spawn command: {}: {}", command, child.id());
+
+        let status = match child.wait() {
+            Ok(c) => c,
+            Err(e) => {
+                anyhow::bail!("failed to wait command `{}` with args {:?}: {}", command, args, e);
+            }
+        };
+        tracing::trace!("wait command: {}: {}", command, status.success());
 
         if !status.success() {
             anyhow::bail!(
