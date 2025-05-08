@@ -48,10 +48,16 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            match runner::run_mmdebstrap(&profile, opts.dry_run) {
+            let executor: Box<dyn command::CommandExecutor> = match opts.dry_run {
+                true => Box::new(command::MockCommandExecutor {
+                    expect_success: true,
+                }),
+                false => Box::new(command::RealCommandExecutor),
+            };
+            match executor.execute("mmdebstrap", &runner::build_mmdebstrap(&profile)) {
                 Ok(_) => {}
                 Err(e) => {
-                    error!("error running mmdebstrap: {}", e);
+                    error!("failed to run mmdebstrap: {}", e);
                     process::exit(1);
                 }
             }
