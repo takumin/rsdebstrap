@@ -135,7 +135,14 @@ pub enum LogLevel {
 ///
 /// fn main() -> anyhow::Result<()> {
 ///     let cli = cli::parse_args()?;
-///     // Process the parsed CLI arguments
+///     match &args.command {
+///         cli::Commands::Apply(opts) => {
+///             // Process the apply arguments
+///         }
+///         cli::Commands::Validate(opts) => {
+///             // Process the validate arguments
+///         }
+///     }
 ///     Ok(())
 /// }
 /// ```
