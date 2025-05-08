@@ -134,7 +134,7 @@ pub enum LogLevel {
 /// use rsdebstrap::cli;
 ///
 /// fn main() -> anyhow::Result<()> {
-///     let cli = cli::parse_args()?;
+///     let args = cli::parse_args()?;
 ///     match &args.command {
 ///         cli::Commands::Apply(opts) => {
 ///             // Process the apply arguments
