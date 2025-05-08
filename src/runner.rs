@@ -1,8 +1,7 @@
 use crate::command::{CommandExecutor, RealCommandExecutor};
 use crate::config::Profile;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::ffi::OsString;
-use std::fs;
 use tracing::debug;
 
 /// Adds a flag and its corresponding value to the command arguments if the value is not empty.
@@ -114,11 +113,6 @@ pub fn run_mmdebstrap_exec<E: CommandExecutor>(
 
     if dry_run {
         return Ok(());
-    }
-
-    if !profile.dir.exists() {
-        fs::create_dir_all(&profile.dir)
-            .with_context(|| format!("failed to create directory: {}", profile.dir))?;
     }
 
     executor.execute("mmdebstrap", &cmd_args)

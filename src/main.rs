@@ -39,6 +39,15 @@ fn main() -> Result<()> {
                     process::exit(1);
                 }
             };
+            if !opts.dry_run && !profile.dir.exists() {
+                match std::fs::create_dir_all(&profile.dir) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("error create directory: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
             match runner::run_mmdebstrap(&profile, opts.dry_run) {
                 Ok(_) => {}
                 Err(e) => {
