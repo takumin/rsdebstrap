@@ -25,6 +25,7 @@ tasks:
     - task: actionlint
     - task: ghalint-run
     - task: ghalint-act
+    - task: zizmor
 
   matrix:
     desc: '{{.TASK}}'
@@ -122,6 +123,22 @@ tasks:
     desc: '{{.TASK}}'
     deps:
     - task: tool:aqua:tag:ghalint
+    sources:
+    - '.github/**/*.yml'
+    - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  zizmor:
+    desc: '{{.TASK}}'
+    deps:
+    - task: tool:aqua:tag:zizmor
     sources:
     - '.github/**/*.yml'
     - '.github/**/*.yaml'

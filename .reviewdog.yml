@@ -24,6 +24,9 @@ runner:
     errorformat:
     - '%.%#action_file_path=%f error="%m" policy_name=%.%#'
     - '%-G%.%#'
+  zizmor:
+    cmd: zizmor --quiet --no-progress --format=sarif .
+    format: sarif
   hadolint:
     cmd: fd -H -E .git/ -E .task/ -t f -g Dockerfile -X hadolint -f json {} | jq -M -f scripts/reviewdog-hadolint.jq
     format: rdjson
