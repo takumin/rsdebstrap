@@ -1,5 +1,5 @@
 ---
 packages:
-- name: takumin/zizmor-bin@v1.7.0
+- name: takumin/zizmor-bin@v1.8.0
   tags:
   - zizmor
