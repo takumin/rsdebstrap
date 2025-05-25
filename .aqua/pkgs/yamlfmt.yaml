@@ -1,5 +1,5 @@
 ---
 packages:
-- name: google/yamlfmt@v0.16.0
+- name: google/yamlfmt@v0.17.0
   tags:
   - yamlfmt
