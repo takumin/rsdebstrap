@@ -1,5 +1,5 @@
 ---
 packages:
-- name: suzuki-shunsuke/pinact@v3.1.2
+- name: suzuki-shunsuke/pinact@v3.3.0
   tags:
   - pinact
