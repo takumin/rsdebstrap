@@ -1,6 +1,6 @@
 ---
 packages:
-- name: koalaman/shellcheck@v0.10.0
+- name: koalaman/shellcheck@v0.11.0
   tags:
   - actionlint
   - shellcheck
