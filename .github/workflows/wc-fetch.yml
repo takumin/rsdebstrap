@@ -28,13 +28,13 @@ jobs:
         aqua_version: v2.53.8
     - name: Restore cargo deps cache
       id: deps-cache-restore
-      uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
         path: ~/.cargo/registry/
     - name: Restore setup build aqua cache
       id: setup-build-cache-restore
-      uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
         key: setup-build-aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
         path: ~/.local/share/aquaproj-aqua/
@@ -46,13 +46,13 @@ jobs:
         task setup:build:aqua
     - name: Save setup build aqua cache
       if: github.ref == 'refs/heads/main' && steps.setup-build-cache-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
         key: ${{ steps.setup-build-cache-restore.outputs.cache-primary-key }}
         path: ~/.local/share/aquaproj-aqua/
     - name: Save cargo deps cache
       if: github.ref == 'refs/heads/main' && steps.deps-cache-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
         key: ${{ steps.deps-cache-restore.outputs.cache-primary-key }}
         path: ~/.cargo/registry/
