@@ -1,5 +1,5 @@
 ---
 packages:
-- name: reviewdog/reviewdog@v0.20.3
+- name: reviewdog/reviewdog@v0.21.0
   tags:
   - reviewdog
