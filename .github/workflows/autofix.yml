@@ -19,7 +19,7 @@ jobs:
     - name: Setup Aqua
       uses: aquaproj/aqua-installer@ea518c135a02fc11ff8024364510c181a5c6b342 # v4.0.3
       with:
-        aqua_version: v2.55.0
+        aqua_version: v2.55.1
     - name: Formatting
       run: task format
     - name: Autofix
