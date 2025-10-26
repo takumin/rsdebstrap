@@ -106,8 +106,6 @@ jobs:
       env:
         BUILD_PROFILE: ${{ matrix.profile }}
         BUILD_TARGET: ${{ matrix.target }}
-        COSIGN_EXPERIMENTAL: "1"
-        COSIGN_YES: "true"
     - name: Generate artifact attestation
       if: ${{ !startsWith(github.event_name, 'pull') && matrix.profile == 'release' }}
       uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
