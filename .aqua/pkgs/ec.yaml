@@ -1,5 +1,5 @@
 ---
 packages:
-- name: editorconfig-checker/editorconfig-checker@v3.4.1
+- name: editorconfig-checker/editorconfig-checker@v3.5.0
   tags:
   - editorconfig-checker
