@@ -26,7 +26,7 @@ jobs:
     - name: Setup aqua
       uses: aquaproj/aqua-installer@11dd79b4e498d471a9385aa9fb7f62bb5f52a73c # v4.0.4
       with:
-        aqua_version: v2.55.1
+        aqua_version: v2.55.2
     - name: Generate Matrix
       id: matrix
       run: echo "result=$(task reviewdog:matrix)" >> "$GITHUB_OUTPUT"
@@ -59,7 +59,7 @@ jobs:
     - name: Setup aqua
       uses: aquaproj/aqua-installer@11dd79b4e498d471a9385aa9fb7f62bb5f52a73c # v4.0.4
       with:
-        aqua_version: v2.55.1
+        aqua_version: v2.55.2
         aqua_opts: -t reviewdog,${{ matrix.target }}
     - name: Setup reporter
       id: reporter
