@@ -23,13 +23,13 @@ jobs:
       with:
         aqua_version: v2.55.3
     - name: Restore cargo deps cache
-      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache/restore@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
         path: ~/.cargo/registry/
     - name: Restore test cache
       id: test-cache-restore
-      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache/restore@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
       with:
         key: test-${{ hashFiles('**/Cargo.lock') }}
         path: target/
@@ -41,7 +41,7 @@ jobs:
         task test
     - name: Save test cache
       if: github.ref == 'refs/heads/main' && steps.test-cache-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache/save@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
       with:
         key: ${{ steps.test-cache-restore.outputs.cache-primary-key }}
         path: target/
