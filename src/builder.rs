@@ -120,7 +120,7 @@ pub fn build_mmdebstrap_args(profile: &Profile) -> Vec<OsString> {
             .mmdebstrap
             .mirrors
             .iter()
-            .filter(|m| !m.is_empty())
+            .filter(|m| !m.trim().is_empty())
             .map(|m| m.into()),
     );
 
