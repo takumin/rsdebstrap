@@ -7,7 +7,8 @@
 
 use anyhow::Result;
 use camino::Utf8PathBuf;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
+use clap_complete::Shell;
 
 /// Top-level CLI structure that serves as the entry point for parsing command-line arguments.
 ///
@@ -44,6 +45,30 @@ pub enum Commands {
     /// without executing mmdebstrap. It's useful for checking if a profile
     /// is valid before attempting to apply it.
     Validate(ValidateArgs),
+
+    /// Generate shell completion scripts.
+    ///
+    /// This command generates completion scripts for various shells.
+    /// The generated script should be sourced in your shell's configuration file
+    /// or saved to your shell's completion directory.
+    ///
+    /// # Examples
+    ///
+    /// For bash (add to ~/.bashrc):
+    /// ```sh
+    /// eval "$(rsdebstrap completions bash)"
+    /// ```
+    ///
+    /// For zsh (save to completion directory):
+    /// ```sh
+    /// rsdebstrap completions zsh > ~/.zsh/completion/_rsdebstrap
+    /// ```
+    ///
+    /// For fish (save to completion directory):
+    /// ```sh
+    /// rsdebstrap completions fish > ~/.config/fish/completions/rsdebstrap.fish
+    /// ```
+    Completions(CompletionsArgs),
 }
 
 /// Arguments for the `Apply` command.
@@ -56,7 +81,7 @@ pub struct ApplyArgs {
     ///
     /// This file should contain a valid rsdebstrap profile that defines
     /// how mmdebstrap should be configured and executed.
-    #[arg(short, long, default_value = "profile.yaml")]
+    #[arg(short, long, default_value = "profile.yaml", value_hint = ValueHint::FilePath)]
     pub file: Utf8PathBuf,
 
     /// Set the log level for controlling verbosity of output.
@@ -85,7 +110,7 @@ pub struct ValidateArgs {
     ///
     /// This file will be checked for syntax and schema correctness
     /// according to the rsdebstrap profile specifications.
-    #[arg(short, long, default_value = "profile.yaml")]
+    #[arg(short, long, default_value = "profile.yaml", value_hint = ValueHint::FilePath)]
     pub file: Utf8PathBuf,
 
     /// Set the log level for controlling verbosity of output.
@@ -94,6 +119,21 @@ pub struct ValidateArgs {
     /// Options range from `trace` (most verbose) to `error` (least verbose).
     #[arg(short, long, default_value = "info")]
     pub log_level: LogLevel,
+}
+
+/// Arguments for the `Completions` command.
+///
+/// This struct defines the arguments for generating shell completion scripts.
+/// It accepts a shell type as input to generate the appropriate completion script.
+#[derive(Args, Debug)]
+pub struct CompletionsArgs {
+    /// The shell to generate completions for.
+    ///
+    /// Supported shells include bash, zsh, fish, powershell, and elvish.
+    /// The generated script should be sourced or saved to the appropriate
+    /// completion directory for your shell.
+    #[arg(value_enum)]
+    pub shell: Shell,
 }
 
 /// Represents log levels for controlling the verbosity of logging output.
@@ -141,6 +181,9 @@ pub enum LogLevel {
 ///         }
 ///         cli::Commands::Validate(opts) => {
 ///             // Process the validate arguments
+///         }
+///         cli::Commands::Completions(opts) => {
+///             // Generate shell completions
 ///         }
 ///     }
 ///     Ok(())
