@@ -202,6 +202,9 @@ pub struct Mmdebstrap {
     /// Customize hook scripts
     #[serde(default)]
     pub customize_hook: Vec<String>,
+    /// APT mirror URLs to use as package sources
+    #[serde(default)]
+    pub mirrors: Vec<String>,
 }
 
 /// Loads a bootstrap profile from a YAML file.

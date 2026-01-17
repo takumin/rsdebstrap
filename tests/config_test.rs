@@ -38,6 +38,7 @@ mmdebstrap:
     assert!(profile.mmdebstrap.extract_hook.is_empty());
     assert!(profile.mmdebstrap.essential_hook.is_empty());
     assert!(profile.mmdebstrap.customize_hook.is_empty());
+    assert!(profile.mmdebstrap.mirrors.is_empty());
 
     Ok(())
 }
@@ -98,6 +99,7 @@ mmdebstrap:
     assert_eq!(profile.mmdebstrap.extract_hook, vec!["echo extract"]);
     assert_eq!(profile.mmdebstrap.essential_hook, vec!["echo essential"]);
     assert_eq!(profile.mmdebstrap.customize_hook, vec!["echo customize"]);
+    assert!(profile.mmdebstrap.mirrors.is_empty());
 
     Ok(())
 }
@@ -125,6 +127,41 @@ invalid: yaml
     let path = Utf8Path::from_path(file.path()).unwrap();
     let result = load_profile(path);
     assert!(result.is_err());
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_with_mirrors() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/debian-mirror-test
+mmdebstrap:
+  suite: bookworm
+  target: rootfs.tar.zst
+  mirrors:
+  - 'http://ftp.jp.debian.org/debian'
+  - 'http://security.debian.org/debian-security'
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    assert_eq!(profile.dir, "/tmp/debian-mirror-test");
+    assert_eq!(profile.mmdebstrap.suite, "bookworm");
+    assert_eq!(profile.mmdebstrap.target, "rootfs.tar.zst");
+    assert_eq!(
+        profile.mmdebstrap.mirrors,
+        vec![
+            "http://ftp.jp.debian.org/debian",
+            "http://security.debian.org/debian-security"
+        ]
+    );
 
     Ok(())
 }
