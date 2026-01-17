@@ -29,6 +29,7 @@ jobs:
         aqua_version: v2.56.3
     - name: Generate Matrix
       id: matrix
+      shell: bash
       run: echo "result=$(task reviewdog:matrix)" >> "$GITHUB_OUTPUT"
     - name: Check Matrix
       env:
