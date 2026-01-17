@@ -4,6 +4,9 @@ mod config;
 mod executor;
 
 use anyhow::Result;
+use clap::CommandFactory;
+use clap_complete::generate;
+use std::io;
 use std::process;
 use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
@@ -14,9 +17,18 @@ use crate::executor::CommandExecutor;
 fn main() -> Result<()> {
     let args = cli::parse_args()?;
 
+    // Handle completions subcommand before setting up logging
+    // (completion output should be clean without any logging)
+    if let cli::Commands::Completions(opts) = &args.command {
+        let mut cmd = cli::Cli::command();
+        generate(opts.shell, &mut cmd, "rsdebstrap", &mut io::stdout());
+        return Ok(());
+    }
+
     let log_level = match &args.command {
         cli::Commands::Apply(opts) => opts.log_level,
         cli::Commands::Validate(opts) => opts.log_level,
+        cli::Commands::Completions(_) => unreachable!("completions handled above"),
     };
 
     let filter = match log_level {
@@ -64,6 +76,9 @@ fn main() -> Result<()> {
         cli::Commands::Validate(opts) => {
             let profile = config::load_profile(opts.file.as_path())?;
             info!("validation successful:\n{:#?}", profile);
+        }
+        cli::Commands::Completions(_) => {
+            unreachable!("completions handled earlier");
         }
     }
 
