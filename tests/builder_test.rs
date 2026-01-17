@@ -102,7 +102,10 @@ fn test_build_mmdebstrap_args_with_mirrors() -> Result<()> {
     let args = build_mmdebstrap_args(&profile);
 
     // Convert OsString to Vec<String> for easier assertion
-    let args_str: Vec<String> = args.iter().map(|s| s.to_string_lossy().to_string()).collect();
+    let args_str: Vec<String> = args
+        .iter()
+        .map(|s| s.to_string_lossy().to_string())
+        .collect();
 
     // Check that mirrors are included as positional arguments after suite and target
     assert!(args_str.contains(&"bookworm".to_string()));
