@@ -228,7 +228,6 @@ impl Mmdebstrap {
     /// assert_eq!(config.target, "rootfs.tar.zst");
     /// assert!(config.mirrors.is_empty());
     /// ```
-    #[allow(dead_code)]
     pub fn new(suite: impl Into<String>, target: impl Into<String>) -> Self {
         Self {
             suite: suite.into(),
