@@ -250,7 +250,6 @@ impl Mmdebstrap {
     }
 }
 
-
 /// Loads a bootstrap profile from a YAML file.
 ///
 /// # Arguments
