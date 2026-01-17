@@ -10,76 +10,25 @@ use clap::{Parser, ValueEnum};
 use clap_complete::Shell;
 use rsdebstrap::cli::{Cli, Commands};
 
-/// Test parsing the completions command with bash shell.
+/// Test parsing the completions command for all supported shells.
 #[test]
-fn test_completions_command_bash() -> Result<()> {
-    let args = Cli::parse_from(["rsdebstrap", "completions", "bash"]);
+fn test_completions_command_parsing() -> Result<()> {
+    let shells = [
+        ("bash", Shell::Bash),
+        ("zsh", Shell::Zsh),
+        ("fish", Shell::Fish),
+        ("powershell", Shell::PowerShell),
+        ("elvish", Shell::Elvish),
+    ];
 
-    match args.command {
-        Commands::Completions(opts) => {
-            assert!(matches!(opts.shell, Shell::Bash));
+    for (shell_str, expected_shell) in shells {
+        let args = Cli::parse_from(["rsdebstrap", "completions", shell_str]);
+        match args.command {
+            Commands::Completions(opts) => {
+                assert_eq!(opts.shell, expected_shell, "Mismatched shell for '{}'", shell_str);
+            }
+            _ => panic!("Expected Completions command for shell '{}'", shell_str),
         }
-        _ => panic!("Expected Completions command"),
-    }
-
-    Ok(())
-}
-
-/// Test parsing the completions command with zsh shell.
-#[test]
-fn test_completions_command_zsh() -> Result<()> {
-    let args = Cli::parse_from(["rsdebstrap", "completions", "zsh"]);
-
-    match args.command {
-        Commands::Completions(opts) => {
-            assert!(matches!(opts.shell, Shell::Zsh));
-        }
-        _ => panic!("Expected Completions command"),
-    }
-
-    Ok(())
-}
-
-/// Test parsing the completions command with fish shell.
-#[test]
-fn test_completions_command_fish() -> Result<()> {
-    let args = Cli::parse_from(["rsdebstrap", "completions", "fish"]);
-
-    match args.command {
-        Commands::Completions(opts) => {
-            assert!(matches!(opts.shell, Shell::Fish));
-        }
-        _ => panic!("Expected Completions command"),
-    }
-
-    Ok(())
-}
-
-/// Test parsing the completions command with powershell shell.
-#[test]
-fn test_completions_command_powershell() -> Result<()> {
-    let args = Cli::parse_from(["rsdebstrap", "completions", "powershell"]);
-
-    match args.command {
-        Commands::Completions(opts) => {
-            assert!(matches!(opts.shell, Shell::PowerShell));
-        }
-        _ => panic!("Expected Completions command"),
-    }
-
-    Ok(())
-}
-
-/// Test parsing the completions command with elvish shell.
-#[test]
-fn test_completions_command_elvish() -> Result<()> {
-    let args = Cli::parse_from(["rsdebstrap", "completions", "elvish"]);
-
-    match args.command {
-        Commands::Completions(opts) => {
-            assert!(matches!(opts.shell, Shell::Elvish));
-        }
-        _ => panic!("Expected Completions command"),
     }
 
     Ok(())
@@ -104,103 +53,64 @@ fn test_completions_generation() -> Result<()> {
     Ok(())
 }
 
-/// Test that bash completions contain expected patterns.
+/// Test that completions for various shells contain expected patterns.
 #[test]
-fn test_bash_completion_content() -> Result<()> {
+fn test_completion_contents() -> Result<()> {
     use clap::CommandFactory;
     use clap_complete::generate;
 
     let mut cmd = Cli::command();
-    let mut buffer = Vec::new();
 
-    generate(Shell::Bash, &mut cmd, "rsdebstrap", &mut buffer);
-    let output = String::from_utf8(buffer)?;
+    let test_cases = [
+        (Shell::Bash, &["rsdebstrap", "apply", "validate", "completions"] as &[_]),
+        (Shell::Zsh, &["#compdef rsdebstrap", "apply", "validate"]),
+        (Shell::Fish, &["rsdebstrap", "apply", "validate", "completions"]),
+    ];
 
-    // Verify the completion script contains key elements
-    assert!(output.contains("rsdebstrap"));
-    assert!(output.contains("apply"));
-    assert!(output.contains("validate"));
-    assert!(output.contains("completions"));
+    for (shell, patterns) in test_cases {
+        let mut buffer = Vec::new();
+        generate(shell, &mut cmd, "rsdebstrap", &mut buffer);
+        let output = String::from_utf8(buffer)?;
 
-    Ok(())
-}
-
-/// Test that zsh completions contain expected patterns.
-#[test]
-fn test_zsh_completion_content() -> Result<()> {
-    use clap::CommandFactory;
-    use clap_complete::generate;
-
-    let mut cmd = Cli::command();
-    let mut buffer = Vec::new();
-
-    generate(Shell::Zsh, &mut cmd, "rsdebstrap", &mut buffer);
-    let output = String::from_utf8(buffer)?;
-
-    // Verify the completion script contains key elements
-    assert!(output.contains("#compdef rsdebstrap"));
-    assert!(output.contains("apply"));
-    assert!(output.contains("validate"));
+        for pattern in patterns {
+            assert!(
+                output.contains(pattern),
+                "Pattern '{}' not found in {:?} completions",
+                pattern,
+                shell
+            );
+        }
+    }
 
     Ok(())
 }
 
-/// Test that fish completions contain expected patterns.
+/// Integration test: Test actual CLI invocation for completions.
 #[test]
-fn test_fish_completion_content() -> Result<()> {
-    use clap::CommandFactory;
-    use clap_complete::generate;
+fn test_cli_completions_output() -> Result<()> {
+    let test_cases = [
+        ("bash", &["rsdebstrap", "apply", "validate", "completions"] as &[_]),
+        ("zsh", &["#compdef rsdebstrap", "apply", "validate"]),
+    ];
 
-    let mut cmd = Cli::command();
-    let mut buffer = Vec::new();
+    for (shell, patterns) in test_cases {
+        let output = std::process::Command::new("cargo")
+            .args(["run", "--quiet", "--", "completions", shell])
+            .output()?;
 
-    generate(Shell::Fish, &mut cmd, "rsdebstrap", &mut buffer);
-    let output = String::from_utf8(buffer)?;
+        assert!(output.status.success(), "Command failed for shell '{}'", shell);
 
-    // Verify the completion script contains key elements
-    assert!(output.contains("rsdebstrap"));
-    assert!(output.contains("apply"));
-    assert!(output.contains("validate"));
-    assert!(output.contains("completions"));
+        let stdout = String::from_utf8(output.stdout)?;
 
-    Ok(())
-}
-
-/// Integration test: Test actual CLI invocation for bash completions.
-#[test]
-fn test_cli_completions_bash_output() -> Result<()> {
-    let output = std::process::Command::new("cargo")
-        .args(["run", "--quiet", "--", "completions", "bash"])
-        .output()?;
-
-    assert!(output.status.success(), "Command failed to execute");
-
-    let stdout = String::from_utf8(output.stdout)?;
-
-    // Verify bash completion script contains expected patterns
-    assert!(stdout.contains("rsdebstrap"));
-    assert!(stdout.contains("apply"));
-    assert!(stdout.contains("validate"));
-    assert!(stdout.contains("completions"));
-
-    Ok(())
-}
-
-/// Integration test: Test actual CLI invocation for zsh completions.
-#[test]
-fn test_cli_completions_zsh_output() -> Result<()> {
-    let output = std::process::Command::new("cargo")
-        .args(["run", "--quiet", "--", "completions", "zsh"])
-        .output()?;
-
-    assert!(output.status.success(), "Command failed to execute");
-
-    let stdout = String::from_utf8(output.stdout)?;
-
-    // Verify zsh completion script contains expected patterns
-    assert!(stdout.contains("#compdef rsdebstrap"));
-    assert!(stdout.contains("apply"));
-    assert!(stdout.contains("validate"));
+        for pattern in patterns {
+            assert!(
+                stdout.contains(pattern),
+                "Pattern '{}' not found in stdout for shell '{}'",
+                pattern,
+                shell
+            );
+        }
+    }
 
     Ok(())
 }
