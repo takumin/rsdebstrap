@@ -77,6 +77,7 @@ fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
 ///         extract_hook: vec![],
 ///         essential_hook: vec![],
 ///         customize_hook: vec![],
+///         mirrors: vec![],
 ///     },
 /// };
 ///
@@ -111,6 +112,16 @@ pub fn build_mmdebstrap_args(profile: &Profile) -> Vec<OsString> {
             .dir
             .join(&profile.mmdebstrap.target)
             .into_os_string(),
+    );
+
+    // Add mirrors as positional arguments after suite and target
+    cmd_args.extend(
+        profile
+            .mmdebstrap
+            .mirrors
+            .iter()
+            .filter(|m| !m.trim().is_empty())
+            .map(|m| m.into()),
     );
 
     debug!(
