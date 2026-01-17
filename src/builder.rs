@@ -115,11 +115,14 @@ pub fn build_mmdebstrap_args(profile: &Profile) -> Vec<OsString> {
     );
 
     // Add mirrors as positional arguments after suite and target
-    for mirror in &profile.mmdebstrap.mirrors {
-        if !mirror.is_empty() {
-            cmd_args.push(mirror.into());
-        }
-    }
+    cmd_args.extend(
+        profile
+            .mmdebstrap
+            .mirrors
+            .iter()
+            .filter(|m| !m.is_empty())
+            .map(|m| m.into()),
+    );
 
     debug!(
         "mmdebstrap would run: mmdebstrap {}",
