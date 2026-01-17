@@ -207,7 +207,6 @@ pub struct Mmdebstrap {
     pub mirrors: Vec<String>,
 }
 
-
 /// Loads a bootstrap profile from a YAML file.
 ///
 /// # Arguments
