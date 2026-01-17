@@ -207,48 +207,6 @@ pub struct Mmdebstrap {
     pub mirrors: Vec<String>,
 }
 
-impl Mmdebstrap {
-    /// Creates a new Mmdebstrap configuration with minimal required fields.
-    ///
-    /// All optional fields are initialized with their default values.
-    ///
-    /// # Arguments
-    /// * `suite` - Debian suite name (e.g., "bookworm", "sid")
-    /// * `target` - Target output path
-    ///
-    /// # Returns
-    /// A new `Mmdebstrap` instance with default values for all optional fields
-    ///
-    /// # Example
-    /// ```
-    /// use rsdebstrap::config::Mmdebstrap;
-    ///
-    /// let config = Mmdebstrap::new("bookworm", "rootfs.tar.zst");
-    /// assert_eq!(config.suite, "bookworm");
-    /// assert_eq!(config.target, "rootfs.tar.zst");
-    /// assert!(config.mirrors.is_empty());
-    /// ```
-    pub fn new(suite: impl Into<String>, target: impl Into<String>) -> Self {
-        Self {
-            suite: suite.into(),
-            target: target.into(),
-            mode: Default::default(),
-            format: Default::default(),
-            variant: Default::default(),
-            architectures: Default::default(),
-            components: Default::default(),
-            include: Default::default(),
-            keyring: Default::default(),
-            aptopt: Default::default(),
-            dpkgopt: Default::default(),
-            setup_hook: Default::default(),
-            extract_hook: Default::default(),
-            essential_hook: Default::default(),
-            customize_hook: Default::default(),
-            mirrors: Default::default(),
-        }
-    }
-}
 
 /// Loads a bootstrap profile from a YAML file.
 ///
