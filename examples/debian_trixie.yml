@@ -1,8 +1,10 @@
 ---
-dir: /tmp/debian-bookworm-server-amd64
+dir: /tmp/debian-trixie-server-amd64
 mmdebstrap:
-  suite: bookworm
+  suite: trixie
   target: rootfs.tar.zst
+  mirrors:
+  - https://deb.debian.org/debian
   variant: apt
   components:
   - main
