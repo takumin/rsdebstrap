@@ -12,7 +12,7 @@ fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
             components: vec!["main".to_string(), "contrib".to_string()],
             architectures: vec!["amd64".to_string()],
             include: vec!["curl".to_string(), "ca-certificates".to_string()],
-            ..Mmdebstrap::new("bookworm".to_string(), "rootfs.tar.zst".to_string())
+            ..Mmdebstrap::new("bookworm", "rootfs.tar.zst")
         },
     };
 
@@ -34,7 +34,7 @@ fn test_run_mmdebstrap_with_mock_failure() -> Result<()> {
             components: vec!["main".to_string(), "contrib".to_string()],
             architectures: vec!["amd64".to_string()],
             include: vec!["curl".to_string(), "ca-certificates".to_string()],
-            ..Mmdebstrap::new("bookworm".to_string(), "rootfs.tar.zst".to_string())
+            ..Mmdebstrap::new("bookworm", "rootfs.tar.zst")
         },
     };
 
@@ -59,7 +59,7 @@ fn test_build_mmdebstrap_args_with_mirrors() -> Result<()> {
                 "   ".to_string(), // Whitespace-only string should be filtered out
                 "http://security.debian.org/debian-security".to_string(),
             ],
-            ..Mmdebstrap::new("bookworm".to_string(), "rootfs.tar.zst".to_string())
+            ..Mmdebstrap::new("bookworm", "rootfs.tar.zst")
         },
     };
 

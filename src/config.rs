@@ -223,16 +223,16 @@ impl Mmdebstrap {
     /// ```
     /// use rsdebstrap::config::Mmdebstrap;
     ///
-    /// let config = Mmdebstrap::new("bookworm".to_string(), "rootfs.tar.zst".to_string());
+    /// let config = Mmdebstrap::new("bookworm", "rootfs.tar.zst");
     /// assert_eq!(config.suite, "bookworm");
     /// assert_eq!(config.target, "rootfs.tar.zst");
     /// assert!(config.mirrors.is_empty());
     /// ```
     #[allow(dead_code)]
-    pub fn new(suite: String, target: String) -> Self {
+    pub fn new(suite: impl Into<String>, target: impl Into<String>) -> Self {
         Self {
-            suite,
-            target,
+            suite: suite.into(),
+            target: target.into(),
             mode: Default::default(),
             format: Default::default(),
             variant: Default::default(),

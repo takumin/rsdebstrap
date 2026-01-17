@@ -65,7 +65,7 @@ fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
 ///         architectures: vec!["amd64".to_string()],
 ///         components: vec!["main".to_string()],
 ///         include: vec!["base-files".to_string()],
-///         ..Mmdebstrap::new("bookworm".to_string(), "output.tar".to_string())
+///         ..Mmdebstrap::new("bookworm", "output.tar")
 ///     },
 /// };
 ///
