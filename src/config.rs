@@ -232,6 +232,16 @@ impl Mmdebstrap {
         Self {
             suite,
             target,
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for Mmdebstrap {
+    fn default() -> Self {
+        Self {
+            suite: String::new(),
+            target: String::new(),
             mode: Default::default(),
             format: Default::default(),
             variant: Default::default(),
