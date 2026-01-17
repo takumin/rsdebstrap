@@ -62,22 +62,10 @@ fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
 /// let profile = Profile {
 ///     dir: Utf8PathBuf::from("/tmp"),
 ///     mmdebstrap: Mmdebstrap {
-///         suite: "bookworm".to_string(),
-///         target: "output.tar".to_string(),
-///         mode: Mode::Auto,
-///         format: Format::Auto,
-///         variant: Variant::Debootstrap,
 ///         architectures: vec!["amd64".to_string()],
 ///         components: vec!["main".to_string()],
 ///         include: vec!["base-files".to_string()],
-///         keyring: vec![],
-///         aptopt: vec![],
-///         dpkgopt: vec![],
-///         setup_hook: vec![],
-///         extract_hook: vec![],
-///         essential_hook: vec![],
-///         customize_hook: vec![],
-///         mirrors: vec![],
+///         ..Mmdebstrap::new("bookworm".to_string(), "output.tar".to_string())
 ///     },
 /// };
 ///
