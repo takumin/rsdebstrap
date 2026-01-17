@@ -94,8 +94,8 @@ fn test_build_mmdebstrap_args_with_mirrors() -> Result<()> {
             customize_hook: vec![],
             mirrors: vec![
                 "http://ftp.jp.debian.org/debian".to_string(),
-                "".to_string(),      // Empty string should be filtered out
-                "   ".to_string(),   // Whitespace-only string should be filtered out
+                "".to_string(),    // Empty string should be filtered out
+                "   ".to_string(), // Whitespace-only string should be filtered out
                 "http://security.debian.org/debian-security".to_string(),
             ],
         },
