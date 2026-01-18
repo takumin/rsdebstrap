@@ -21,8 +21,14 @@ pub trait Provisioner {
     /// # Arguments
     /// * `rootfs` - The path to the bootstrapped rootfs directory
     /// * `executor` - The command executor for running commands
+    /// * `dry_run` - If true, skip actual file operations and only log what would be done
     ///
     /// # Returns
     /// Result indicating success or failure of the provisioning step.
-    fn provision(&self, rootfs: &Utf8Path, executor: &dyn CommandExecutor) -> Result<()>;
+    fn provision(
+        &self,
+        rootfs: &Utf8Path,
+        executor: &dyn CommandExecutor,
+        dry_run: bool,
+    ) -> Result<()>;
 }

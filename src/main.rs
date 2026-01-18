@@ -88,9 +88,11 @@ fn main() -> Result<()> {
                                 profile.provisioners.len()
                             );
                             let provisioner = provisioner_config.as_provisioner();
-                            provisioner.provision(&rootfs, &executor).with_context(|| {
-                                format!("failed to run provisioner {}", index + 1)
-                            })?;
+                            provisioner
+                                .provision(&rootfs, &executor, opts.dry_run)
+                                .with_context(|| {
+                                    format!("failed to run provisioner {}", index + 1)
+                                })?;
                         }
 
                         info!("provisioning phase completed successfully");
@@ -125,24 +127,36 @@ fn main() -> Result<()> {
 /// For archive-based outputs (tar, squashfs, etc.), returns an error
 /// as provisioners require a directory to chroot into.
 fn determine_rootfs_path(profile: &config::Profile) -> Result<Utf8PathBuf> {
+    use crate::backends::mmdebstrap::Format;
+
     match &profile.bootstrap {
         config::Bootstrap::Debootstrap(cfg) => {
             // debootstrap always outputs to directory
             Ok(profile.dir.join(&cfg.target))
         }
         config::Bootstrap::Mmdebstrap(cfg) => {
-            // Check if target is a directory or archive
             let target_path = profile.dir.join(&cfg.target);
 
-            // If target has an extension, it's likely an archive format
-            if target_path.extension().is_some() {
-                anyhow::bail!(
-                    "archive target detected: {}",
-                    target_path.file_name().unwrap_or("unknown")
-                );
+            // Check format to determine if target is a directory
+            match &cfg.format {
+                Format::Directory => Ok(target_path),
+                Format::Auto => {
+                    // When format is auto, check known archive extensions
+                    let known_archive_extensions =
+                        ["tar", "gz", "bz2", "xz", "zst", "squashfs", "ext2", "img"];
+                    if let Some(ext) = target_path.extension() {
+                        if known_archive_extensions.contains(&ext) {
+                            anyhow::bail!("archive format detected based on extension: {}", ext);
+                        }
+                    }
+                    // No known archive extension, assume directory
+                    Ok(target_path)
+                }
+                format => {
+                    // Explicitly non-directory format
+                    anyhow::bail!("non-directory format specified: {}", format);
+                }
             }
-
-            Ok(target_path)
         }
     }
 }

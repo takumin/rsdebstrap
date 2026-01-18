@@ -78,43 +78,80 @@ impl ShellProvisioner {
     }
 }
 
+/// RAII guard to ensure script cleanup even on error
+struct ScriptGuard {
+    path: Utf8PathBuf,
+    dry_run: bool,
+}
+
+impl ScriptGuard {
+    fn new(path: Utf8PathBuf, dry_run: bool) -> Self {
+        Self { path, dry_run }
+    }
+}
+
+impl Drop for ScriptGuard {
+    fn drop(&mut self) {
+        if !self.dry_run && self.path.exists() {
+            if let Err(e) = fs::remove_file(&self.path) {
+                tracing::warn!("failed to cleanup script {}: {}", self.path, e);
+            } else {
+                tracing::debug!("cleaned up script: {}", self.path);
+            }
+        }
+    }
+}
+
 impl Provisioner for ShellProvisioner {
-    fn provision(&self, rootfs: &Utf8Path, executor: &dyn CommandExecutor) -> Result<()> {
+    fn provision(
+        &self,
+        rootfs: &Utf8Path,
+        executor: &dyn CommandExecutor,
+        dry_run: bool,
+    ) -> Result<()> {
         self.validate()
             .context("shell provisioner validation failed")?;
 
-        self.validate_rootfs(rootfs)
-            .context("rootfs validation failed")?;
+        if !dry_run {
+            self.validate_rootfs(rootfs)
+                .context("rootfs validation failed")?;
+        }
 
         info!("running shell provisioner: {}", self.script_source());
-        debug!("rootfs: {}, shell: {}", rootfs, self.shell);
+        debug!("rootfs: {}, shell: {}, dry_run: {}", rootfs, self.shell, dry_run);
 
         // Generate unique script name in rootfs
         let script_name = format!("provision-{}.sh", uuid::Uuid::new_v4());
         let target_script = rootfs.join("tmp").join(&script_name);
 
-        // Copy or write script to rootfs
-        if let Some(script_path) = &self.script {
-            // External script: copy to rootfs
-            info!("copying script from {} to rootfs", script_path);
-            fs::copy(script_path, &target_script).with_context(|| {
-                format!("failed to copy script {} to {}", script_path, target_script)
-            })?;
-        } else if let Some(content) = &self.content {
-            // Inline script: write to rootfs
-            info!("writing inline script to rootfs");
-            fs::write(&target_script, content)
-                .with_context(|| format!("failed to write inline script to {}", target_script))?;
-        }
+        // RAII guard ensures cleanup even on error
+        let _guard = ScriptGuard::new(target_script.clone(), dry_run);
 
-        // Make script executable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&target_script)?.permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&target_script, perms)
-                .context("failed to set execute permission on script")?;
+        if !dry_run {
+            // Copy or write script to rootfs
+            if let Some(script_path) = &self.script {
+                // External script: copy to rootfs
+                info!("copying script from {} to rootfs", script_path);
+                fs::copy(script_path, &target_script).with_context(|| {
+                    format!("failed to copy script {} to {}", script_path, target_script)
+                })?;
+            } else if let Some(content) = &self.content {
+                // Inline script: write to rootfs
+                info!("writing inline script to rootfs");
+                fs::write(&target_script, content).with_context(|| {
+                    format!("failed to write inline script to {}", target_script)
+                })?;
+            }
+
+            // Make script executable
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = fs::metadata(&target_script)?.permissions();
+                perms.set_mode(0o755);
+                fs::set_permissions(&target_script, perms)
+                    .context("failed to set execute permission on script")?;
+            }
         }
 
         // Execute script in chroot
@@ -128,10 +165,6 @@ impl Provisioner for ShellProvisioner {
         executor
             .execute("chroot", &args)
             .context("failed to execute provisioning script in chroot")?;
-
-        // Cleanup: remove script from rootfs
-        info!("cleaning up provisioning script");
-        fs::remove_file(&target_script).context("failed to remove provisioning script")?;
 
         info!("shell provisioner completed successfully");
         Ok(())
