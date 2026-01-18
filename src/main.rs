@@ -70,20 +70,14 @@ fn main() -> Result<()> {
             let backend = profile.bootstrap.as_backend();
             let command_name = backend.command_name();
 
-            let args = match backend.build_args(&profile.dir) {
-                Ok(a) => a,
-                Err(e) => {
-                    error!("failed to build {} args: {}", command_name, e);
-                    process::exit(1);
-                }
-            };
+            let args = backend.build_args(&profile.dir).unwrap_or_else(|e| {
+                error!("failed to build {} args: {}", command_name, e);
+                process::exit(1);
+            });
 
-            match executor.execute(command_name, &args) {
-                Ok(_) => {}
-                Err(e) => {
-                    error!("failed to run {}: {}", command_name, e);
-                    process::exit(1);
-                }
+            if let Err(e) = executor.execute(command_name, &args) {
+                error!("failed to run {}: {}", command_name, e);
+                process::exit(1);
             }
         }
         cli::Commands::Validate(opts) => {

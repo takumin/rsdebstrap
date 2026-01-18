@@ -1,3 +1,5 @@
+mod helpers;
+
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::backends::mmdebstrap;
@@ -26,26 +28,23 @@ bootstrap:
 
     assert_eq!(profile.dir, "/tmp/test");
 
-    if let rsdebstrap::config::Bootstrap::Mmdebstrap(cfg) = &profile.bootstrap {
-        assert_eq!(cfg.suite, "bookworm");
-        assert_eq!(cfg.target, "rootfs.tar.zst");
-        assert_eq!(cfg.mode, mmdebstrap::Mode::Auto);
-        assert_eq!(cfg.format, mmdebstrap::Format::Auto);
-        assert_eq!(cfg.variant, mmdebstrap::Variant::Debootstrap);
-        assert!(cfg.components.is_empty());
-        assert!(cfg.architectures.is_empty());
-        assert!(cfg.include.is_empty());
-        assert!(cfg.keyring.is_empty());
-        assert!(cfg.aptopt.is_empty());
-        assert!(cfg.dpkgopt.is_empty());
-        assert!(cfg.setup_hook.is_empty());
-        assert!(cfg.extract_hook.is_empty());
-        assert!(cfg.essential_hook.is_empty());
-        assert!(cfg.customize_hook.is_empty());
-        assert!(cfg.mirrors.is_empty());
-    } else {
-        panic!("Expected mmdebstrap bootstrap type");
-    }
+    let cfg = helpers::get_mmdebstrap_config(&profile);
+    assert_eq!(cfg.suite, "bookworm");
+    assert_eq!(cfg.target, "rootfs.tar.zst");
+    assert_eq!(cfg.mode, mmdebstrap::Mode::Auto);
+    assert_eq!(cfg.format, mmdebstrap::Format::Auto);
+    assert_eq!(cfg.variant, mmdebstrap::Variant::Debootstrap);
+    assert!(cfg.components.is_empty());
+    assert!(cfg.architectures.is_empty());
+    assert!(cfg.include.is_empty());
+    assert!(cfg.keyring.is_empty());
+    assert!(cfg.aptopt.is_empty());
+    assert!(cfg.dpkgopt.is_empty());
+    assert!(cfg.setup_hook.is_empty());
+    assert!(cfg.extract_hook.is_empty());
+    assert!(cfg.essential_hook.is_empty());
+    assert!(cfg.customize_hook.is_empty());
+    assert!(cfg.mirrors.is_empty());
 
     Ok(())
 }
@@ -93,26 +92,23 @@ bootstrap:
 
     assert_eq!(profile.dir, "/tmp/debian-test");
 
-    if let rsdebstrap::config::Bootstrap::Mmdebstrap(cfg) = &profile.bootstrap {
-        assert_eq!(cfg.suite, "bookworm");
-        assert_eq!(cfg.target, "rootfs.tar.zst");
-        assert_eq!(cfg.mode, mmdebstrap::Mode::Auto);
-        assert_eq!(cfg.format, mmdebstrap::Format::Auto);
-        assert_eq!(cfg.variant, mmdebstrap::Variant::Debootstrap);
-        assert_eq!(cfg.components, vec!["main", "contrib"]);
-        assert_eq!(cfg.architectures, vec!["amd64"]);
-        assert_eq!(cfg.include, vec!["curl", "ca-certificates"]);
-        assert_eq!(cfg.keyring, vec!["/etc/apt/trusted.gpg"]);
-        assert_eq!(cfg.aptopt, vec!["Apt::Install-Recommends \"true\""]);
-        assert_eq!(cfg.dpkgopt, vec!["path-exclude=/usr/share/man/*"]);
-        assert_eq!(cfg.setup_hook, vec!["echo setup"]);
-        assert_eq!(cfg.extract_hook, vec!["echo extract"]);
-        assert_eq!(cfg.essential_hook, vec!["echo essential"]);
-        assert_eq!(cfg.customize_hook, vec!["echo customize"]);
-        assert!(cfg.mirrors.is_empty());
-    } else {
-        panic!("Expected mmdebstrap bootstrap type");
-    }
+    let cfg = helpers::get_mmdebstrap_config(&profile);
+    assert_eq!(cfg.suite, "bookworm");
+    assert_eq!(cfg.target, "rootfs.tar.zst");
+    assert_eq!(cfg.mode, mmdebstrap::Mode::Auto);
+    assert_eq!(cfg.format, mmdebstrap::Format::Auto);
+    assert_eq!(cfg.variant, mmdebstrap::Variant::Debootstrap);
+    assert_eq!(cfg.components, vec!["main", "contrib"]);
+    assert_eq!(cfg.architectures, vec!["amd64"]);
+    assert_eq!(cfg.include, vec!["curl", "ca-certificates"]);
+    assert_eq!(cfg.keyring, vec!["/etc/apt/trusted.gpg"]);
+    assert_eq!(cfg.aptopt, vec!["Apt::Install-Recommends \"true\""]);
+    assert_eq!(cfg.dpkgopt, vec!["path-exclude=/usr/share/man/*"]);
+    assert_eq!(cfg.setup_hook, vec!["echo setup"]);
+    assert_eq!(cfg.extract_hook, vec!["echo extract"]);
+    assert_eq!(cfg.essential_hook, vec!["echo essential"]);
+    assert_eq!(cfg.customize_hook, vec!["echo customize"]);
+    assert!(cfg.mirrors.is_empty());
 
     Ok(())
 }
@@ -168,19 +164,16 @@ bootstrap:
 
     assert_eq!(profile.dir, "/tmp/debian-mirror-test");
 
-    if let rsdebstrap::config::Bootstrap::Mmdebstrap(cfg) = &profile.bootstrap {
-        assert_eq!(cfg.suite, "bookworm");
-        assert_eq!(cfg.target, "rootfs.tar.zst");
-        assert_eq!(
-            cfg.mirrors,
-            vec![
-                "http://ftp.jp.debian.org/debian",
-                "http://security.debian.org/debian-security"
-            ]
-        );
-    } else {
-        panic!("Expected mmdebstrap bootstrap type");
-    }
+    let cfg = helpers::get_mmdebstrap_config(&profile);
+    assert_eq!(cfg.suite, "bookworm");
+    assert_eq!(cfg.target, "rootfs.tar.zst");
+    assert_eq!(
+        cfg.mirrors,
+        vec![
+            "http://ftp.jp.debian.org/debian",
+            "http://security.debian.org/debian-security"
+        ]
+    );
 
     Ok(())
 }
@@ -215,20 +208,17 @@ bootstrap:
 
     assert_eq!(profile.dir, "/tmp/debian-debootstrap-test");
 
-    if let rsdebstrap::config::Bootstrap::Debootstrap(cfg) = &profile.bootstrap {
-        use rsdebstrap::backends::debootstrap::Variant;
+    let cfg = helpers::get_debootstrap_config(&profile);
+    use rsdebstrap::backends::debootstrap::Variant;
 
-        assert_eq!(cfg.suite, "trixie");
-        assert_eq!(cfg.target, "rootfs");
-        assert_eq!(cfg.variant, Variant::Minbase);
-        assert_eq!(cfg.arch, Some("amd64".to_string()));
-        assert_eq!(cfg.components, vec!["main", "contrib"]);
-        assert_eq!(cfg.include, vec!["curl"]);
-        assert_eq!(cfg.mirror, Some("https://deb.debian.org/debian".to_string()));
-        assert_eq!(cfg.merged_usr, Some(true));
-    } else {
-        panic!("Expected debootstrap bootstrap type");
-    }
+    assert_eq!(cfg.suite, "trixie");
+    assert_eq!(cfg.target, "rootfs");
+    assert_eq!(cfg.variant, Variant::Minbase);
+    assert_eq!(cfg.arch, Some("amd64".to_string()));
+    assert_eq!(cfg.components, vec!["main", "contrib"]);
+    assert_eq!(cfg.include, vec!["curl"]);
+    assert_eq!(cfg.mirror, Some("https://deb.debian.org/debian".to_string()));
+    assert_eq!(cfg.merged_usr, Some(true));
 
     Ok(())
 }
