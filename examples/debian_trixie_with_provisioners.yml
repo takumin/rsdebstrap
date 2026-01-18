@@ -18,17 +18,16 @@ bootstrap:
   - amd64
 
 provisioners:
-  # Example 1: Inline shell script
-  - type: shell
-    content: |-
-      #!/bin/sh
-      set -e
-      echo "Running inline provisioner..."
-      apt-get update
-      apt-get install -y vim htop curl
-      echo "Provisioning complete!"
-    shell: /bin/sh
-
+# Example 1: Inline shell script
+- type: shell
+  content: |-
+    #!/bin/sh
+    set -e
+    echo "Running inline provisioner..."
+    apt-get update
+    apt-get install -y vim htop curl
+    echo "Provisioning complete!"
+  shell: /bin/sh
   # Example 2: External shell script (uncomment to use)
   # - type: shell
   #   script: ./examples/scripts/configure-network.sh
