@@ -15,7 +15,7 @@ use std::io::BufReader;
 use tracing::debug;
 
 use crate::backends::{
-    debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig, BootstrapBackend,
+    BootstrapBackend, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
 
 /// Represents a bootstrap profile configuration.
