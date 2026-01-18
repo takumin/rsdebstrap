@@ -294,13 +294,13 @@ impl BootstrapBackend for MmdebstrapConfig {
                             .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
                     });
 
-                if let Some(ext) = archive_ext {
-                    Ok(RootfsOutput::NonDirectory {
+                Ok(if let Some(ext) = archive_ext {
+                    RootfsOutput::NonDirectory {
                         reason: format!("archive format detected based on extension: {}", ext),
-                    })
+                    }
                 } else {
-                    Ok(RootfsOutput::Directory(target_path))
-                }
+                    RootfsOutput::Directory(target_path)
+                })
             }
             non_dir_format => Ok(RootfsOutput::NonDirectory {
                 reason: format!("non-directory format specified: {}", non_dir_format),
