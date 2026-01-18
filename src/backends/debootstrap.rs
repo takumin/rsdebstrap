@@ -145,10 +145,10 @@ impl BootstrapBackend for DebootstrapConfig {
 
         let mut cmd_args = builder.into_args();
 
-        if let Some(ref mirror) = self.mirror {
-            if !mirror.trim().is_empty() {
-                cmd_args.push(mirror.into());
-            }
+        if let Some(ref mirror) = self.mirror
+            && !mirror.trim().is_empty()
+        {
+            cmd_args.push(mirror.into());
         }
 
         debug!(
