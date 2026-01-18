@@ -8,6 +8,9 @@ use std::ffi::OsString;
 
 pub mod debootstrap;
 pub mod mmdebstrap;
+mod args;
+
+pub use args::{CommandArgsBuilder, FlagValueStyle};
 
 /// Trait for bootstrap backend implementations.
 ///

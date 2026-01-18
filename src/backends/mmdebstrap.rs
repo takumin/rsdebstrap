@@ -1,6 +1,6 @@
 //! mmdebstrap backend implementation.
 
-use super::BootstrapBackend;
+use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle};
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
@@ -188,42 +188,6 @@ pub struct MmdebstrapConfig {
     pub mirrors: Vec<String>,
 }
 
-/// Adds a flag and its corresponding value to the command arguments if the value is not empty.
-///
-/// # Parameters
-/// - `cmd_args`: A mutable reference to the vector of command arguments.
-/// - `flag`: The flag to be added (e.g., `--mode`).
-/// - `value`: The value associated with the flag. This value should already be trimmed.
-///
-/// # Behavior
-/// If `value` is an empty string, the flag and value are not added to `cmd_args`.
-fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
-    if !value.is_empty() {
-        cmd_args.push(flag.into());
-        cmd_args.push(value.into());
-    }
-}
-
-/// Adds a flag and its associated values to the command arguments.
-///
-/// This function iterates over the provided `values` slice and, for each non-empty string,
-/// appends the `flag` and the `value` to the `cmd_args` vector. It does not perform any
-/// trimming or preprocessing on the `values`; the caller is responsible for ensuring that
-/// the input is in the desired format.
-///
-/// # Arguments
-/// * `cmd_args` - A mutable reference to the vector of command-line arguments.
-/// * `flag` - The flag to be added for each value.
-/// * `values` - A slice of strings representing the values to be associated with the flag.
-fn add_flags(cmd_args: &mut Vec<OsString>, flag: &str, values: &[String]) {
-    for value in values {
-        if !value.is_empty() {
-            cmd_args.push(flag.into());
-            cmd_args.push(value.into());
-        }
-    }
-}
-
 impl BootstrapBackend for MmdebstrapConfig {
     fn command_name(&self) -> &str {
         "mmdebstrap"
@@ -231,35 +195,61 @@ impl BootstrapBackend for MmdebstrapConfig {
 
     #[tracing::instrument(skip(self, output_dir))]
     fn build_args(&self, output_dir: &Utf8Path) -> Result<Vec<OsString>> {
-        let mut cmd_args = Vec::<OsString>::new();
+        let mut builder = CommandArgsBuilder::new();
 
         // Only add flags if they differ from defaults
         if self.mode != Mode::Auto {
-            add_flag(&mut cmd_args, "--mode", &self.mode.to_string());
+            builder.push_flag_value("--mode", &self.mode.to_string(), FlagValueStyle::Separate);
         }
         if self.format != Format::Auto {
-            add_flag(&mut cmd_args, "--format", &self.format.to_string());
+            builder.push_flag_value("--format", &self.format.to_string(), FlagValueStyle::Separate);
         }
         if self.variant != Variant::Debootstrap {
-            add_flag(&mut cmd_args, "--variant", &self.variant.to_string());
+            builder.push_flag_value(
+                "--variant",
+                &self.variant.to_string(),
+                FlagValueStyle::Separate,
+            );
         }
 
-        add_flag(&mut cmd_args, "--architectures", &self.architectures.join(","));
-        add_flag(&mut cmd_args, "--components", &self.components.join(","));
-        add_flag(&mut cmd_args, "--include", &self.include.join(","));
+        builder.push_flag_value(
+            "--architectures",
+            &self.architectures.join(","),
+            FlagValueStyle::Separate,
+        );
+        builder.push_flag_value(
+            "--components",
+            &self.components.join(","),
+            FlagValueStyle::Separate,
+        );
+        builder.push_flag_value("--include", &self.include.join(","), FlagValueStyle::Separate);
 
-        add_flags(&mut cmd_args, "--keyring", &self.keyring);
-        add_flags(&mut cmd_args, "--aptopt", &self.aptopt);
-        add_flags(&mut cmd_args, "--dpkgopt", &self.dpkgopt);
+        builder.push_flag_values("--keyring", &self.keyring, FlagValueStyle::Separate);
+        builder.push_flag_values("--aptopt", &self.aptopt, FlagValueStyle::Separate);
+        builder.push_flag_values("--dpkgopt", &self.dpkgopt, FlagValueStyle::Separate);
 
-        add_flags(&mut cmd_args, "--setup-hook", &self.setup_hook);
-        add_flags(&mut cmd_args, "--extract-hook", &self.extract_hook);
-        add_flags(&mut cmd_args, "--essential-hook", &self.essential_hook);
-        add_flags(&mut cmd_args, "--customize-hook", &self.customize_hook);
+        builder.push_flag_values("--setup-hook", &self.setup_hook, FlagValueStyle::Separate);
+        builder.push_flag_values(
+            "--extract-hook",
+            &self.extract_hook,
+            FlagValueStyle::Separate,
+        );
+        builder.push_flag_values(
+            "--essential-hook",
+            &self.essential_hook,
+            FlagValueStyle::Separate,
+        );
+        builder.push_flag_values(
+            "--customize-hook",
+            &self.customize_hook,
+            FlagValueStyle::Separate,
+        );
 
-        cmd_args.push(self.suite.clone().into());
+        builder.push_arg(self.suite.clone());
 
-        cmd_args.push(output_dir.join(&self.target).into_os_string());
+        builder.push_arg(output_dir.join(&self.target).into_os_string());
+
+        let mut cmd_args = builder.into_args();
 
         // Add mirrors as positional arguments after suite and target
         cmd_args.extend(

@@ -1,6 +1,6 @@
 //! debootstrap backend implementation.
 
-use super::BootstrapBackend;
+use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle};
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
@@ -80,18 +80,6 @@ pub struct DebootstrapConfig {
     pub print_debs: bool,
 }
 
-/// Adds a flag to the command arguments.
-fn add_simple_flag(cmd_args: &mut Vec<OsString>, flag: &str) {
-    cmd_args.push(flag.into());
-}
-
-/// Adds a flag with value to the command arguments if the value is not empty.
-fn add_flag(cmd_args: &mut Vec<OsString>, flag: &str, value: &str) {
-    if !value.is_empty() {
-        cmd_args.push(format!("{}={}", flag, value).into());
-    }
-}
-
 impl BootstrapBackend for DebootstrapConfig {
     fn command_name(&self) -> &str {
         "debootstrap"
@@ -99,57 +87,75 @@ impl BootstrapBackend for DebootstrapConfig {
 
     #[tracing::instrument(skip(self, output_dir))]
     fn build_args(&self, output_dir: &Utf8Path) -> Result<Vec<OsString>> {
-        let mut cmd_args = Vec::<OsString>::new();
+        let mut builder = CommandArgsBuilder::new();
 
         // Add options
         if let Some(ref arch) = self.arch {
-            add_flag(&mut cmd_args, "--arch", arch);
+            builder.push_flag_value("--arch", arch, FlagValueStyle::Equals);
         }
 
         // Only add --variant if it's not the default (Minbase)
         if self.variant != Variant::Minbase {
-            add_flag(&mut cmd_args, "--variant", &self.variant.to_string());
+            builder.push_flag_value(
+                "--variant",
+                &self.variant.to_string(),
+                FlagValueStyle::Equals,
+            );
         }
 
         if !self.components.is_empty() {
-            add_flag(&mut cmd_args, "--components", &self.components.join(","));
+            builder.push_flag_value(
+                "--components",
+                &self.components.join(","),
+                FlagValueStyle::Equals,
+            );
         }
 
         if !self.include.is_empty() {
-            add_flag(&mut cmd_args, "--include", &self.include.join(","));
+            builder.push_flag_value(
+                "--include",
+                &self.include.join(","),
+                FlagValueStyle::Equals,
+            );
         }
 
         if !self.exclude.is_empty() {
-            add_flag(&mut cmd_args, "--exclude", &self.exclude.join(","));
+            builder.push_flag_value(
+                "--exclude",
+                &self.exclude.join(","),
+                FlagValueStyle::Equals,
+            );
         }
 
         if self.foreign {
-            add_simple_flag(&mut cmd_args, "--foreign");
+            builder.push_flag("--foreign");
         }
 
         match self.merged_usr {
-            Some(true) => add_simple_flag(&mut cmd_args, "--merged-usr"),
-            Some(false) => add_simple_flag(&mut cmd_args, "--no-merged-usr"),
+            Some(true) => builder.push_flag("--merged-usr"),
+            Some(false) => builder.push_flag("--no-merged-usr"),
             None => {}
         }
 
         if self.no_resolve_deps {
-            add_simple_flag(&mut cmd_args, "--no-resolve-deps");
+            builder.push_flag("--no-resolve-deps");
         }
 
         if self.verbose {
-            add_simple_flag(&mut cmd_args, "--verbose");
+            builder.push_flag("--verbose");
         }
 
         if self.print_debs {
-            add_simple_flag(&mut cmd_args, "--print-debs");
+            builder.push_flag("--print-debs");
         }
 
         // Add positional arguments: SUITE TARGET [MIRROR]
-        cmd_args.push(self.suite.clone().into());
+        builder.push_arg(self.suite.clone());
 
         let target_path = output_dir.join(&self.target);
-        cmd_args.push(target_path.into_os_string());
+        builder.push_arg(target_path.into_os_string());
+
+        let mut cmd_args = builder.into_args();
 
         if let Some(ref mirror) = self.mirror {
             if !mirror.trim().is_empty() {
