@@ -39,7 +39,9 @@ impl ShellProvisioner {
     fn validate(&self) -> Result<()> {
         match (&self.script, &self.content) {
             (Some(_), None) | (None, Some(_)) => Ok(()),
-            (Some(_), Some(_)) => bail!("shell provisioner cannot specify both 'script' and 'content'"),
+            (Some(_), Some(_)) => {
+                bail!("shell provisioner cannot specify both 'script' and 'content'")
+            }
             (None, None) => bail!("shell provisioner must specify either 'script' or 'content'"),
         }
     }
