@@ -278,6 +278,32 @@ provisioners:
 }
 
 #[test]
+fn test_profile_validation_rejects_dir_file() -> Result<()> {
+    let dir_file = NamedTempFile::new()?;
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: {}
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+"#,
+        dir_file.path().display()
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    assert!(profile.validate().is_err());
+
+    Ok(())
+}
+
+#[test]
 fn test_load_profile_resolves_shell_script_relative_to_profile_dir() -> Result<()> {
     let temp_dir = tempdir()?;
     let profile_path = temp_dir.path().join("profile.yml");

@@ -7,7 +7,7 @@
 //! The configuration is typically loaded from YAML files using the
 //! `load_profile` function.
 
-use anyhow::{Context, Ok, Result};
+use anyhow::{Context, Ok, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 use std::fs::File;
@@ -63,6 +63,9 @@ impl Bootstrap {
 impl Profile {
     /// Validate configuration semantics beyond basic deserialization.
     pub fn validate(&self) -> Result<()> {
+        if self.dir.exists() && !self.dir.is_dir() {
+            bail!("dir must be a directory: {}", self.dir);
+        }
         for (index, provisioner) in self.provisioners.iter().enumerate() {
             provisioner
                 .validate()
