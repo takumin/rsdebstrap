@@ -36,7 +36,8 @@ pub enum Commands {
     /// Apply the given profile to run a bootstrap backend.
     ///
     /// This command executes the configured backend (mmdebstrap, debootstrap, etc.).
-    /// It reads the YAML profile, converts it to backend-specific arguments, and executes the command.
+    /// It reads the YAML profile, converts it to backend-specific arguments, and
+    /// executes the command.
     Apply(ApplyArgs),
 
     /// Validate the given YAML profile.
