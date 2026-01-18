@@ -3,10 +3,7 @@ use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
 /// Test helper to create a MmdebstrapConfig with minimal required fields.
 ///
 /// All optional fields are initialized with their default values.
-pub fn create_mmdebstrap(
-    suite: impl Into<String>,
-    target: impl Into<String>,
-) -> MmdebstrapConfig {
+pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) -> MmdebstrapConfig {
     MmdebstrapConfig {
         suite: suite.into(),
         target: target.into(),

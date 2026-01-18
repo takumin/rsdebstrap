@@ -2,8 +2,8 @@ mod helpers;
 
 use anyhow::Result;
 use camino::Utf8PathBuf;
-use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
 use rsdebstrap::backends::BootstrapBackend;
+use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
 use rsdebstrap::executor::{CommandExecutor, RealCommandExecutor};
 
 #[test]
@@ -130,10 +130,7 @@ fn test_build_debootstrap_args() -> Result<()> {
         "https://deb.debian.org/debian",
     ];
 
-    assert_eq!(
-        args_str, expected,
-        "Generated debootstrap arguments should match expected list"
-    );
+    assert_eq!(args_str, expected, "Generated debootstrap arguments should match expected list");
 
     Ok(())
 }
