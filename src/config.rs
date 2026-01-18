@@ -14,7 +14,9 @@ use std::fs::File;
 use std::io::BufReader;
 use tracing::debug;
 
-use crate::backends::{debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig};
+use crate::backends::{
+    debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig, BootstrapBackend,
+};
 
 /// Represents a bootstrap profile configuration.
 ///
@@ -39,6 +41,19 @@ pub enum Bootstrap {
     Mmdebstrap(MmdebstrapConfig),
     /// debootstrap backend
     Debootstrap(DebootstrapConfig),
+}
+
+impl Bootstrap {
+    /// Returns a reference to the underlying backend as a trait object.
+    ///
+    /// This allows calling `BootstrapBackend` methods without matching
+    /// on each variant explicitly.
+    pub fn as_backend(&self) -> &dyn BootstrapBackend {
+        match self {
+            Bootstrap::Mmdebstrap(cfg) => cfg,
+            Bootstrap::Debootstrap(cfg) => cfg,
+        }
+    }
 }
 
 /// Loads a bootstrap profile from a YAML file.

@@ -12,7 +12,6 @@ use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::filter::LevelFilter;
 
-use crate::backends::BootstrapBackend;
 use crate::executor::CommandExecutor;
 
 fn main() -> Result<()> {
@@ -67,27 +66,15 @@ fn main() -> Result<()> {
                 dry_run: opts.dry_run,
             };
 
-            // Get command name and args based on bootstrap backend
-            let (command_name, args) = match &profile.bootstrap {
-                config::Bootstrap::Mmdebstrap(cfg) => {
-                    let args = match cfg.build_args(&profile.dir) {
-                        Ok(a) => a,
-                        Err(e) => {
-                            error!("failed to build mmdebstrap args: {}", e);
-                            process::exit(1);
-                        }
-                    };
-                    (cfg.command_name(), args)
-                }
-                config::Bootstrap::Debootstrap(cfg) => {
-                    let args = match cfg.build_args(&profile.dir) {
-                        Ok(a) => a,
-                        Err(e) => {
-                            error!("failed to build debootstrap args: {}", e);
-                            process::exit(1);
-                        }
-                    };
-                    (cfg.command_name(), args)
+            // Get backend as trait object to avoid duplicating logic
+            let backend = profile.bootstrap.as_backend();
+            let command_name = backend.command_name();
+
+            let args = match backend.build_args(&profile.dir) {
+                Ok(a) => a,
+                Err(e) => {
+                    error!("failed to build {} args: {}", command_name, e);
+                    process::exit(1);
                 }
             };
 

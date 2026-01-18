@@ -62,6 +62,7 @@ The codebase follows a clean separation of concerns with a pluggable backend arc
 - **config.rs**: Configuration data structures and YAML deserialization. Core types:
   - `Profile`: Top-level configuration with `dir` (output directory) and `bootstrap` configuration
   - `Bootstrap`: Tagged union enum that holds different bootstrap backend configurations
+    - `as_backend()`: Returns a `&dyn BootstrapBackend` trait object for polymorphic access
   - `load_profile()`: Loads and validates YAML configuration files
 
 - **backends/**: Pluggable bootstrap backend implementations:
@@ -75,7 +76,7 @@ The codebase follows a clean separation of concerns with a pluggable backend arc
   1. Parse CLI arguments
   2. Set up tracing/logging
   3. Load profile configuration
-  4. Match on bootstrap backend type
+  4. Get backend as trait object via `as_backend()` (avoids duplicating logic per backend)
   5. Build backend-specific arguments via `build_args()`
   6. Execute command with appropriate tool
 
@@ -149,6 +150,20 @@ mmdebstrap supports multiple hook phases (defined in `backends/mmdebstrap.rs`):
 
 Each backend uses helper functions `add_flag()` and `add_flags()` to conditionally add arguments only when values are non-empty, ensuring clean command-line argument lists. The implementation is in each backend's module.
 
+### Trait Object Pattern
+
+The `Bootstrap` enum provides an `as_backend()` method that returns a `&dyn BootstrapBackend` trait object. This allows the main application logic to work with backends polymorphically without matching on each variant. This pattern:
+- Eliminates code duplication in error handling
+- Makes adding new backends easier (only one place to update in `as_backend()`)
+- Centralizes backend interaction logic
+
+Example usage in `main.rs`:
+```rust
+let backend = profile.bootstrap.as_backend();
+let command_name = backend.command_name();
+let args = backend.build_args(&profile.dir)?;
+```
+
 ### Logging
 
 The application uses the `tracing` crate with configurable log levels (trace, debug, info, warn, error) via CLI flags. Completions command bypasses logging setup to produce clean output.
@@ -170,10 +185,21 @@ The application uses the `tracing` crate with configurable log levels (trace, de
        YourTool(YourToolConfig),  // Add this
    }
    ```
-5. Add match arm in `main.rs` to handle the new backend
+5. Add match arm in the `as_backend()` method to handle the new backend:
+   ```rust
+   pub fn as_backend(&self) -> &dyn BootstrapBackend {
+       match self {
+           Bootstrap::Mmdebstrap(cfg) => cfg,
+           Bootstrap::Debootstrap(cfg) => cfg,
+           Bootstrap::YourTool(cfg) => cfg,  // Add this
+       }
+   }
+   ```
 6. Add tests in `tests/builder_test.rs` and `tests/config_test.rs`
 7. Create example YAML in `examples/`
 8. Export the new module in `src/backends/mod.rs`
+
+**Note**: No changes to `main.rs` are needed thanks to the trait object pattern!
 
 ### Adding Options to Existing Backend
 
