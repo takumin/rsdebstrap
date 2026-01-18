@@ -1,0 +1,5 @@
+---
+packages:
+- name: mozilla/sccache@v0.13.0
+  tags:
+  - sccache
