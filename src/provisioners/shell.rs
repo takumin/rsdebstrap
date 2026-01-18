@@ -63,7 +63,8 @@ impl ShellProvisioner {
         let tmp_dir = rootfs.join("tmp");
         if !tmp_dir.is_dir() {
             bail!(
-                "rootfs does not have a /tmp directory: {}. The rootfs may not be properly bootstrapped.",
+                "rootfs does not have a /tmp directory: {}. \
+                The rootfs may not be properly bootstrapped.",
                 rootfs
             );
         }
@@ -85,7 +86,8 @@ impl ShellProvisioner {
             .any(|c| c == camino::Utf8Component::ParentDir)
         {
             bail!(
-                "shell path '{}' contains '..' components, which is not allowed for security reasons",
+                "shell path '{}' contains '..' components, \
+                which is not allowed for security reasons",
                 self.shell
             );
         }
