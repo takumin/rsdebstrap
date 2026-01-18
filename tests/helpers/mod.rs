@@ -1,10 +1,13 @@
-use rsdebstrap::config::Mmdebstrap;
+use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
 
-/// Test helper to create a Mmdebstrap configuration with minimal required fields.
+/// Test helper to create a MmdebstrapConfig with minimal required fields.
 ///
 /// All optional fields are initialized with their default values.
-pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) -> Mmdebstrap {
-    Mmdebstrap {
+pub fn create_mmdebstrap(
+    suite: impl Into<String>,
+    target: impl Into<String>,
+) -> MmdebstrapConfig {
+    MmdebstrapConfig {
         suite: suite.into(),
         target: target.into(),
         mode: Default::default(),

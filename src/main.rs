@@ -1,4 +1,4 @@
-mod builder;
+mod backends;
 mod cli;
 mod config;
 mod executor;
@@ -12,6 +12,7 @@ use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::filter::LevelFilter;
 
+use crate::backends::BootstrapBackend;
 use crate::executor::CommandExecutor;
 
 fn main() -> Result<()> {
@@ -65,10 +66,35 @@ fn main() -> Result<()> {
             let executor = executor::RealCommandExecutor {
                 dry_run: opts.dry_run,
             };
-            match executor.execute("mmdebstrap", &builder::build_mmdebstrap_args(&profile)) {
+
+            // Get command name and args based on bootstrap backend
+            let (command_name, args) = match &profile.bootstrap {
+                config::Bootstrap::Mmdebstrap(cfg) => {
+                    let args = match cfg.build_args(&profile.dir) {
+                        Ok(a) => a,
+                        Err(e) => {
+                            error!("failed to build mmdebstrap args: {}", e);
+                            process::exit(1);
+                        }
+                    };
+                    (cfg.command_name(), args)
+                }
+                config::Bootstrap::Debootstrap(cfg) => {
+                    let args = match cfg.build_args(&profile.dir) {
+                        Ok(a) => a,
+                        Err(e) => {
+                            error!("failed to build debootstrap args: {}", e);
+                            process::exit(1);
+                        }
+                    };
+                    (cfg.command_name(), args)
+                }
+            };
+
+            match executor.execute(command_name, &args) {
                 Ok(_) => {}
                 Err(e) => {
-                    error!("failed to run mmdebstrap: {}", e);
+                    error!("failed to run {}: {}", command_name, e);
                     process::exit(1);
                 }
             }
