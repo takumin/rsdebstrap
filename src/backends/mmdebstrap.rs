@@ -278,17 +278,19 @@ impl BootstrapBackend for MmdebstrapConfig {
         match &self.format {
             Format::Directory => Ok(RootfsOutput::Directory(target_path)),
             Format::Auto => {
-                if let Some(ext) = target_path.extension() {
-                    if KNOWN_ARCHIVE_EXTENSIONS
+                let archive_ext = target_path.extension().filter(|ext| {
+                    KNOWN_ARCHIVE_EXTENSIONS
                         .iter()
                         .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
-                    {
-                        return Ok(RootfsOutput::NonDirectory {
-                            reason: format!("archive format detected based on extension: {}", ext),
-                        });
-                    }
+                });
+
+                if let Some(ext) = archive_ext {
+                    Ok(RootfsOutput::NonDirectory {
+                        reason: format!("archive format detected based on extension: {}", ext),
+                    })
+                } else {
+                    Ok(RootfsOutput::Directory(target_path))
                 }
-                Ok(RootfsOutput::Directory(target_path))
             }
             unsupported_format => Ok(RootfsOutput::NonDirectory {
                 reason: format!("non-directory format specified: {}", unsupported_format),
