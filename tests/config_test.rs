@@ -3,9 +3,9 @@ mod helpers;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::backends::mmdebstrap;
-use rsdebstrap::config::load_profile;
+use rsdebstrap::config::{ProvisionerConfig, load_profile};
 use std::io::Write;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, tempdir};
 
 #[test]
 fn test_load_profile_basic() -> Result<()> {
@@ -273,6 +273,48 @@ provisioners:
     let profile = load_profile(path)?;
 
     assert!(profile.validate().is_err());
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_resolves_shell_script_relative_to_profile_dir() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let scripts_dir = temp_dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir)?;
+    let script_path = scripts_dir.join("provision.sh");
+    std::fs::write(&script_path, "#!/bin/sh\necho hello\n")?;
+
+    let mut file = std::fs::File::create(&profile_path)?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+provisioners:
+  - type: shell
+    script: scripts/provision.sh
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match profile.provisioners.as_slice() {
+        [ProvisionerConfig::Shell(shell)] => {
+            assert_eq!(
+                shell.script.as_ref().unwrap(),
+                &Utf8PathBuf::from_path_buf(script_path).unwrap()
+            );
+        }
+        _ => panic!("expected one shell provisioner"),
+    }
 
     Ok(())
 }

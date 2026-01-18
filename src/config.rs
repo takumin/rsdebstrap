@@ -102,6 +102,21 @@ impl ProvisionerConfig {
     }
 }
 
+fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
+    for provisioner in &mut profile.provisioners {
+        match provisioner {
+            ProvisionerConfig::Shell(shell) => {
+                if let Some(script) = shell.script.as_mut() {
+                    if script.is_relative() {
+                        let resolved = profile_dir.join(script.as_path());
+                        *script = resolved;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Loads a bootstrap profile from a YAML file.
 ///
 /// # Arguments
@@ -126,8 +141,10 @@ impl ProvisionerConfig {
 pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     let file = File::open(path).with_context(|| format!("failed to load file: {}", path))?;
     let reader = BufReader::new(file);
-    let profile: Profile = serde_yaml::from_reader(reader)
+    let mut profile: Profile = serde_yaml::from_reader(reader)
         .with_context(|| format!("failed to parse yaml: {}", path))?;
+    let profile_dir = path.parent().unwrap_or_else(|| Utf8Path::new("."));
+    resolve_provisioner_paths(&mut profile, profile_dir);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
 }
