@@ -97,9 +97,7 @@ impl ProvisionerConfig {
     /// Validate provisioner configuration.
     pub fn validate(&self) -> Result<()> {
         match self {
-            ProvisionerConfig::Shell(cfg) => cfg
-                .validate()
-                .context("shell provisioner validation failed"),
+            ProvisionerConfig::Shell(cfg) => cfg.validate(),
         }
     }
 }
