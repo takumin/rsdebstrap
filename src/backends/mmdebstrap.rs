@@ -1,12 +1,17 @@
 //! mmdebstrap backend implementation.
 
-use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle};
+use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle, RootfsOutput};
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fmt;
 use tracing::debug;
+
+/// Known archive file extensions that indicate non-directory output formats.
+/// Used to detect archive targets when format is set to Auto.
+const KNOWN_ARCHIVE_EXTENSIONS: &[&str] =
+    &["tar", "gz", "bz2", "xz", "zst", "squashfs", "ext2", "img"];
 
 /// Variant defines the package selection strategy for mmdebstrap
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,5 +270,39 @@ impl BootstrapBackend for MmdebstrapConfig {
         );
 
         Ok(cmd_args)
+    }
+
+    fn rootfs_output(&self, output_dir: &Utf8Path) -> Result<RootfsOutput> {
+        let target_path = output_dir.join(&self.target);
+
+        match &self.format {
+            Format::Directory => Ok(RootfsOutput::Directory(target_path)),
+            Format::Auto => {
+                let archive_ext = target_path
+                    .extension()
+                    .or_else(|| {
+                        target_path
+                            .file_name()
+                            .and_then(|name| name.strip_prefix('.'))
+                            .filter(|stripped| !stripped.is_empty() && !stripped.contains('.'))
+                    })
+                    .filter(|ext| {
+                        KNOWN_ARCHIVE_EXTENSIONS
+                            .iter()
+                            .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
+                    });
+
+                Ok(if let Some(ext) = archive_ext {
+                    RootfsOutput::NonDirectory {
+                        reason: format!("archive format detected based on extension: {}", ext),
+                    }
+                } else {
+                    RootfsOutput::Directory(target_path)
+                })
+            }
+            non_dir_format => Ok(RootfsOutput::NonDirectory {
+                reason: format!("non-directory format specified: {}", non_dir_format),
+            }),
+        }
     }
 }

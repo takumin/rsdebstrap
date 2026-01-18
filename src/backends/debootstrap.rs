@@ -1,6 +1,6 @@
 //! debootstrap backend implementation.
 
-use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle};
+use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle, RootfsOutput};
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
@@ -161,5 +161,9 @@ impl BootstrapBackend for DebootstrapConfig {
         );
 
         Ok(cmd_args)
+    }
+
+    fn rootfs_output(&self, output_dir: &Utf8Path) -> Result<RootfsOutput> {
+        Ok(RootfsOutput::Directory(output_dir.join(&self.target)))
     }
 }
