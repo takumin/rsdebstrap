@@ -67,8 +67,6 @@ pub struct DebootstrapConfig {
     #[serde(default)]
     pub foreign: bool,
     /// Use merged /usr directory structure
-    /// (None = don't specify, Some(true) = --merged-usr,
-    /// Some(false) = --no-merged-usr)
     #[serde(default)]
     pub merged_usr: Option<bool>,
     /// Don't resolve recommends/suggests
