@@ -48,6 +48,7 @@ fn main() -> Result<()> {
         cli::Commands::Apply(opts) => {
             let profile = config::load_profile(opts.file.as_path())
                 .with_context(|| format!("failed to load profile from {}", opts.file))?;
+            profile.validate().context("profile validation failed")?;
 
             if !opts.dry_run && !profile.dir.exists() {
                 std::fs::create_dir_all(&profile.dir)
@@ -109,6 +110,7 @@ fn main() -> Result<()> {
         }
         cli::Commands::Validate(opts) => {
             let profile = config::load_profile(opts.file.as_path())?;
+            profile.validate().context("profile validation failed")?;
             info!("validation successful:\n{:#?}", profile);
         }
         cli::Commands::Completions(_) => {

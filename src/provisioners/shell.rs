@@ -160,9 +160,6 @@ impl Provisioner for ShellProvisioner {
         executor: &dyn CommandExecutor,
         dry_run: bool,
     ) -> Result<()> {
-        self.validate()
-            .context("shell provisioner validation failed")?;
-
         if !dry_run {
             self.validate_rootfs(rootfs)
                 .context("rootfs validation failed")?;

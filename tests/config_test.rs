@@ -222,3 +222,57 @@ bootstrap:
 
     Ok(())
 }
+
+#[test]
+fn test_profile_validation_rejects_incomplete_shell_provisioner() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+provisioners:
+  - type: shell
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    assert!(profile.validate().is_err());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_shell_provisioner_with_script_and_content() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+provisioners:
+  - type: shell
+    script: /tmp/provision.sh
+    content: echo "hello"
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    assert!(profile.validate().is_err());
+
+    Ok(())
+}
