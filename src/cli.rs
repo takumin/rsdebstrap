@@ -33,16 +33,16 @@ pub struct Cli {
 /// Each variant corresponds to a specific operation with its associated arguments.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Apply the given profile to run mmdebstrap.
+    /// Apply the given profile to run a bootstrap backend.
     ///
-    /// This command executes mmdebstrap with the configuration specified in the profile.
-    /// It reads the YAML profile, converts it to mmdebstrap arguments, and executes the command.
+    /// This command executes the configured backend (mmdebstrap, debootstrap, etc.).
+    /// It reads the YAML profile, converts it to backend-specific arguments, and executes the command.
     Apply(ApplyArgs),
 
     /// Validate the given YAML profile.
     ///
     /// This command performs syntax and schema validation on the YAML profile
-    /// without executing mmdebstrap. It's useful for checking if a profile
+    /// without executing a bootstrap backend. It's useful for checking if a profile
     /// is valid before attempting to apply it.
     Validate(ValidateArgs),
 
@@ -80,7 +80,7 @@ pub struct ApplyArgs {
     /// Path to the YAML file defining the profile.
     ///
     /// This file should contain a valid rsdebstrap profile that defines
-    /// how mmdebstrap should be configured and executed.
+    /// how the bootstrap backend should be configured and executed.
     #[arg(short, long, default_value = "profile.yaml", value_hint = ValueHint::FilePath)]
     pub file: Utf8PathBuf,
 
@@ -91,10 +91,10 @@ pub struct ApplyArgs {
     #[arg(short, long, default_value = "info")]
     pub log_level: LogLevel,
 
-    /// Do not run the actual mmdebstrap command, just show what would be done.
+    /// Do not run the actual bootstrap command, just show what would be done.
     ///
     /// When this flag is enabled, the application will parse the profile and
-    /// construct the mmdebstrap command but will not execute it. Instead, it
+    /// construct the backend command but will not execute it. Instead, it
     /// will display the command that would be executed.
     #[arg(long)]
     pub dry_run: bool,
