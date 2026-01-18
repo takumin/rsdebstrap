@@ -13,13 +13,11 @@ fn test_mmdebstrap_rootfs_output_directory_format() -> Result<()> {
     };
     let output_dir = Utf8PathBuf::from("/tmp/rootfs-output");
 
-    match config.rootfs_output(&output_dir)? {
-        RootfsOutput::Directory(path) => {
-            assert_eq!(path, output_dir.join("rootfs"));
-        }
-        RootfsOutput::NonDirectory { reason } => {
-            panic!("expected directory output, got non-directory: {reason}");
-        }
+    let output = config.rootfs_output(&output_dir)?;
+    if let RootfsOutput::Directory(path) = output {
+        assert_eq!(path, output_dir.join("rootfs"));
+    } else {
+        panic!("expected directory output, got {output:?}");
     }
 
     Ok(())
@@ -33,16 +31,14 @@ fn test_mmdebstrap_rootfs_output_auto_archive_extension() -> Result<()> {
     };
     let output_dir = Utf8PathBuf::from("/tmp/rootfs-output");
 
-    match config.rootfs_output(&output_dir)? {
-        RootfsOutput::NonDirectory { reason } => {
-            assert!(
-                reason.contains("archive format detected based on extension: zst"),
-                "unexpected reason: {reason}"
-            );
-        }
-        RootfsOutput::Directory(path) => {
-            panic!("expected non-directory output, got directory: {path}");
-        }
+    let output = config.rootfs_output(&output_dir)?;
+    if let RootfsOutput::NonDirectory { reason } = output {
+        assert!(
+            reason.contains("archive format detected based on extension: zst"),
+            "unexpected reason: {reason}"
+        );
+    } else {
+        panic!("expected non-directory output, got {output:?}");
     }
 
     Ok(())
@@ -56,16 +52,14 @@ fn test_mmdebstrap_rootfs_output_auto_archive_dotfile() -> Result<()> {
     };
     let output_dir = Utf8PathBuf::from("/tmp/rootfs-output");
 
-    match config.rootfs_output(&output_dir)? {
-        RootfsOutput::NonDirectory { reason } => {
-            assert!(
-                reason.contains("archive format detected based on extension: squashfs"),
-                "unexpected reason: {reason}"
-            );
-        }
-        RootfsOutput::Directory(path) => {
-            panic!("expected non-directory output, got directory: {path}");
-        }
+    let output = config.rootfs_output(&output_dir)?;
+    if let RootfsOutput::NonDirectory { reason } = output {
+        assert!(
+            reason.contains("archive format detected based on extension: squashfs"),
+            "unexpected reason: {reason}"
+        );
+    } else {
+        panic!("expected non-directory output, got {output:?}");
     }
 
     Ok(())
@@ -79,13 +73,11 @@ fn test_mmdebstrap_rootfs_output_auto_directory_when_unknown_extension() -> Resu
     };
     let output_dir = Utf8PathBuf::from("/tmp/rootfs-output");
 
-    match config.rootfs_output(&output_dir)? {
-        RootfsOutput::Directory(path) => {
-            assert_eq!(path, output_dir.join("rootfs.dir"));
-        }
-        RootfsOutput::NonDirectory { reason } => {
-            panic!("expected directory output, got non-directory: {reason}");
-        }
+    let output = config.rootfs_output(&output_dir)?;
+    if let RootfsOutput::Directory(path) = output {
+        assert_eq!(path, output_dir.join("rootfs.dir"));
+    } else {
+        panic!("expected directory output, got {output:?}");
     }
 
     Ok(())
@@ -99,16 +91,14 @@ fn test_mmdebstrap_rootfs_output_non_directory_format() -> Result<()> {
     };
     let output_dir = Utf8PathBuf::from("/tmp/rootfs-output");
 
-    match config.rootfs_output(&output_dir)? {
-        RootfsOutput::NonDirectory { reason } => {
-            assert!(
-                reason.contains("non-directory format specified: tar.gz"),
-                "unexpected reason: {reason}"
-            );
-        }
-        RootfsOutput::Directory(path) => {
-            panic!("expected non-directory output, got directory: {path}");
-        }
+    let output = config.rootfs_output(&output_dir)?;
+    if let RootfsOutput::NonDirectory { reason } = output {
+        assert!(
+            reason.contains("non-directory format specified: tar.gz"),
+            "unexpected reason: {reason}"
+        );
+    } else {
+        panic!("expected non-directory output, got {output:?}");
     }
 
     Ok(())
@@ -119,13 +109,11 @@ fn test_debootstrap_rootfs_output_directory() -> Result<()> {
     let config = helpers::create_debootstrap("trixie", "rootfs");
     let output_dir = Utf8PathBuf::from("/tmp/rootfs-output");
 
-    match config.rootfs_output(&output_dir)? {
-        RootfsOutput::Directory(path) => {
-            assert_eq!(path, output_dir.join("rootfs"));
-        }
-        RootfsOutput::NonDirectory { reason } => {
-            panic!("expected directory output, got non-directory: {reason}");
-        }
+    let output = config.rootfs_output(&output_dir)?;
+    if let RootfsOutput::Directory(path) = output {
+        assert_eq!(path, output_dir.join("rootfs"));
+    } else {
+        panic!("expected directory output, got {output:?}");
     }
 
     Ok(())
