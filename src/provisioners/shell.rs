@@ -41,8 +41,9 @@ impl ShellProvisioner {
             (true, true) | (false, false) => {
                 bail!("shell provisioner must specify either 'script' or 'content', but not both");
             }
-            _ => Ok(()),
+            _ => (),
         }
+        Ok(())
     }
 
     /// Returns the script source for logging purposes.
