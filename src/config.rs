@@ -17,6 +17,7 @@ use tracing::debug;
 use crate::backends::{
     BootstrapBackend, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
+use crate::provisioners::{Provisioner, shell::ShellProvisioner};
 
 /// Represents a bootstrap profile configuration.
 ///
@@ -28,6 +29,9 @@ pub struct Profile {
     pub dir: Utf8PathBuf,
     /// Bootstrap tool configuration
     pub bootstrap: Bootstrap,
+    /// Provisioners to run after bootstrap (optional)
+    #[serde(default)]
+    pub provisioners: Vec<ProvisionerConfig>,
 }
 
 /// Bootstrap backend configuration.
@@ -52,6 +56,29 @@ impl Bootstrap {
         match self {
             Bootstrap::Mmdebstrap(cfg) => cfg,
             Bootstrap::Debootstrap(cfg) => cfg,
+        }
+    }
+}
+
+/// Provisioner configuration.
+///
+/// This enum represents the different provisioner types that can be used.
+/// The `type` field in YAML determines which variant is used.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ProvisionerConfig {
+    /// Shell script provisioner
+    Shell(ShellProvisioner),
+}
+
+impl ProvisionerConfig {
+    /// Returns a reference to the underlying provisioner as a trait object.
+    ///
+    /// This allows calling `Provisioner` methods without matching
+    /// on each variant explicitly.
+    pub fn as_provisioner(&self) -> &dyn Provisioner {
+        match self {
+            ProvisionerConfig::Shell(cfg) => cfg,
         }
     }
 }

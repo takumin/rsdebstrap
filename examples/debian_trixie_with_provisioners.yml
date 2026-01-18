@@ -1,0 +1,34 @@
+# Example profile for Debian Trixie with provisioners
+# This demonstrates how to use provisioners to configure the system after bootstrap
+
+dir: /tmp/debian-trixie-provisioned
+
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs  # Must be a directory for provisioners to work
+  mirrors:
+    - https://deb.debian.org/debian
+  variant: apt
+  components:
+    - main
+    - contrib
+  architectures:
+    - amd64
+
+provisioners:
+  # Example 1: Inline shell script
+  - type: shell
+    content: |-
+      #!/bin/sh
+      set -e
+      echo "Running inline provisioner..."
+      apt-get update
+      apt-get install -y vim htop curl
+      echo "Provisioning complete!"
+    shell: /bin/sh
+
+  # Example 2: External shell script (uncomment to use)
+  # - type: shell
+  #   script: ./examples/scripts/configure-network.sh
+  #   shell: /bin/bash
