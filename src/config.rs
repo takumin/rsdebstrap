@@ -65,7 +65,7 @@ impl Profile {
     pub fn validate(&self) -> Result<()> {
         for (index, provisioner) in self.provisioners.iter().enumerate() {
             provisioner.validate().with_context(|| {
-                format!("provisioner {} validation failed: {:?}", index + 1, provisioner)
+                format!("provisioner {} validation failed", index + 1)
             })?;
         }
         Ok(())
