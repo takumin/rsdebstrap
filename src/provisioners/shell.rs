@@ -36,7 +36,7 @@ fn default_shell() -> String {
 
 impl ShellProvisioner {
     /// Validates that exactly one of `script` or `content` is specified.
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         match (&self.script, &self.content) {
             (Some(_), None) | (None, Some(_)) => Ok(()),
             (Some(_), Some(_)) => {
@@ -47,7 +47,7 @@ impl ShellProvisioner {
     }
 
     /// Returns the script source for logging purposes.
-    fn script_source(&self) -> &str {
+    pub fn script_source(&self) -> &str {
         self.script.as_ref().map_or("<inline>", |p| p.as_str())
     }
 
@@ -204,70 +204,5 @@ impl Provisioner for ShellProvisioner {
 
         info!("shell provisioner completed successfully");
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_no_script_or_content() {
-        let provisioner = ShellProvisioner {
-            script: None,
-            content: None,
-            shell: default_shell(),
-        };
-        assert!(provisioner.validate().is_err());
-    }
-
-    #[test]
-    fn test_validate_both_script_and_content() {
-        let provisioner = ShellProvisioner {
-            script: Some("test.sh".into()),
-            content: Some("echo test".to_string()),
-            shell: default_shell(),
-        };
-        assert!(provisioner.validate().is_err());
-    }
-
-    #[test]
-    fn test_validate_script_only() {
-        let provisioner = ShellProvisioner {
-            script: Some("test.sh".into()),
-            content: None,
-            shell: default_shell(),
-        };
-        assert!(provisioner.validate().is_ok());
-    }
-
-    #[test]
-    fn test_validate_content_only() {
-        let provisioner = ShellProvisioner {
-            script: None,
-            content: Some("echo test".to_string()),
-            shell: default_shell(),
-        };
-        assert!(provisioner.validate().is_ok());
-    }
-
-    #[test]
-    fn test_script_source_external() {
-        let provisioner = ShellProvisioner {
-            script: Some("test.sh".into()),
-            content: None,
-            shell: default_shell(),
-        };
-        assert_eq!(provisioner.script_source(), "test.sh");
-    }
-
-    #[test]
-    fn test_script_source_inline() {
-        let provisioner = ShellProvisioner {
-            script: None,
-            content: Some("echo test".to_string()),
-            shell: default_shell(),
-        };
-        assert_eq!(provisioner.script_source(), "<inline>");
     }
 }
