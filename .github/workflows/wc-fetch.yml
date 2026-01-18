@@ -25,7 +25,7 @@ jobs:
     - name: Setup aqua
       uses: aquaproj/aqua-installer@11dd79b4e498d471a9385aa9fb7f62bb5f52a73c # v4.0.4
       with:
-        aqua_version: v2.56.3
+        aqua_version: v2.56.4
     - name: Restore cargo deps cache
       id: deps-cache-restore
       uses: actions/cache/restore@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
