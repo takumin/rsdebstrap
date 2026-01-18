@@ -292,8 +292,8 @@ impl BootstrapBackend for MmdebstrapConfig {
                     Ok(RootfsOutput::Directory(target_path))
                 }
             }
-            unsupported_format => Ok(RootfsOutput::NonDirectory {
-                reason: format!("non-directory format specified: {}", unsupported_format),
+            non_dir_format => Ok(RootfsOutput::NonDirectory {
+                reason: format!("non-directory format specified: {}", non_dir_format),
             }),
         }
     }
