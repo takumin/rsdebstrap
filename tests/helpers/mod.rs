@@ -27,6 +27,31 @@ pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) ->
     }
 }
 
+/// Test helper to create a DebootstrapConfig with minimal required fields.
+///
+/// All optional fields are initialized with their default values.
+#[allow(dead_code)]
+pub fn create_debootstrap(
+    suite: impl Into<String>,
+    target: impl Into<String>,
+) -> DebootstrapConfig {
+    DebootstrapConfig {
+        suite: suite.into(),
+        target: target.into(),
+        variant: Default::default(),
+        arch: Default::default(),
+        components: Default::default(),
+        include: Default::default(),
+        exclude: Default::default(),
+        mirror: Default::default(),
+        foreign: Default::default(),
+        merged_usr: Default::default(),
+        no_resolve_deps: Default::default(),
+        verbose: Default::default(),
+        print_debs: Default::default(),
+    }
+}
+
 /// Extracts MmdebstrapConfig from a Profile, panicking if it's not the mmdebstrap backend.
 ///
 /// # Panics

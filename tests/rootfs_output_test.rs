@@ -2,7 +2,6 @@ mod helpers;
 
 use anyhow::Result;
 use camino::Utf8PathBuf;
-use rsdebstrap::backends::debootstrap::DebootstrapConfig;
 use rsdebstrap::backends::mmdebstrap::{Format, MmdebstrapConfig};
 use rsdebstrap::backends::{BootstrapBackend, RootfsOutput};
 
@@ -117,21 +116,7 @@ fn test_mmdebstrap_rootfs_output_non_directory_format() -> Result<()> {
 
 #[test]
 fn test_debootstrap_rootfs_output_directory() -> Result<()> {
-    let config = DebootstrapConfig {
-        suite: "trixie".to_string(),
-        target: "rootfs".to_string(),
-        variant: Default::default(),
-        arch: None,
-        components: vec![],
-        include: vec![],
-        exclude: vec![],
-        mirror: None,
-        foreign: false,
-        merged_usr: None,
-        no_resolve_deps: false,
-        verbose: false,
-        print_debs: false,
-    };
+    let config = helpers::create_debootstrap("trixie", "rootfs");
     let output_dir = Utf8PathBuf::from("/tmp/rootfs-output");
 
     match config.rootfs_output(&output_dir)? {
