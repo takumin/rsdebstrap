@@ -1,10 +1,13 @@
-use rsdebstrap::config::Mmdebstrap;
+use rsdebstrap::backends::debootstrap::DebootstrapConfig;
+use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
+use rsdebstrap::config::{Bootstrap, Profile};
 
-/// Test helper to create a Mmdebstrap configuration with minimal required fields.
+/// Test helper to create a MmdebstrapConfig with minimal required fields.
 ///
 /// All optional fields are initialized with their default values.
-pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) -> Mmdebstrap {
-    Mmdebstrap {
+#[allow(dead_code)]
+pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) -> MmdebstrapConfig {
+    MmdebstrapConfig {
         suite: suite.into(),
         target: target.into(),
         mode: Default::default(),
@@ -21,5 +24,31 @@ pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) ->
         essential_hook: Default::default(),
         customize_hook: Default::default(),
         mirrors: Default::default(),
+    }
+}
+
+/// Extracts MmdebstrapConfig from a Profile, panicking if it's not the mmdebstrap backend.
+///
+/// # Panics
+/// Panics if the profile's bootstrap type is not mmdebstrap.
+#[allow(dead_code)]
+pub fn get_mmdebstrap_config(profile: &Profile) -> &MmdebstrapConfig {
+    if let Bootstrap::Mmdebstrap(cfg) = &profile.bootstrap {
+        cfg
+    } else {
+        panic!("Expected mmdebstrap bootstrap type");
+    }
+}
+
+/// Extracts DebootstrapConfig from a Profile, panicking if it's not the debootstrap backend.
+///
+/// # Panics
+/// Panics if the profile's bootstrap type is not debootstrap.
+#[allow(dead_code)]
+pub fn get_debootstrap_config(profile: &Profile) -> &DebootstrapConfig {
+    if let Bootstrap::Debootstrap(cfg) = &profile.bootstrap {
+        cfg
+    } else {
+        panic!("Expected debootstrap bootstrap type");
     }
 }

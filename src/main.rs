@@ -1,14 +1,13 @@
-mod builder;
+mod backends;
 mod cli;
 mod config;
 mod executor;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::CommandFactory;
 use clap_complete::generate;
 use std::io;
-use std::process;
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -46,32 +45,29 @@ fn main() -> Result<()> {
 
     match &args.command {
         cli::Commands::Apply(opts) => {
-            let profile = match config::load_profile(opts.file.as_path()) {
-                Ok(p) => p,
-                Err(e) => {
-                    error!("error load profile: {}", e);
-                    process::exit(1);
-                }
-            };
+            let profile = config::load_profile(opts.file.as_path())
+                .with_context(|| format!("failed to load profile from {}", opts.file))?;
+
             if !opts.dry_run && !profile.dir.exists() {
-                match std::fs::create_dir_all(&profile.dir) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("failed to create directory: {}: {}", profile.dir, e);
-                        process::exit(1);
-                    }
-                }
+                std::fs::create_dir_all(&profile.dir)
+                    .with_context(|| format!("failed to create directory: {}", profile.dir))?;
             }
+
             let executor = executor::RealCommandExecutor {
                 dry_run: opts.dry_run,
             };
-            match executor.execute("mmdebstrap", &builder::build_mmdebstrap_args(&profile)) {
-                Ok(_) => {}
-                Err(e) => {
-                    error!("failed to run mmdebstrap: {}", e);
-                    process::exit(1);
-                }
-            }
+
+            // Get backend as trait object to avoid duplicating logic
+            let backend = profile.bootstrap.as_backend();
+            let command_name = backend.command_name();
+
+            let args = backend
+                .build_args(&profile.dir)
+                .with_context(|| format!("failed to build arguments for {}", command_name))?;
+
+            executor
+                .execute(command_name, &args)
+                .with_context(|| format!("failed to execute {}", command_name))?;
         }
         cli::Commands::Validate(opts) => {
             let profile = config::load_profile(opts.file.as_path())?;

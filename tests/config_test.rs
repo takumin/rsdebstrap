@@ -1,5 +1,8 @@
+mod helpers;
+
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
+use rsdebstrap::backends::mmdebstrap;
 use rsdebstrap::config::load_profile;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -12,7 +15,8 @@ fn test_load_profile_basic() -> Result<()> {
         file,
         r#"---
 dir: /tmp/test
-mmdebstrap:
+bootstrap:
+  type: mmdebstrap
   suite: bookworm
   target: rootfs.tar.zst
 "#
@@ -23,22 +27,24 @@ mmdebstrap:
     let profile = load_profile(path)?;
 
     assert_eq!(profile.dir, "/tmp/test");
-    assert_eq!(profile.mmdebstrap.suite, "bookworm");
-    assert_eq!(profile.mmdebstrap.target, "rootfs.tar.zst");
-    assert_eq!(profile.mmdebstrap.mode, rsdebstrap::config::Mode::Auto);
-    assert_eq!(profile.mmdebstrap.format, rsdebstrap::config::Format::Auto);
-    assert_eq!(profile.mmdebstrap.variant, rsdebstrap::config::Variant::Debootstrap);
-    assert!(profile.mmdebstrap.components.is_empty());
-    assert!(profile.mmdebstrap.architectures.is_empty());
-    assert!(profile.mmdebstrap.include.is_empty());
-    assert!(profile.mmdebstrap.keyring.is_empty());
-    assert!(profile.mmdebstrap.aptopt.is_empty());
-    assert!(profile.mmdebstrap.dpkgopt.is_empty());
-    assert!(profile.mmdebstrap.setup_hook.is_empty());
-    assert!(profile.mmdebstrap.extract_hook.is_empty());
-    assert!(profile.mmdebstrap.essential_hook.is_empty());
-    assert!(profile.mmdebstrap.customize_hook.is_empty());
-    assert!(profile.mmdebstrap.mirrors.is_empty());
+
+    let cfg = helpers::get_mmdebstrap_config(&profile);
+    assert_eq!(cfg.suite, "bookworm");
+    assert_eq!(cfg.target, "rootfs.tar.zst");
+    assert_eq!(cfg.mode, mmdebstrap::Mode::Auto);
+    assert_eq!(cfg.format, mmdebstrap::Format::Auto);
+    assert_eq!(cfg.variant, mmdebstrap::Variant::Debootstrap);
+    assert!(cfg.components.is_empty());
+    assert!(cfg.architectures.is_empty());
+    assert!(cfg.include.is_empty());
+    assert!(cfg.keyring.is_empty());
+    assert!(cfg.aptopt.is_empty());
+    assert!(cfg.dpkgopt.is_empty());
+    assert!(cfg.setup_hook.is_empty());
+    assert!(cfg.extract_hook.is_empty());
+    assert!(cfg.essential_hook.is_empty());
+    assert!(cfg.customize_hook.is_empty());
+    assert!(cfg.mirrors.is_empty());
 
     Ok(())
 }
@@ -51,7 +57,8 @@ fn test_load_profile_full() -> Result<()> {
         file,
         r#"---
 dir: /tmp/debian-test
-mmdebstrap:
+bootstrap:
+  type: mmdebstrap
   suite: bookworm
   target: rootfs.tar.zst
   components:
@@ -84,22 +91,24 @@ mmdebstrap:
     let profile = load_profile(path)?;
 
     assert_eq!(profile.dir, "/tmp/debian-test");
-    assert_eq!(profile.mmdebstrap.suite, "bookworm");
-    assert_eq!(profile.mmdebstrap.target, "rootfs.tar.zst");
-    assert_eq!(profile.mmdebstrap.mode, rsdebstrap::config::Mode::Auto);
-    assert_eq!(profile.mmdebstrap.format, rsdebstrap::config::Format::Auto);
-    assert_eq!(profile.mmdebstrap.variant, rsdebstrap::config::Variant::Debootstrap);
-    assert_eq!(profile.mmdebstrap.components, vec!["main", "contrib"]);
-    assert_eq!(profile.mmdebstrap.architectures, vec!["amd64"]);
-    assert_eq!(profile.mmdebstrap.include, vec!["curl", "ca-certificates"]);
-    assert_eq!(profile.mmdebstrap.keyring, vec!["/etc/apt/trusted.gpg"]);
-    assert_eq!(profile.mmdebstrap.aptopt, vec!["Apt::Install-Recommends \"true\""]);
-    assert_eq!(profile.mmdebstrap.dpkgopt, vec!["path-exclude=/usr/share/man/*"]);
-    assert_eq!(profile.mmdebstrap.setup_hook, vec!["echo setup"]);
-    assert_eq!(profile.mmdebstrap.extract_hook, vec!["echo extract"]);
-    assert_eq!(profile.mmdebstrap.essential_hook, vec!["echo essential"]);
-    assert_eq!(profile.mmdebstrap.customize_hook, vec!["echo customize"]);
-    assert!(profile.mmdebstrap.mirrors.is_empty());
+
+    let cfg = helpers::get_mmdebstrap_config(&profile);
+    assert_eq!(cfg.suite, "bookworm");
+    assert_eq!(cfg.target, "rootfs.tar.zst");
+    assert_eq!(cfg.mode, mmdebstrap::Mode::Auto);
+    assert_eq!(cfg.format, mmdebstrap::Format::Auto);
+    assert_eq!(cfg.variant, mmdebstrap::Variant::Debootstrap);
+    assert_eq!(cfg.components, vec!["main", "contrib"]);
+    assert_eq!(cfg.architectures, vec!["amd64"]);
+    assert_eq!(cfg.include, vec!["curl", "ca-certificates"]);
+    assert_eq!(cfg.keyring, vec!["/etc/apt/trusted.gpg"]);
+    assert_eq!(cfg.aptopt, vec!["Apt::Install-Recommends \"true\""]);
+    assert_eq!(cfg.dpkgopt, vec!["path-exclude=/usr/share/man/*"]);
+    assert_eq!(cfg.setup_hook, vec!["echo setup"]);
+    assert_eq!(cfg.extract_hook, vec!["echo extract"]);
+    assert_eq!(cfg.essential_hook, vec!["echo essential"]);
+    assert_eq!(cfg.customize_hook, vec!["echo customize"]);
+    assert!(cfg.mirrors.is_empty());
 
     Ok(())
 }
@@ -139,7 +148,8 @@ fn test_load_profile_with_mirrors() -> Result<()> {
         file,
         r#"---
 dir: /tmp/debian-mirror-test
-mmdebstrap:
+bootstrap:
+  type: mmdebstrap
   suite: bookworm
   target: rootfs.tar.zst
   mirrors:
@@ -153,15 +163,62 @@ mmdebstrap:
     let profile = load_profile(path)?;
 
     assert_eq!(profile.dir, "/tmp/debian-mirror-test");
-    assert_eq!(profile.mmdebstrap.suite, "bookworm");
-    assert_eq!(profile.mmdebstrap.target, "rootfs.tar.zst");
+
+    let cfg = helpers::get_mmdebstrap_config(&profile);
+    assert_eq!(cfg.suite, "bookworm");
+    assert_eq!(cfg.target, "rootfs.tar.zst");
     assert_eq!(
-        profile.mmdebstrap.mirrors,
+        cfg.mirrors,
         vec![
             "http://ftp.jp.debian.org/debian",
             "http://security.debian.org/debian-security"
         ]
     );
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_debootstrap() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/debian-debootstrap-test
+bootstrap:
+  type: debootstrap
+  suite: trixie
+  target: rootfs
+  variant: minbase
+  arch: amd64
+  components:
+  - main
+  - contrib
+  include:
+  - curl
+  mirror: 'https://deb.debian.org/debian'
+  merged_usr: true
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    assert_eq!(profile.dir, "/tmp/debian-debootstrap-test");
+
+    let cfg = helpers::get_debootstrap_config(&profile);
+    use rsdebstrap::backends::debootstrap::Variant;
+
+    assert_eq!(cfg.suite, "trixie");
+    assert_eq!(cfg.target, "rootfs");
+    assert_eq!(cfg.variant, Variant::Minbase);
+    assert_eq!(cfg.arch, Some("amd64".to_string()));
+    assert_eq!(cfg.components, vec!["main", "contrib"]);
+    assert_eq!(cfg.include, vec!["curl"]);
+    assert_eq!(cfg.mirror, Some("https://deb.debian.org/debian".to_string()));
+    assert_eq!(cfg.merged_usr, Some(true));
 
     Ok(())
 }
