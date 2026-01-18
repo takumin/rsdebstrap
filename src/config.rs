@@ -99,7 +99,7 @@ impl ProvisionerConfig {
 /// use camino::Utf8Path;
 /// use rsdebstrap::config;
 ///
-/// let profile = config::load_profile(Utf8Path::new("./examples/debian_bookworm.yml")).unwrap();
+/// let profile = config::load_profile(Utf8Path::new("./examples/debian_trixie_mmdebstrap.yml")).unwrap();
 /// println!("Profile directory: {}", profile.dir);
 /// ```
 #[tracing::instrument]
