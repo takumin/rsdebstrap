@@ -37,8 +37,8 @@ fn default_shell() -> String {
 impl ShellProvisioner {
     /// Validates that exactly one of `script` or `content` is specified.
     fn validate(&self) -> Result<()> {
-        match (self.script.is_some(), self.content.is_some()) {
-            (true, true) | (false, false) => {
+        match (&self.script, &self.content) {
+            (Some(_), Some(_)) | (None, None) => {
                 bail!("shell provisioner must specify either 'script' or 'content', but not both");
             }
             _ => (),
