@@ -15,6 +15,11 @@ use tracing_subscriber::filter::LevelFilter;
 
 use crate::executor::CommandExecutor;
 
+/// Known archive file extensions that indicate non-directory output formats.
+/// Used to detect archive targets when format is set to Auto.
+const KNOWN_ARCHIVE_EXTENSIONS: &[&str] =
+    &["tar", "gz", "bz2", "xz", "zst", "squashfs", "ext2", "img"];
+
 fn main() -> Result<()> {
     let args = cli::parse_args()?;
 
@@ -142,19 +147,17 @@ fn determine_rootfs_path(profile: &config::Profile) -> Result<Utf8PathBuf> {
                 Format::Directory => Ok(target_path),
                 Format::Auto => {
                     // When format is auto, check known archive extensions
-                    let known_archive_extensions =
-                        ["tar", "gz", "bz2", "xz", "zst", "squashfs", "ext2", "img"];
                     if let Some(ext) = target_path.extension() {
-                        if known_archive_extensions.contains(&ext) {
+                        if KNOWN_ARCHIVE_EXTENSIONS.contains(&ext) {
                             anyhow::bail!("archive format detected based on extension: {}", ext);
                         }
                     }
                     // No known archive extension, assume directory
                     Ok(target_path)
                 }
-                format => {
+                unsupported_format => {
                     // Explicitly non-directory format
-                    anyhow::bail!("non-directory format specified: {}", format);
+                    anyhow::bail!("non-directory format specified: {}", unsupported_format);
                 }
             }
         }

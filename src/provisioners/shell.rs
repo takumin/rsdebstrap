@@ -68,8 +68,17 @@ impl ShellProvisioner {
             );
         }
 
+        // Validate shell path to prevent path traversal attacks
+        let shell_path = self.shell.trim_start_matches('/');
+        if shell_path.contains("..") {
+            bail!(
+                "shell path '{}' contains '..' components, which is not allowed for security reasons",
+                self.shell
+            );
+        }
+
         // Check if the specified shell exists in rootfs
-        let shell_in_rootfs = rootfs.join(self.shell.trim_start_matches('/'));
+        let shell_in_rootfs = rootfs.join(shell_path);
         if !shell_in_rootfs.exists() {
             bail!("shell '{}' does not exist in rootfs at {}", self.shell, shell_in_rootfs);
         }
