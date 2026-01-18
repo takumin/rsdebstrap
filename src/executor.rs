@@ -16,6 +16,11 @@ pub struct RealCommandExecutor {
 
 impl CommandExecutor for RealCommandExecutor {
     fn execute(&self, command: &str, args: &[OsString]) -> Result<()> {
+        if self.dry_run {
+            tracing::info!("dry run: {}: {:?}", command, args);
+            return Ok(());
+        }
+
         let cmd = match which(command) {
             Ok(p) => p,
             Err(e) => {
@@ -23,11 +28,6 @@ impl CommandExecutor for RealCommandExecutor {
             }
         };
         tracing::trace!("command found: {}: {}", command, cmd.to_string_lossy());
-
-        if self.dry_run {
-            tracing::info!("dry run: {}: {:?}", command, args);
-            return Ok(());
-        }
 
         let mut child = match Command::new(cmd).args(args).spawn() {
             Ok(c) => c,
