@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::fs;
 use tracing::{debug, info};
 
-use crate::executor::CommandExecutor;
+use crate::executor::{ChrootExecutor, CommandExecutor};
 
 /// Shell provisioner configuration.
 ///
@@ -166,7 +166,7 @@ impl Provisioner for ShellProvisioner {
     fn provision(
         &self,
         rootfs: &Utf8Path,
-        executor: &dyn CommandExecutor,
+        _executor: &dyn CommandExecutor,
         dry_run: bool,
     ) -> Result<()> {
         if !dry_run {
@@ -221,16 +221,13 @@ impl Provisioner for ShellProvisioner {
             }
         }
 
-        // Execute script in chroot
+        // Execute script in chroot using ChrootExecutor
         let script_path_in_chroot = format!("/tmp/{}", script_name);
-        let args: Vec<OsString> = vec![
-            rootfs.as_str().into(),
-            self.shell.as_str().into(),
-            script_path_in_chroot.into(),
-        ];
+        let chroot_executor = ChrootExecutor::new(rootfs, dry_run);
+        let args: Vec<OsString> = vec![script_path_in_chroot.into()];
 
-        executor
-            .execute("chroot", &args)
+        chroot_executor
+            .execute(&self.shell, &args)
             .context("failed to execute provisioning script in chroot")?;
 
         info!("shell provisioner completed successfully");
