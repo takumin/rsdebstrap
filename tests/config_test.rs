@@ -224,7 +224,7 @@ bootstrap:
 }
 
 #[test]
-fn test_profile_validation_rejects_invalid_provisioner() -> Result<()> {
+fn test_profile_validation_rejects_incomplete_shell_provisioner() -> Result<()> {
     let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
     writeln!(
