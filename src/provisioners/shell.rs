@@ -219,7 +219,7 @@ impl Provisioner for ShellProvisioner {
         let script_path_in_chroot = format!("/tmp/{}", script_name);
         let args: Vec<OsString> = vec![
             rootfs.as_str().into(),
-            self.shell.clone().into(),
+            self.shell.as_str().into(),
             script_path_in_chroot.into(),
         ];
 
