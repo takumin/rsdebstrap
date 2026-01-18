@@ -60,6 +60,18 @@ impl Bootstrap {
     }
 }
 
+impl Profile {
+    /// Validate configuration semantics beyond basic deserialization.
+    pub fn validate(&self) -> Result<()> {
+        for (index, provisioner) in self.provisioners.iter().enumerate() {
+            provisioner
+                .validate()
+                .with_context(|| format!("provisioner {} validation failed", index + 1))?;
+        }
+        Ok(())
+    }
+}
+
 /// Provisioner configuration.
 ///
 /// This enum represents the different provisioner types that can be used.
@@ -79,6 +91,15 @@ impl ProvisionerConfig {
     pub fn as_provisioner(&self) -> &dyn Provisioner {
         match self {
             ProvisionerConfig::Shell(cfg) => cfg,
+        }
+    }
+
+    /// Validate provisioner configuration.
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            ProvisionerConfig::Shell(cfg) => cfg
+                .validate()
+                .context("shell provisioner validation failed"),
         }
     }
 }
