@@ -96,11 +96,7 @@ impl BootstrapBackend for DebootstrapConfig {
 
         // Only add --variant if it's not the default (Minbase)
         if self.variant != Variant::Minbase {
-            builder.push_flag_value(
-                "--variant",
-                &self.variant.to_string(),
-                FlagValueStyle::Equals,
-            );
+            builder.push_flag_value("--variant", &self.variant.to_string(), FlagValueStyle::Equals);
         }
 
         if !self.components.is_empty() {
@@ -112,19 +108,11 @@ impl BootstrapBackend for DebootstrapConfig {
         }
 
         if !self.include.is_empty() {
-            builder.push_flag_value(
-                "--include",
-                &self.include.join(","),
-                FlagValueStyle::Equals,
-            );
+            builder.push_flag_value("--include", &self.include.join(","), FlagValueStyle::Equals);
         }
 
         if !self.exclude.is_empty() {
-            builder.push_flag_value(
-                "--exclude",
-                &self.exclude.join(","),
-                FlagValueStyle::Equals,
-            );
+            builder.push_flag_value("--exclude", &self.exclude.join(","), FlagValueStyle::Equals);
         }
 
         if self.foreign {

@@ -229,11 +229,7 @@ impl BootstrapBackend for MmdebstrapConfig {
         builder.push_flag_values("--dpkgopt", &self.dpkgopt, FlagValueStyle::Separate);
 
         builder.push_flag_values("--setup-hook", &self.setup_hook, FlagValueStyle::Separate);
-        builder.push_flag_values(
-            "--extract-hook",
-            &self.extract_hook,
-            FlagValueStyle::Separate,
-        );
+        builder.push_flag_values("--extract-hook", &self.extract_hook, FlagValueStyle::Separate);
         builder.push_flag_values(
             "--essential-hook",
             &self.essential_hook,

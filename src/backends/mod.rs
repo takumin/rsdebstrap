@@ -6,9 +6,9 @@
 use anyhow::Result;
 use std::ffi::OsString;
 
+mod args;
 pub mod debootstrap;
 pub mod mmdebstrap;
-mod args;
 
 pub use args::{CommandArgsBuilder, FlagValueStyle};
 
