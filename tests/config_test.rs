@@ -344,3 +344,33 @@ provisioners:
 
     Ok(())
 }
+
+#[test]
+fn test_shell_provisioner_validation_requires_script_file() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+
+    let mut file = std::fs::File::create(&profile_path)?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+provisioners:
+  - type: shell
+    script: scripts/missing.sh
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    assert!(profile.validate().is_err());
+
+    Ok(())
+}

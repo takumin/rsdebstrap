@@ -1,4 +1,5 @@
 use rsdebstrap::provisioners::shell::ShellProvisioner;
+use tempfile::tempdir;
 
 fn default_shell() -> String {
     "/bin/sh".to_string()
@@ -26,8 +27,14 @@ fn test_validate_both_script_and_content() {
 
 #[test]
 fn test_validate_script_only() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let script_path = temp_dir.path().join("test.sh");
+    std::fs::write(&script_path, "#!/bin/sh\necho test\n").expect("failed to write script");
     let provisioner = ShellProvisioner {
-        script: Some("test.sh".into()),
+        script: Some(
+            camino::Utf8PathBuf::from_path_buf(script_path)
+                .expect("script path should be valid UTF-8"),
+        ),
         content: None,
         shell: default_shell(),
     };

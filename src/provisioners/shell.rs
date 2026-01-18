@@ -38,7 +38,16 @@ impl ShellProvisioner {
     /// Validates that exactly one of `script` or `content` is specified.
     pub fn validate(&self) -> Result<()> {
         match (&self.script, &self.content) {
-            (Some(_), None) | (None, Some(_)) => Ok(()),
+            (Some(script), None) => {
+                let metadata = fs::metadata(script).with_context(|| {
+                    format!("failed to read shell provisioner script metadata: {}", script)
+                })?;
+                if !metadata.is_file() {
+                    bail!("shell provisioner script is not a file: {}", script);
+                }
+                Ok(())
+            }
+            (None, Some(_)) => Ok(()),
             (Some(_), Some(_)) => {
                 bail!("shell provisioner cannot specify both 'script' and 'content'")
             }
