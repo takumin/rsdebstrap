@@ -80,7 +80,10 @@ impl ShellProvisioner {
 
         // Validate shell path to prevent path traversal attacks
         let shell_path = self.shell.trim_start_matches('/');
-        if shell_path.contains("..") {
+        if camino::Utf8Path::new(shell_path)
+            .components()
+            .any(|c| c == camino::Utf8Component::ParentDir)
+        {
             bail!(
                 "shell path '{}' contains '..' components, which is not allowed for security reasons",
                 self.shell
