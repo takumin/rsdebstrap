@@ -284,10 +284,7 @@ impl BootstrapBackend for MmdebstrapConfig {
                         .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
                     {
                         return Ok(RootfsOutput::NonDirectory {
-                            reason: format!(
-                                "archive format detected based on extension: {}",
-                                ext
-                            ),
+                            reason: format!("archive format detected based on extension: {}", ext),
                         });
                     }
                 }
