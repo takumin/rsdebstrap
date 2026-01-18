@@ -57,8 +57,19 @@ impl ShellProvisioner {
     /// to write files outside the chroot.
     fn validate_tmp_directory(rootfs: &Utf8Path) -> Result<()> {
         let tmp_dir = rootfs.join("tmp");
-        let metadata =
-            std::fs::symlink_metadata(&tmp_dir).context("failed to read /tmp metadata")?;
+        let metadata = match std::fs::symlink_metadata(&tmp_dir) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                bail!(
+                    "/tmp directory not found in rootfs at {}. \
+                    The rootfs may not be properly bootstrapped.",
+                    tmp_dir
+                );
+            }
+            Err(e) => {
+                return Err(e).context("failed to read /tmp metadata");
+            }
+        };
 
         if metadata.file_type().is_symlink() {
             bail!(
