@@ -38,12 +38,9 @@ impl ShellProvisioner {
     /// Validates that exactly one of `script` or `content` is specified.
     fn validate(&self) -> Result<()> {
         match (&self.script, &self.content) {
-            (Some(_), Some(_)) | (None, None) => {
-                bail!("shell provisioner must specify either 'script' or 'content', but not both");
-            }
-            _ => (),
+            (Some(_), None) | (None, Some(_)) => Ok(()),
+            _ => bail!("shell provisioner must specify either 'script' or 'content', but not both"),
         }
-        Ok(())
     }
 
     /// Returns the script source for logging purposes.
