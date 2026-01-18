@@ -281,12 +281,10 @@ impl BootstrapBackend for MmdebstrapConfig {
                 let archive_ext = target_path
                     .extension()
                     .or_else(|| {
-                        let file_name = target_path.file_name()?;
-                        let stripped = file_name.strip_prefix('.')?;
-                        if stripped.is_empty() || stripped.contains('.') {
-                            return None;
-                        }
-                        Some(stripped)
+                        target_path
+                            .file_name()
+                            .and_then(|name| name.strip_prefix('.'))
+                            .filter(|stripped| !stripped.is_empty() && !stripped.contains('.'))
                     })
                     .filter(|ext| {
                         KNOWN_ARCHIVE_EXTENSIONS
