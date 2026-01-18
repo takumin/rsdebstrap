@@ -174,10 +174,7 @@ fn test_build_mmdebstrap_args_with_non_default_values() -> Result<()> {
         "/tmp/test/rootfs.tar.zst",
     ];
 
-    assert_eq!(
-        args_str, expected,
-        "Non-default values should generate corresponding flags"
-    );
+    assert_eq!(args_str, expected, "Non-default values should generate corresponding flags");
 
     Ok(())
 }
@@ -214,10 +211,7 @@ fn test_build_debootstrap_args_with_non_default_variant() -> Result<()> {
     // Expected arguments - non-default variant should be included
     let expected = vec!["--variant=buildd", "bookworm", "/tmp/test/rootfs"];
 
-    assert_eq!(
-        args_str, expected,
-        "Non-default variant should generate --variant flag"
-    );
+    assert_eq!(args_str, expected, "Non-default variant should generate --variant flag");
 
     Ok(())
 }
