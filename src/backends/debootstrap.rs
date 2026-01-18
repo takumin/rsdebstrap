@@ -106,7 +106,10 @@ impl BootstrapBackend for DebootstrapConfig {
             add_flag(&mut cmd_args, "--arch", arch);
         }
 
-        add_flag(&mut cmd_args, "--variant", &self.variant.to_string());
+        // Only add --variant if it's not the default (Minbase)
+        if self.variant != Variant::Minbase {
+            add_flag(&mut cmd_args, "--variant", &self.variant.to_string());
+        }
 
         if !self.components.is_empty() {
             add_flag(&mut cmd_args, "--components", &self.components.join(","));

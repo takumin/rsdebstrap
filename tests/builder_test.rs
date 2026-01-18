@@ -68,13 +68,8 @@ fn test_build_mmdebstrap_args_with_mirrors() -> Result<()> {
         .collect();
 
     // Expected arguments in exact order
+    // Note: --mode, --format, and --variant are omitted as they are all default values
     let expected = vec![
-        "--mode",
-        "auto",
-        "--format",
-        "auto",
-        "--variant",
-        "debootstrap",
         "bookworm",
         "/tmp/test-mirrors/rootfs.tar.zst",
         "http://ftp.jp.debian.org/debian",
@@ -119,9 +114,9 @@ fn test_build_debootstrap_args() -> Result<()> {
         .collect();
 
     // Expected arguments
+    // Note: --variant is omitted as it's the default value (minbase)
     let expected = vec![
         "--arch=amd64",
-        "--variant=minbase",
         "--components=main,contrib",
         "--include=curl",
         "--merged-usr",
@@ -131,6 +126,98 @@ fn test_build_debootstrap_args() -> Result<()> {
     ];
 
     assert_eq!(args_str, expected, "Generated debootstrap arguments should match expected list");
+
+    Ok(())
+}
+
+#[test]
+fn test_build_mmdebstrap_args_with_non_default_values() -> Result<()> {
+    use rsdebstrap::backends::mmdebstrap::{Format, Mode, Variant};
+
+    let config = MmdebstrapConfig {
+        suite: "bookworm".to_string(),
+        target: "rootfs.tar.zst".to_string(),
+        mode: Mode::Sudo,
+        format: Format::TarZst,
+        variant: Variant::Apt,
+        architectures: vec![],
+        components: vec![],
+        include: vec![],
+        keyring: vec![],
+        aptopt: vec![],
+        dpkgopt: vec![],
+        setup_hook: vec![],
+        extract_hook: vec![],
+        essential_hook: vec![],
+        customize_hook: vec![],
+        mirrors: vec![],
+    };
+    let dir = Utf8PathBuf::from("/tmp/test");
+
+    let args = config.build_args(&dir)?;
+
+    // Convert to Vec<String> for easier comparison
+    let args_str: Vec<String> = args
+        .iter()
+        .map(|s| s.to_string_lossy().to_string())
+        .collect();
+
+    // Expected arguments - non-default values should be included
+    let expected = vec![
+        "--mode",
+        "sudo",
+        "--format",
+        "tar.zst",
+        "--variant",
+        "apt",
+        "bookworm",
+        "/tmp/test/rootfs.tar.zst",
+    ];
+
+    assert_eq!(
+        args_str, expected,
+        "Non-default values should generate corresponding flags"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_build_debootstrap_args_with_non_default_variant() -> Result<()> {
+    use rsdebstrap::backends::debootstrap::{DebootstrapConfig, Variant};
+
+    let config = DebootstrapConfig {
+        suite: "bookworm".to_string(),
+        target: "rootfs".to_string(),
+        variant: Variant::Buildd,
+        arch: None,
+        components: vec![],
+        include: vec![],
+        exclude: vec![],
+        mirror: None,
+        foreign: false,
+        merged_usr: None,
+        no_resolve_deps: false,
+        verbose: false,
+        print_debs: false,
+    };
+    let dir = Utf8PathBuf::from("/tmp/test");
+
+    let args = config.build_args(&dir)?;
+
+    // Convert to Vec<String> for easier comparison
+    let args_str: Vec<String> = args
+        .iter()
+        .map(|s| s.to_string_lossy().to_string())
+        .collect();
+
+    // Expected arguments - non-default variant should be included
+    let expected = vec!["--variant=buildd", "bookworm", "/tmp/test/rootfs"];
+
+    assert_eq!(
+        args_str, expected,
+        "Non-default variant should generate --variant flag"
+    );
 
     Ok(())
 }

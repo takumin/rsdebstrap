@@ -233,9 +233,16 @@ impl BootstrapBackend for MmdebstrapConfig {
     fn build_args(&self, output_dir: &Utf8Path) -> Result<Vec<OsString>> {
         let mut cmd_args = Vec::<OsString>::new();
 
-        add_flag(&mut cmd_args, "--mode", &self.mode.to_string());
-        add_flag(&mut cmd_args, "--format", &self.format.to_string());
-        add_flag(&mut cmd_args, "--variant", &self.variant.to_string());
+        // Only add flags if they differ from defaults
+        if self.mode != Mode::Auto {
+            add_flag(&mut cmd_args, "--mode", &self.mode.to_string());
+        }
+        if self.format != Format::Auto {
+            add_flag(&mut cmd_args, "--format", &self.format.to_string());
+        }
+        if self.variant != Variant::Debootstrap {
+            add_flag(&mut cmd_args, "--variant", &self.variant.to_string());
+        }
 
         add_flag(&mut cmd_args, "--architectures", &self.architectures.join(","));
         add_flag(&mut cmd_args, "--components", &self.components.join(","));
