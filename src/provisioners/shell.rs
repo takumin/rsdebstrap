@@ -158,6 +158,20 @@ impl Provisioner for ShellProvisioner {
         let _guard = ScriptGuard::new(target_script.clone(), dry_run);
 
         if !dry_run {
+            // Re-validate /tmp immediately before use to mitigate TOCTOU race conditions
+            let tmp_dir = rootfs.join("tmp");
+            let metadata = std::fs::symlink_metadata(&tmp_dir)
+                .context("failed to re-read /tmp metadata before writing script")?;
+            if metadata.file_type().is_symlink() {
+                bail!(
+                    "/tmp in rootfs is a symlink, which is not allowed for security reasons. \
+                    An attacker could use this to write files outside the chroot."
+                );
+            }
+            if !metadata.file_type().is_dir() {
+                bail!("/tmp in rootfs exists but is not a directory.");
+            }
+
             // Copy or write script to rootfs
             match (&self.script, &self.content) {
                 (Some(script_path), None) => {
