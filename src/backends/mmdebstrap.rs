@@ -1,7 +1,7 @@
 //! mmdebstrap backend implementation.
 
-use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle};
-use anyhow::{Result, bail};
+use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle, RootfsOutput};
+use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -272,25 +272,30 @@ impl BootstrapBackend for MmdebstrapConfig {
         Ok(cmd_args)
     }
 
-    fn rootfs_path(&self, output_dir: &Utf8Path) -> Result<camino::Utf8PathBuf> {
+    fn rootfs_output(&self, output_dir: &Utf8Path) -> Result<RootfsOutput> {
         let target_path = output_dir.join(&self.target);
 
         match &self.format {
-            Format::Directory => Ok(target_path),
+            Format::Directory => Ok(RootfsOutput::Directory(target_path)),
             Format::Auto => {
                 if let Some(ext) = target_path.extension() {
                     if KNOWN_ARCHIVE_EXTENSIONS
                         .iter()
                         .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
                     {
-                        bail!("archive format detected based on extension: {}", ext);
+                        return Ok(RootfsOutput::NonDirectory {
+                            reason: format!(
+                                "archive format detected based on extension: {}",
+                                ext
+                            ),
+                        });
                     }
                 }
-                Ok(target_path)
+                Ok(RootfsOutput::Directory(target_path))
             }
-            unsupported_format => {
-                bail!("non-directory format specified: {}", unsupported_format);
-            }
+            unsupported_format => Ok(RootfsOutput::NonDirectory {
+                reason: format!("non-directory format specified: {}", unsupported_format),
+            }),
         }
     }
 }

@@ -78,8 +78,8 @@ fn main() -> Result<()> {
                 );
 
                 // Determine rootfs path based on bootstrap configuration
-                match backend.rootfs_path(&profile.dir) {
-                    Ok(rootfs) => {
+                match backend.rootfs_output(&profile.dir) {
+                    Ok(backends::RootfsOutput::Directory(rootfs)) => {
                         for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
                             info!(
                                 "running provisioner {}/{}",
@@ -96,15 +96,14 @@ fn main() -> Result<()> {
 
                         info!("provisioning phase completed successfully");
                     }
-                    Err(e) => {
-                        warn!(
-                            "skipping provisioners: {}. \
-                            Provisioners are only supported for directory-based bootstrap targets. \
-                            For archive-based targets (tar, squashfs, etc.), \
-                            consider using backend-specific hooks instead.",
-                            e
-                        );
-                    }
+                    Ok(backends::RootfsOutput::NonDirectory { reason }) => warn!(
+                        "skipping provisioners: {}. \
+                        Provisioners are only supported for directory-based bootstrap targets. \
+                        For archive-based targets (tar, squashfs, etc.), \
+                        consider using backend-specific hooks instead.",
+                        reason
+                    ),
+                    Err(e) => return Err(e),
                 }
             }
         }
