@@ -278,11 +278,21 @@ impl BootstrapBackend for MmdebstrapConfig {
         match &self.format {
             Format::Directory => Ok(RootfsOutput::Directory(target_path)),
             Format::Auto => {
-                let archive_ext = target_path.extension().filter(|ext| {
-                    KNOWN_ARCHIVE_EXTENSIONS
-                        .iter()
-                        .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
-                });
+                let archive_ext = target_path
+                    .extension()
+                    .or_else(|| {
+                        let file_name = target_path.file_name()?;
+                        let stripped = file_name.strip_prefix('.')?;
+                        if stripped.is_empty() || stripped.contains('.') {
+                            return None;
+                        }
+                        Some(stripped)
+                    })
+                    .filter(|ext| {
+                        KNOWN_ARCHIVE_EXTENSIONS
+                            .iter()
+                            .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
+                    });
 
                 if let Some(ext) = archive_ext {
                     Ok(RootfsOutput::NonDirectory {

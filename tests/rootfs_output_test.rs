@@ -50,6 +50,29 @@ fn test_mmdebstrap_rootfs_output_auto_archive_extension() -> Result<()> {
 }
 
 #[test]
+fn test_mmdebstrap_rootfs_output_auto_archive_dotfile() -> Result<()> {
+    let config = MmdebstrapConfig {
+        format: Format::Auto,
+        ..helpers::create_mmdebstrap("bookworm", ".squashfs")
+    };
+    let output_dir = Utf8PathBuf::from("/tmp/rootfs-output");
+
+    match config.rootfs_output(&output_dir)? {
+        RootfsOutput::NonDirectory { reason } => {
+            assert!(
+                reason.contains("archive format detected based on extension: squashfs"),
+                "unexpected reason: {reason}"
+            );
+        }
+        RootfsOutput::Directory(path) => {
+            panic!("expected non-directory output, got directory: {path}");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_mmdebstrap_rootfs_output_auto_directory_when_unknown_extension() -> Result<()> {
     let config = MmdebstrapConfig {
         format: Format::Auto,
