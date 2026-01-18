@@ -162,4 +162,8 @@ impl BootstrapBackend for DebootstrapConfig {
 
         Ok(cmd_args)
     }
+
+    fn rootfs_path(&self, output_dir: &Utf8Path) -> Result<camino::Utf8PathBuf> {
+        Ok(output_dir.join(&self.target))
+    }
 }

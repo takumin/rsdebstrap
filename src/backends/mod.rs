@@ -28,4 +28,10 @@ pub trait BootstrapBackend {
     /// # Returns
     /// A vector of command-line arguments to pass to the bootstrap tool.
     fn build_args(&self, output_dir: &camino::Utf8Path) -> Result<Vec<OsString>>;
+
+    /// Returns the rootfs path when the backend produces a directory output.
+    ///
+    /// Backends that emit archive formats should return an error, since
+    /// provisioners require a directory to chroot into.
+    fn rootfs_path(&self, output_dir: &camino::Utf8Path) -> Result<camino::Utf8PathBuf>;
 }

@@ -1,12 +1,17 @@
 //! mmdebstrap backend implementation.
 
 use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fmt;
 use tracing::debug;
+
+/// Known archive file extensions that indicate non-directory output formats.
+/// Used to detect archive targets when format is set to Auto.
+const KNOWN_ARCHIVE_EXTENSIONS: &[&str] =
+    &["tar", "gz", "bz2", "xz", "zst", "squashfs", "ext2", "img"];
 
 /// Variant defines the package selection strategy for mmdebstrap
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,5 +270,27 @@ impl BootstrapBackend for MmdebstrapConfig {
         );
 
         Ok(cmd_args)
+    }
+
+    fn rootfs_path(&self, output_dir: &Utf8Path) -> Result<camino::Utf8PathBuf> {
+        let target_path = output_dir.join(&self.target);
+
+        match &self.format {
+            Format::Directory => Ok(target_path),
+            Format::Auto => {
+                if let Some(ext) = target_path.extension() {
+                    if KNOWN_ARCHIVE_EXTENSIONS
+                        .iter()
+                        .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
+                    {
+                        bail!("archive format detected based on extension: {}", ext);
+                    }
+                }
+                Ok(target_path)
+            }
+            unsupported_format => {
+                bail!("non-directory format specified: {}", unsupported_format);
+            }
+        }
     }
 }

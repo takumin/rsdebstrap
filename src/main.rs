@@ -5,7 +5,6 @@ mod executor;
 mod provisioners;
 
 use anyhow::{Context, Result};
-use camino::Utf8PathBuf;
 use clap::CommandFactory;
 use clap_complete::generate;
 use std::io;
@@ -14,11 +13,6 @@ use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::filter::LevelFilter;
 
 use crate::executor::CommandExecutor;
-
-/// Known archive file extensions that indicate non-directory output formats.
-/// Used to detect archive targets when format is set to Auto.
-const KNOWN_ARCHIVE_EXTENSIONS: &[&str] =
-    &["tar", "gz", "bz2", "xz", "zst", "squashfs", "ext2", "img"];
 
 fn main() -> Result<()> {
     let args = cli::parse_args()?;
@@ -84,7 +78,7 @@ fn main() -> Result<()> {
                 );
 
                 // Determine rootfs path based on bootstrap configuration
-                match determine_rootfs_path(&profile) {
+                match backend.rootfs_path(&profile.dir) {
                     Ok(rootfs) => {
                         for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
                             info!(
@@ -124,45 +118,4 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Determines the rootfs path from the profile.
-///
-/// For directory-based outputs, returns the output directory.
-/// For archive-based outputs (tar, squashfs, etc.), returns an error
-/// as provisioners require a directory to chroot into.
-fn determine_rootfs_path(profile: &config::Profile) -> Result<Utf8PathBuf> {
-    use crate::backends::mmdebstrap::Format;
-
-    match &profile.bootstrap {
-        config::Bootstrap::Debootstrap(cfg) => {
-            // debootstrap always outputs to directory
-            Ok(profile.dir.join(&cfg.target))
-        }
-        config::Bootstrap::Mmdebstrap(cfg) => {
-            let target_path = profile.dir.join(&cfg.target);
-
-            // Check format to determine if target is a directory
-            match &cfg.format {
-                Format::Directory => Ok(target_path),
-                Format::Auto => {
-                    // When format is auto, check known archive extensions
-                    if let Some(ext) = target_path.extension() {
-                        if KNOWN_ARCHIVE_EXTENSIONS
-                            .iter()
-                            .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
-                        {
-                            anyhow::bail!("archive format detected based on extension: {}", ext);
-                        }
-                    }
-                    // No known archive extension, assume directory
-                    Ok(target_path)
-                }
-                unsupported_format => {
-                    // Explicitly non-directory format
-                    anyhow::bail!("non-directory format specified: {}", unsupported_format);
-                }
-            }
-        }
-    }
 }
