@@ -51,9 +51,11 @@ impl ShellProvisioner {
         self.script.as_ref().map_or("<inline>", |p| p.as_str())
     }
 
-    /// Validates that the rootfs is ready for chroot operations.
-    fn validate_rootfs(&self, rootfs: &Utf8Path) -> Result<()> {
-        // Check if /tmp directory exists and is a real directory (not a symlink)
+    /// Validates that /tmp exists as a real directory (not a symlink).
+    ///
+    /// This is a security-critical check to prevent attackers from using symlinks
+    /// to write files outside the chroot.
+    fn validate_tmp_directory(rootfs: &Utf8Path) -> Result<()> {
         let tmp_dir = rootfs.join("tmp");
         let metadata =
             std::fs::symlink_metadata(&tmp_dir).context("failed to read /tmp metadata")?;
@@ -72,6 +74,14 @@ impl ShellProvisioner {
                 tmp_dir
             );
         }
+
+        Ok(())
+    }
+
+    /// Validates that the rootfs is ready for chroot operations.
+    fn validate_rootfs(&self, rootfs: &Utf8Path) -> Result<()> {
+        // Check if /tmp directory exists and is a real directory (not a symlink)
+        Self::validate_tmp_directory(rootfs)?;
 
         // Validate shell path to prevent path traversal attacks
         let shell_path = self.shell.trim_start_matches('/');
@@ -159,18 +169,8 @@ impl Provisioner for ShellProvisioner {
 
         if !dry_run {
             // Re-validate /tmp immediately before use to mitigate TOCTOU race conditions
-            let tmp_dir = rootfs.join("tmp");
-            let metadata = std::fs::symlink_metadata(&tmp_dir)
-                .context("failed to re-read /tmp metadata before writing script")?;
-            if metadata.file_type().is_symlink() {
-                bail!(
-                    "/tmp in rootfs is a symlink, which is not allowed for security reasons. \
-                    An attacker could use this to write files outside the chroot."
-                );
-            }
-            if !metadata.file_type().is_dir() {
-                bail!("/tmp in rootfs exists but is not a directory.");
-            }
+            Self::validate_tmp_directory(rootfs)
+                .context("TOCTOU check: /tmp validation failed before writing script")?;
 
             // Copy or write script to rootfs
             match (&self.script, &self.content) {
