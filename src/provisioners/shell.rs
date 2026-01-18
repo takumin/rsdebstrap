@@ -55,21 +55,21 @@ impl ShellProvisioner {
     fn validate_rootfs(&self, rootfs: &Utf8Path) -> Result<()> {
         // Check if /tmp directory exists and is a real directory (not a symlink)
         let tmp_dir = rootfs.join("tmp");
-        if !tmp_dir.is_dir() {
-            bail!(
-                "rootfs does not have a /tmp directory: {}. \
-                The rootfs may not be properly bootstrapped.",
-                rootfs
-            );
-        }
-
-        // Prevent symlink attacks: ensure /tmp is not a symlink
         let metadata =
             std::fs::symlink_metadata(&tmp_dir).context("failed to read /tmp metadata")?;
+
         if metadata.file_type().is_symlink() {
             bail!(
                 "/tmp in rootfs is a symlink, which is not allowed for security reasons. \
                 An attacker could use this to write files outside the chroot."
+            );
+        }
+
+        if !metadata.file_type().is_dir() {
+            bail!(
+                "/tmp in rootfs is not a directory: {}. \
+                The rootfs may not be properly bootstrapped.",
+                tmp_dir
             );
         }
 
