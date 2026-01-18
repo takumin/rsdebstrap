@@ -37,22 +37,15 @@ fn default_shell() -> String {
 impl ShellProvisioner {
     /// Validates that exactly one of `script` or `content` is specified.
     fn validate(&self) -> Result<()> {
-        if self.script.is_some() && self.content.is_some() {
-            bail!("shell provisioner cannot specify both 'script' and 'content'");
-        }
-        if self.script.is_none() && self.content.is_none() {
-            bail!("shell provisioner must specify either 'script' or 'content'");
+        if self.script.is_some() == self.content.is_some() {
+            bail!("shell provisioner must specify either 'script' or 'content', but not both");
         }
         Ok(())
     }
 
     /// Returns the script source for logging purposes.
     fn script_source(&self) -> &str {
-        if let Some(script) = &self.script {
-            script.as_str()
-        } else {
-            "<inline>"
-        }
+        self.script.as_ref().map_or("<inline>", |p| p.as_str())
     }
 
     /// Validates that the rootfs is ready for chroot operations.
