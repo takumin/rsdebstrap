@@ -148,7 +148,10 @@ fn determine_rootfs_path(profile: &config::Profile) -> Result<Utf8PathBuf> {
                 Format::Auto => {
                     // When format is auto, check known archive extensions
                     if let Some(ext) = target_path.extension() {
-                        if KNOWN_ARCHIVE_EXTENSIONS.contains(&ext) {
+                        if KNOWN_ARCHIVE_EXTENSIONS
+                            .iter()
+                            .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
+                        {
                             anyhow::bail!("archive format detected based on extension: {}", ext);
                         }
                     }
