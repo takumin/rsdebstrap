@@ -37,15 +37,10 @@ fn default_shell() -> String {
 impl ShellProvisioner {
     /// Validates that exactly one of `script` or `content` is specified.
     fn validate(&self) -> Result<()> {
-        match (&self.script, &self.content) {
-            (None, None) => {
-                bail!("shell provisioner must specify either 'script' or 'content'")
-            }
-            (Some(_), Some(_)) => {
-                bail!("shell provisioner cannot specify both 'script' and 'content'")
-            }
-            _ => Ok(()),
+        if self.script.is_some() == self.content.is_some() {
+            bail!("shell provisioner must specify exactly one of 'script' or 'content'");
         }
+        Ok(())
     }
 
     /// Returns the script source for logging purposes.
@@ -92,10 +87,22 @@ impl ShellProvisioner {
             );
         }
 
-        // Check if the specified shell exists in rootfs
+        // Check if the specified shell exists and is a file in rootfs
         let shell_in_rootfs = rootfs.join(shell_path);
-        if !shell_in_rootfs.exists() {
-            bail!("shell '{}' does not exist in rootfs at {}", self.shell, shell_in_rootfs);
+        if !shell_in_rootfs.is_file() {
+            if shell_in_rootfs.is_dir() {
+                bail!(
+                    "shell path '{}' points to a directory, not a file: {}",
+                    self.shell,
+                    shell_in_rootfs
+                );
+            } else {
+                bail!(
+                    "shell '{}' does not exist or is not a file in rootfs at {}",
+                    self.shell,
+                    shell_in_rootfs
+                );
+            }
         }
 
         Ok(())
@@ -153,18 +160,24 @@ impl Provisioner for ShellProvisioner {
 
         if !dry_run {
             // Copy or write script to rootfs
-            if let Some(script_path) = &self.script {
-                // External script: copy to rootfs
-                info!("copying script from {} to rootfs", script_path);
-                fs::copy(script_path, &target_script).with_context(|| {
-                    format!("failed to copy script {} to {}", script_path, target_script)
-                })?;
-            } else if let Some(content) = &self.content {
-                // Inline script: write to rootfs
-                info!("writing inline script to rootfs");
-                fs::write(&target_script, content).with_context(|| {
-                    format!("failed to write inline script to {}", target_script)
-                })?;
+            match (&self.script, &self.content) {
+                (Some(script_path), None) => {
+                    // External script: copy to rootfs
+                    info!("copying script from {} to rootfs", script_path);
+                    fs::copy(script_path, &target_script).with_context(|| {
+                        format!("failed to copy script {} to {}", script_path, target_script)
+                    })?;
+                }
+                (None, Some(content)) => {
+                    // Inline script: write to rootfs
+                    info!("writing inline script to rootfs");
+                    fs::write(&target_script, content).with_context(|| {
+                        format!("failed to write inline script to {}", target_script)
+                    })?;
+                }
+                _ => unreachable!(
+                    "validate() ensures exactly one of 'script' or 'content' is specified"
+                ),
             }
 
             // Make script executable
