@@ -66,7 +66,7 @@ pub struct DebootstrapConfig {
     /// Perform two-stage bootstrap (for cross-architecture installations)
     #[serde(default)]
     pub foreign: bool,
-    /// Use merged /usr directory structure (None = don't specify, Some(true) = --merged-usr, Some(false) = --no-merged-usr)
+    /// Use merged /usr directory structure
     #[serde(default)]
     pub merged_usr: Option<bool>,
     /// Don't resolve recommends/suggests

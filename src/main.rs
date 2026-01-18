@@ -2,16 +2,23 @@ mod backends;
 mod cli;
 mod config;
 mod executor;
+mod provisioners;
 
 use anyhow::{Context, Result};
+use camino::Utf8PathBuf;
 use clap::CommandFactory;
 use clap_complete::generate;
 use std::io;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::filter::LevelFilter;
 
 use crate::executor::CommandExecutor;
+
+/// Known archive file extensions that indicate non-directory output formats.
+/// Used to detect archive targets when format is set to Auto.
+const KNOWN_ARCHIVE_EXTENSIONS: &[&str] =
+    &["tar", "gz", "bz2", "xz", "zst", "squashfs", "ext2", "img"];
 
 fn main() -> Result<()> {
     let args = cli::parse_args()?;
@@ -57,7 +64,7 @@ fn main() -> Result<()> {
                 dry_run: opts.dry_run,
             };
 
-            // Get backend as trait object to avoid duplicating logic
+            // Bootstrap phase
             let backend = profile.bootstrap.as_backend();
             let command_name = backend.command_name();
 
@@ -68,6 +75,44 @@ fn main() -> Result<()> {
             executor
                 .execute(command_name, &args)
                 .with_context(|| format!("failed to execute {}", command_name))?;
+
+            // Provisioning phase
+            if !profile.provisioners.is_empty() {
+                info!(
+                    "starting provisioning phase with {} provisioner(s)",
+                    profile.provisioners.len()
+                );
+
+                // Determine rootfs path based on bootstrap configuration
+                match determine_rootfs_path(&profile) {
+                    Ok(rootfs) => {
+                        for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
+                            info!(
+                                "running provisioner {}/{}",
+                                index + 1,
+                                profile.provisioners.len()
+                            );
+                            let provisioner = provisioner_config.as_provisioner();
+                            provisioner
+                                .provision(&rootfs, &executor, opts.dry_run)
+                                .with_context(|| {
+                                    format!("failed to run provisioner {}", index + 1)
+                                })?;
+                        }
+
+                        info!("provisioning phase completed successfully");
+                    }
+                    Err(e) => {
+                        warn!(
+                            "skipping provisioners: {}. \
+                            Provisioners are only supported for directory-based bootstrap targets. \
+                            For archive-based targets (tar, squashfs, etc.), \
+                            consider using backend-specific hooks instead.",
+                            e
+                        );
+                    }
+                }
+            }
         }
         cli::Commands::Validate(opts) => {
             let profile = config::load_profile(opts.file.as_path())?;
@@ -79,4 +124,45 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Determines the rootfs path from the profile.
+///
+/// For directory-based outputs, returns the output directory.
+/// For archive-based outputs (tar, squashfs, etc.), returns an error
+/// as provisioners require a directory to chroot into.
+fn determine_rootfs_path(profile: &config::Profile) -> Result<Utf8PathBuf> {
+    use crate::backends::mmdebstrap::Format;
+
+    match &profile.bootstrap {
+        config::Bootstrap::Debootstrap(cfg) => {
+            // debootstrap always outputs to directory
+            Ok(profile.dir.join(&cfg.target))
+        }
+        config::Bootstrap::Mmdebstrap(cfg) => {
+            let target_path = profile.dir.join(&cfg.target);
+
+            // Check format to determine if target is a directory
+            match &cfg.format {
+                Format::Directory => Ok(target_path),
+                Format::Auto => {
+                    // When format is auto, check known archive extensions
+                    if let Some(ext) = target_path.extension() {
+                        if KNOWN_ARCHIVE_EXTENSIONS
+                            .iter()
+                            .any(|known_ext| known_ext.eq_ignore_ascii_case(ext))
+                        {
+                            anyhow::bail!("archive format detected based on extension: {}", ext);
+                        }
+                    }
+                    // No known archive extension, assume directory
+                    Ok(target_path)
+                }
+                unsupported_format => {
+                    // Explicitly non-directory format
+                    anyhow::bail!("non-directory format specified: {}", unsupported_format);
+                }
+            }
+        }
+    }
 }
