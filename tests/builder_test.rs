@@ -21,9 +21,8 @@ fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
 
     // This should succeed because our mock is configured to succeed
     let spec = CommandSpec::new("echo", config.build_args(&dir)?);
-    let result = executor.execute(&spec);
-    assert!(result.is_ok());
-    assert!(result.unwrap().success());
+    let result = executor.execute(&spec)?;
+    assert!(result.success());
 
     Ok(())
 }
