@@ -51,7 +51,12 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Resul
         .with_context(|| format!("failed to execute {}", command_name))?;
 
     if !result.success() {
-        anyhow::bail!("{} exited with non-zero status: {}. Spec: {:?}", command_name, result.status.unwrap(), spec);
+        anyhow::bail!(
+            "{} exited with non-zero status: {}. Spec: {:?}",
+            command_name,
+            result.status.unwrap(),
+            spec
+        );
     }
 
     // Provisioning phase
