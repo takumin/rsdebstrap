@@ -62,7 +62,7 @@ impl ExecutionResult {
     /// Returns true if the command executed successfully
     /// In dry-run mode (status is None), this always returns true
     pub fn success(&self) -> bool {
-        self.status.as_ref().is_none_or(|s| s.success())
+        self.status.as_ref().map_or(true, |s| s.success())
     }
 
     /// Returns the exit code if available
