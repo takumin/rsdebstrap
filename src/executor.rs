@@ -107,7 +107,7 @@ impl CommandExecutor for RealCommandExecutor {
         tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
 
         if self.dry_run {
-            tracing::info!("dry run: {}: {:?}", spec.command, spec.args);
+            tracing::info!("dry run: {:?}", spec);
             return Ok(ExecutionResult {
                 status: None,
                 stdout: Vec::new(),
