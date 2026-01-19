@@ -42,9 +42,8 @@ fn test_run_mmdebstrap_with_mock_failure() -> Result<()> {
 
     // This should succeed in execution but return non-zero status
     let spec = CommandSpec::new("false", config.build_args(&dir)?);
-    let result = executor.execute(&spec);
-    assert!(result.is_ok());
-    assert!(!result.unwrap().success());
+    let result = executor.execute(&spec)?;
+    assert!(!result.success());
 
     Ok(())
 }
