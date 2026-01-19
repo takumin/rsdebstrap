@@ -109,11 +109,11 @@ fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
     for provisioner in &mut profile.provisioners {
         match provisioner {
             ProvisionerConfig::Shell(shell) => {
-                if let Some(script) = shell.script.as_mut() {
-                    if script.is_relative() {
-                        let resolved = profile_dir.join(script.as_path());
-                        *script = resolved;
-                    }
+                if let Some(script) = shell.script.as_mut()
+                    && script.is_relative()
+                {
+                    let resolved = profile_dir.join(script.as_path());
+                    *script = resolved;
                 }
             }
         }

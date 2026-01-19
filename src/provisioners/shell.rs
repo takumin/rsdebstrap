@@ -229,9 +229,14 @@ impl Provisioner for ShellProvisioner {
             script_path_in_chroot.into(),
         ];
 
-        executor
-            .execute("chroot", &args)
+        let spec = crate::executor::CommandSpec::new("chroot", args);
+        let result = executor
+            .execute(&spec)
             .context("failed to execute provisioning script in chroot")?;
+
+        if !result.success() {
+            anyhow::bail!("provisioning script exited with non-zero status: {:?}", result.code());
+        }
 
         info!("shell provisioner completed successfully");
         Ok(())
