@@ -19,6 +19,7 @@ pub struct CommandSpec {
 
 impl CommandSpec {
     /// Creates a new CommandSpec with command and args
+    #[must_use]
     pub fn new(command: impl Into<String>, args: Vec<OsString>) -> Self {
         Self {
             command: command.into(),
@@ -29,20 +30,32 @@ impl CommandSpec {
     }
 
     /// Sets the working directory
+    #[must_use]
     pub fn with_cwd(mut self, cwd: PathBuf) -> Self {
         self.cwd = Some(cwd);
         self
     }
 
     /// Adds an environment variable
+    #[must_use]
     pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.push((key.into(), value.into()));
         self
     }
 
     /// Adds multiple environment variables
-    pub fn with_envs(mut self, envs: Vec<(String, String)>) -> Self {
-        self.env.extend(envs);
+    ///
+    /// Accepts any iterator of key-value pairs that can be converted into strings,
+    /// such as `Vec<(String, String)>`, `&[(&str, &str)]`, or `HashMap<String, String>`.
+    #[must_use]
+    pub fn with_envs<I, K, V>(mut self, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.env
+            .extend(envs.into_iter().map(|(k, v)| (k.into(), v.into())));
         self
     }
 }
