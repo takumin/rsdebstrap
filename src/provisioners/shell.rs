@@ -235,7 +235,7 @@ impl Provisioner for ShellProvisioner {
             .context("failed to execute provisioning script in chroot")?;
 
         if !result.success() {
-            anyhow::bail!("provisioning script exited with non-zero status: {:?}", result.code());
+            anyhow::bail!("provisioning script exited with non-zero status: {}. Spec: {:?}", result.status.unwrap(), spec);
         }
 
         info!("shell provisioner completed successfully");
