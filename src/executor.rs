@@ -91,11 +91,15 @@ impl CommandExecutor for RealCommandExecutor {
         tracing::trace!("wait command: {}: {}", spec.command, output.status.success());
 
         if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
-                "{} exited with non-zero status: {} and args: {:?}",
+                "{} exited with non-zero status: {} and args: {:?}\nstdout:\n{}\nstderr:\n{}",
                 spec.command,
                 output.status,
-                spec.args
+                spec.args,
+                stdout,
+                stderr
             );
         }
 
