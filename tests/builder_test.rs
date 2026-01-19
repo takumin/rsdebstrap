@@ -4,7 +4,7 @@ use anyhow::Result;
 use camino::Utf8PathBuf;
 use rsdebstrap::backends::BootstrapBackend;
 use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
-use rsdebstrap::executor::{CommandExecutor, RealCommandExecutor};
+use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
 
 #[test]
 fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
@@ -20,7 +20,8 @@ fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
     let executor = RealCommandExecutor { dry_run: false };
 
     // This should succeed because our mock is configured to succeed
-    let result = executor.execute("echo", &config.build_args(&dir)?);
+    let spec = CommandSpec::new("echo", config.build_args(&dir)?);
+    let result = executor.execute(&spec);
     assert!(result.is_ok());
 
     Ok(())
@@ -40,7 +41,8 @@ fn test_run_mmdebstrap_with_mock_failure() -> Result<()> {
     let executor = RealCommandExecutor { dry_run: false };
 
     // This should fail because our mock is configured to fail
-    let result = executor.execute("false", &config.build_args(&dir)?);
+    let spec = CommandSpec::new("false", config.build_args(&dir)?);
+    let result = executor.execute(&spec);
     assert!(result.is_err());
 
     Ok(())

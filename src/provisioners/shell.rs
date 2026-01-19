@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::fs;
 use tracing::{debug, info};
 
-use crate::executor::CommandExecutor;
+use crate::executor::{CommandExecutor, CommandSpec};
 
 /// Shell provisioner configuration.
 ///
@@ -229,8 +229,10 @@ impl Provisioner for ShellProvisioner {
             script_path_in_chroot.into(),
         ];
 
+        let spec = CommandSpec::new("chroot", args);
+
         executor
-            .execute("chroot", &args)
+            .execute(&spec)
             .context("failed to execute provisioning script in chroot")?;
 
         info!("shell provisioner completed successfully");

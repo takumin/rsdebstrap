@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use tracing::{info, warn};
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
-use crate::executor::CommandExecutor;
+use crate::executor::{CommandExecutor, CommandSpec};
 
 pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
     let filter = match log_level {
@@ -45,8 +45,10 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Resul
         .build_args(&profile.dir)
         .with_context(|| format!("failed to build arguments for {}", command_name))?;
 
+    let spec = CommandSpec::new(command_name, args);
+
     executor
-        .execute(command_name, &args)
+        .execute(&spec)
         .with_context(|| format!("failed to execute {}", command_name))?;
 
     // Provisioning phase

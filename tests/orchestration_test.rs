@@ -1,7 +1,11 @@
 use std::cell::RefCell;
 use std::ffi::OsString;
 
-use rsdebstrap::{cli, executor::CommandExecutor, run_apply, run_validate};
+use rsdebstrap::{
+    cli,
+    executor::{CommandExecutor, CommandSpec, ExecutionResult},
+    run_apply, run_validate,
+};
 
 #[derive(Default)]
 struct RecordingExecutor {
@@ -9,11 +13,28 @@ struct RecordingExecutor {
 }
 
 impl CommandExecutor for RecordingExecutor {
-    fn execute(&self, command: &str, args: &[OsString]) -> anyhow::Result<()> {
+    fn execute(&self, spec: &CommandSpec) -> anyhow::Result<ExecutionResult> {
         self.calls
             .borrow_mut()
-            .push((command.to_string(), args.to_vec()));
-        Ok(())
+            .push((spec.command.clone(), spec.args.clone()));
+        Ok(ExecutionResult {
+            status: success_status(),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+}
+
+fn success_status() -> std::process::ExitStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(0)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(0)
     }
 }
 
