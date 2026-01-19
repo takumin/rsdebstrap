@@ -62,7 +62,7 @@ impl ExecutionResult {
     /// Returns true if the command executed successfully
     /// In dry-run mode (status is None), this always returns true
     pub fn success(&self) -> bool {
-        self.status.as_ref().map_or(true, |s| s.success())
+        self.status.as_ref().is_none_or(|s| s.success())
     }
 
     /// Returns the exit code if available
@@ -84,19 +84,7 @@ pub struct RealCommandExecutor {
 
 impl CommandExecutor for RealCommandExecutor {
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
-        if self.dry_run {
-            // In dry-run mode, validate that the command exists
-            if let Err(e) = which(&spec.command) {
-                anyhow::bail!("command not found: {}: {}", spec.command, e);
-            }
-            tracing::info!("dry run: {}: {:?}", spec.command, spec.args);
-            return Ok(ExecutionResult {
-                status: None,
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            });
-        }
-
+        // Validate that the command exists
         let cmd = match which(&spec.command) {
             Ok(p) => p,
             Err(e) => {
@@ -104,6 +92,15 @@ impl CommandExecutor for RealCommandExecutor {
             }
         };
         tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
+
+        if self.dry_run {
+            tracing::info!("dry run: {}: {:?}", spec.command, spec.args);
+            return Ok(ExecutionResult {
+                status: None,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            });
+        }
 
         let mut command = Command::new(cmd);
         command.args(&spec.args);
