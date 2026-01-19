@@ -234,12 +234,10 @@ impl Provisioner for ShellProvisioner {
             .execute(&spec)
             .context("failed to execute provisioning script in chroot")?;
 
-        if let Some(status) = result.status
-            && !status.success()
-        {
+        if !result.success() {
             anyhow::bail!(
                 "provisioning script exited with non-zero status: {}. Spec: {:?}",
-                status,
+                result.status.unwrap(),
                 spec
             );
         }
