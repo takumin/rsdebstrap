@@ -45,9 +45,19 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Resul
         .build_args(&profile.dir)
         .with_context(|| format!("failed to build arguments for {}", command_name))?;
 
-    executor
-        .execute(command_name, &args)
+    let spec = executor::CommandSpec::new(command_name, args);
+    let result = executor
+        .execute(&spec)
         .with_context(|| format!("failed to execute {}", command_name))?;
+
+    if !result.success() {
+        anyhow::bail!(
+            "{} exited with non-zero status: {}. Spec: {:?}",
+            command_name,
+            result.status.expect("status should be present on failure"),
+            spec
+        );
+    }
 
     // Provisioning phase
     if !profile.provisioners.is_empty() {
