@@ -4,7 +4,6 @@ use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::backends::mmdebstrap;
 use rsdebstrap::config::{ProvisionerConfig, load_profile};
-use serial_test::serial;
 use tempfile::tempdir;
 
 #[test]
@@ -338,8 +337,10 @@ provisioners:
 }
 
 #[test]
-#[serial]
 fn test_shell_provisioner_path_resolution_with_relative_profile_path() -> Result<()> {
+    // Acquire global lock to prevent parallel CWD modifications
+    let _lock = helpers::CWD_TEST_LOCK.lock().unwrap();
+
     let temp_dir = tempdir()?;
     let profile_dir = temp_dir.path().join("configs");
     let scripts_dir = profile_dir.join("scripts");

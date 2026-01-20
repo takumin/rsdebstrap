@@ -4,8 +4,14 @@ use rsdebstrap::backends::debootstrap::DebootstrapConfig;
 use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
 use rsdebstrap::config::{Bootstrap, Profile, load_profile};
 use std::io::Write;
+use std::sync::{LazyLock, Mutex};
 use tempfile::NamedTempFile;
 use tracing::warn;
+
+/// Global mutex to serialize tests that modify the current working directory.
+/// This prevents parallel tests from interfering with each other.
+#[allow(dead_code)]
+pub static CWD_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[macro_export]
 macro_rules! yaml {

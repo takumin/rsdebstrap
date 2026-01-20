@@ -155,8 +155,9 @@ fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 /// ```
 #[tracing::instrument]
 pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
-    // Extract parent directory and filename to reduce TOCTOU vulnerability
-    // by canonicalizing only the directory, not the full path
+    // Extract filename first to validate path structure, then get parent directory.
+    // This ensures we can properly resolve relative paths to absolute ones for
+    // provisioner script resolution.
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("path has no filename: {}", path))?;
