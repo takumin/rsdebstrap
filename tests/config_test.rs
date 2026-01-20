@@ -374,3 +374,100 @@ provisioners:
 
     Ok(())
 }
+
+/// Helper function to test provisioner validation rejection with non-directory output
+fn test_provisioner_validation_rejects_target(target: &str) -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: {}
+provisioners:
+  - type: shell
+    content: echo "hello"
+"#,
+        target
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    let result = profile.validate();
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("provisioners require directory output"));
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_provisioners_with_tar_output() -> Result<()> {
+    test_provisioner_validation_rejects_target("rootfs.tar.zst")
+}
+
+#[test]
+fn test_profile_validation_accepts_provisioners_with_directory_output() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    content: echo "hello"
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    let result = profile.validate();
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_accepts_provisioners_with_debootstrap() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: debootstrap
+  suite: bookworm
+  target: rootfs
+provisioners:
+  - type: shell
+    content: echo "hello"
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    let result = profile.validate();
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_provisioners_with_squashfs_output() -> Result<()> {
+    test_provisioner_validation_rejects_target("rootfs.squashfs")
+}
