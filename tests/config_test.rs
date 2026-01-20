@@ -386,11 +386,12 @@ dir: /tmp/test
 bootstrap:
   type: mmdebstrap
   suite: bookworm
-  target: {target}
+  target: {}
 provisioners:
   - type: shell
     content: echo "hello"
-"#
+"#,
+        target
     )?;
     // editorconfig-checker-enable
 
