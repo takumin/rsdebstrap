@@ -7,7 +7,7 @@ pub mod provisioners;
 use std::fs;
 
 use anyhow::{Context, Result};
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
 use crate::executor::CommandExecutor;
@@ -63,28 +63,23 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Resul
     if !profile.provisioners.is_empty() {
         info!("starting provisioning phase with {} provisioner(s)", profile.provisioners.len());
 
-        // Determine rootfs path based on bootstrap configuration
-        match backend.rootfs_output(&profile.dir) {
-            Ok(backends::RootfsOutput::Directory(rootfs)) => {
-                for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
-                    info!("running provisioner {}/{}", index + 1, profile.provisioners.len());
-                    let provisioner = provisioner_config.as_provisioner();
-                    provisioner
-                        .provision(&rootfs, executor, opts.dry_run)
-                        .with_context(|| format!("failed to run provisioner {}", index + 1))?;
-                }
-
-                info!("provisioning phase completed successfully");
+        // Get rootfs directory (validation ensures it's a directory if provisioners exist)
+        let rootfs = match backend.rootfs_output(&profile.dir)? {
+            backends::RootfsOutput::Directory(rootfs) => rootfs,
+            backends::RootfsOutput::NonDirectory { .. } => {
+                unreachable!("validation should have caught provisioners with non-directory output")
             }
-            Ok(backends::RootfsOutput::NonDirectory { reason }) => warn!(
-                "skipping provisioners: {}. \
-                Provisioners are only supported for directory-based bootstrap targets. \
-                For archive-based targets (tar, squashfs, etc.), \
-                consider using backend-specific hooks instead.",
-                reason
-            ),
-            Err(e) => return Err(e),
+        };
+
+        for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
+            info!("running provisioner {}/{}", index + 1, profile.provisioners.len());
+            let provisioner = provisioner_config.as_provisioner();
+            provisioner
+                .provision(&rootfs, executor, opts.dry_run)
+                .with_context(|| format!("failed to run provisioner {}", index + 1))?;
         }
+
+        info!("provisioning phase completed successfully");
     }
 
     Ok(())
