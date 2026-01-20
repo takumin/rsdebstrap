@@ -65,9 +65,9 @@ impl CommandSpec {
 pub struct ExecutionResult {
     /// Exit status of the command (None in dry-run mode)
     pub status: Option<ExitStatus>,
-    /// Standard output (currently empty, reserved for future use)
+    /// Standard output captured from the command
     pub stdout: Vec<u8>,
-    /// Standard error (currently empty, reserved for future use)
+    /// Standard error captured from the command
     pub stderr: Vec<u8>,
 }
 
@@ -128,36 +128,38 @@ impl CommandExecutor for RealCommandExecutor {
             command.env(key, value);
         }
 
-        let mut child = match command.spawn() {
-            Ok(c) => c,
+        // Execute command and capture output
+        let output = match command.output() {
+            Ok(o) => o,
             Err(e) => {
                 anyhow::bail!(
-                    "failed to spawn command `{}` with args {:?}: {}",
+                    "failed to execute command `{}` with args {:?}: {}",
                     spec.command,
                     spec.args,
                     e
                 );
             }
         };
-        tracing::trace!("spawn command: {}: {}", spec.command, child.id());
+        tracing::trace!(
+            "executed command: {}: success={}",
+            spec.command,
+            output.status.success()
+        );
 
-        let status = match child.wait() {
-            Ok(c) => c,
-            Err(e) => {
-                anyhow::bail!(
-                    "failed to wait command `{}` with args {:?}: {}",
-                    spec.command,
-                    spec.args,
-                    e
-                );
-            }
-        };
-        tracing::trace!("wait command: {}: {}", spec.command, status.success());
+        // Log stderr if the command failed and produced output
+        if !output.status.success() && !output.stderr.is_empty() {
+            let stderr_text = String::from_utf8_lossy(&output.stderr);
+            tracing::debug!(
+                "command `{}` failed with stderr:\n{}",
+                spec.command,
+                stderr_text
+            );
+        }
 
         Ok(ExecutionResult {
-            status: Some(status),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
+            status: Some(output.status),
+            stdout: output.stdout,
+            stderr: output.stderr,
         })
     }
 }
