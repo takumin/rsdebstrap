@@ -237,7 +237,7 @@ impl Provisioner for ShellProvisioner {
         if !result.success() {
             anyhow::bail!(
                 "provisioning script exited with non-zero status: {}. Spec: {:?}",
-                result.status.unwrap(),
+                result.status.expect("status should be present on failure"),
                 spec
             );
         }
