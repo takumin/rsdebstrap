@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-use rsdebstrap::backends::debootstrap::DebootstrapConfig;
-use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
+use rsdebstrap::bootstrappers::debootstrap::DebootstrapConfig;
+use rsdebstrap::bootstrappers::mmdebstrap::MmdebstrapConfig;
 use rsdebstrap::config::{Bootstrap, Profile, load_profile};
 use std::io::Write;
 use std::sync::{LazyLock, Mutex};

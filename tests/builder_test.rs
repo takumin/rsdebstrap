@@ -2,8 +2,8 @@ mod helpers;
 
 use anyhow::Result;
 use camino::Utf8PathBuf;
-use rsdebstrap::backends::BootstrapBackend;
-use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
+use rsdebstrap::bootstrappers::BootstrapBackend;
+use rsdebstrap::bootstrappers::mmdebstrap::MmdebstrapConfig;
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
 
 #[test]
@@ -88,7 +88,7 @@ fn test_build_mmdebstrap_args_with_mirrors() -> Result<()> {
 
 #[test]
 fn test_build_debootstrap_args() -> Result<()> {
-    use rsdebstrap::backends::debootstrap::{DebootstrapConfig, Variant};
+    use rsdebstrap::bootstrappers::debootstrap::{DebootstrapConfig, Variant};
 
     let config = DebootstrapConfig {
         suite: "trixie".to_string(),
@@ -134,7 +134,7 @@ fn test_build_debootstrap_args() -> Result<()> {
 
 #[test]
 fn test_build_mmdebstrap_args_with_non_default_values() -> Result<()> {
-    use rsdebstrap::backends::mmdebstrap::{Format, Mode, Variant};
+    use rsdebstrap::bootstrappers::mmdebstrap::{Format, Mode, Variant};
 
     let config = MmdebstrapConfig {
         suite: "bookworm".to_string(),
@@ -183,7 +183,7 @@ fn test_build_mmdebstrap_args_with_non_default_values() -> Result<()> {
 
 #[test]
 fn test_build_debootstrap_args_with_non_default_variant() -> Result<()> {
-    use rsdebstrap::backends::debootstrap::{DebootstrapConfig, Variant};
+    use rsdebstrap::bootstrappers::debootstrap::{DebootstrapConfig, Variant};
 
     let config = DebootstrapConfig {
         suite: "bookworm".to_string(),

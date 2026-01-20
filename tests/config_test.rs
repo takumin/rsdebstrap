@@ -2,7 +2,7 @@ mod helpers;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use rsdebstrap::backends::mmdebstrap;
+use rsdebstrap::bootstrappers::mmdebstrap;
 use rsdebstrap::config::{ProvisionerConfig, load_profile};
 use tempfile::tempdir;
 
@@ -183,7 +183,7 @@ bootstrap:
     assert_eq!(profile.dir, "/tmp/debian-debootstrap-test");
 
     let cfg = helpers::get_debootstrap_config(&profile);
-    use rsdebstrap::backends::debootstrap::Variant;
+    use rsdebstrap::bootstrappers::debootstrap::Variant;
 
     assert_eq!(cfg.suite, "trixie");
     assert_eq!(cfg.target, "rootfs");
