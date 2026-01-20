@@ -1,7 +1,10 @@
 use anyhow::Result;
 use std::ffi::OsString;
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use which::which;
 
 /// Specification for a command to be executed
@@ -128,30 +131,89 @@ impl CommandExecutor for RealCommandExecutor {
             command.env(key, value);
         }
 
-        // Execute command and capture output
-        let output = match command.output() {
-            Ok(o) => o,
+        // Configure stdout and stderr to be captured
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+
+        // Spawn the command
+        let mut child = match command.spawn() {
+            Ok(c) => c,
             Err(e) => {
                 anyhow::bail!(
-                    "failed to execute command `{}` with args {:?}: {}",
+                    "failed to spawn command `{}` with args {:?}: {}",
                     spec.command,
                     spec.args,
                     e
                 );
             }
         };
-        tracing::trace!("executed command: {}: success={}", spec.command, output.status.success());
+        tracing::trace!("spawn command: {}: {}", spec.command, child.id());
+
+        // Read stdout and stderr concurrently using threads to avoid deadlocks.
+        // Note: This still buffers the entire output in memory for diagnostic purposes.
+        // For commands producing very large outputs, consider streaming to a file instead.
+        let (tx_stdout, rx_stdout) = mpsc::channel();
+        let (tx_stderr, rx_stderr) = mpsc::channel();
+
+        let stdout_handle = child.stdout.take().map(|mut pipe| {
+            thread::spawn(move || {
+                let mut buffer = Vec::new();
+                if let Err(e) = pipe.read_to_end(&mut buffer) {
+                    tracing::warn!("failed to read stdout: {}", e);
+                }
+                let _ = tx_stdout.send(buffer);
+            })
+        });
+
+        let stderr_handle = child.stderr.take().map(|mut pipe| {
+            thread::spawn(move || {
+                let mut buffer = Vec::new();
+                if let Err(e) = pipe.read_to_end(&mut buffer) {
+                    tracing::warn!("failed to read stderr: {}", e);
+                }
+                let _ = tx_stderr.send(buffer);
+            })
+        });
+
+        // Wait for threads to finish reading
+        let stdout = if let Some(handle) = stdout_handle {
+            let _ = handle.join();
+            rx_stdout.recv().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        let stderr = if let Some(handle) = stderr_handle {
+            let _ = handle.join();
+            rx_stderr.recv().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        // Wait for the command to complete
+        let status = match child.wait() {
+            Ok(s) => s,
+            Err(e) => {
+                anyhow::bail!(
+                    "failed to wait for command `{}` with args {:?}: {}",
+                    spec.command,
+                    spec.args,
+                    e
+                );
+            }
+        };
+        tracing::trace!("wait command: {}: {}", spec.command, status.success());
 
         // Log stderr if the command failed and produced output
-        if !output.status.success() && !output.stderr.is_empty() {
-            let stderr_text = String::from_utf8_lossy(&output.stderr);
+        if !status.success() && !stderr.is_empty() {
+            let stderr_text = String::from_utf8_lossy(&stderr);
             tracing::debug!("command `{}` failed with stderr:\n{}", spec.command, stderr_text);
         }
 
         Ok(ExecutionResult {
-            status: Some(output.status),
-            stdout: output.stdout,
-            stderr: output.stderr,
+            status: Some(status),
+            stdout,
+            stderr,
         })
     }
 }

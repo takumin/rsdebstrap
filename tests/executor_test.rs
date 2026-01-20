@@ -36,7 +36,7 @@ fn successful_command_captures_stdout() {
 
     assert!(result.success(), "echo command should return success");
     let stdout_text = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout_text.contains("hello world"), "stdout should contain the echoed text");
+    assert_eq!(stdout_text.trim(), "hello world", "stdout should contain the echoed text");
 }
 
 #[test]
@@ -78,9 +78,9 @@ fn command_with_stderr_output() {
     assert!(!result.success(), "command with exit 1 should fail");
     assert!(!result.stderr.is_empty(), "stderr should contain error output");
     let stderr_text = String::from_utf8_lossy(&result.stderr);
-    assert!(
-        stderr_text.contains("error message"),
-        "stderr should include error message: {}",
-        stderr_text
+    assert_eq!(
+        stderr_text.trim(),
+        "error message",
+        "stderr should include error message"
     );
 }
