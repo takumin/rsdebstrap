@@ -165,9 +165,12 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     let reader = BufReader::new(file);
     let mut profile: Profile = serde_yaml::from_reader(reader)
         .with_context(|| format!("failed to parse yaml: {}", path))?;
-    let profile_dir = canonical_path
-        .parent()
-        .unwrap_or_else(|| Utf8Path::new("."));
+    let profile_dir = canonical_path.parent().with_context(|| {
+        format!(
+            "failed to determine parent directory for profile: {}",
+            canonical_path
+        )
+    })?;
     resolve_provisioner_paths(&mut profile, profile_dir);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)

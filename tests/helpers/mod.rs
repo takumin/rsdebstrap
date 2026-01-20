@@ -1,5 +1,5 @@
 use anyhow::Result;
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::backends::debootstrap::DebootstrapConfig;
 use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
 use rsdebstrap::config::{Bootstrap, Profile, load_profile};
@@ -170,4 +170,42 @@ pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
     }
     let path = Utf8Path::from_path(file.path()).expect("temp file path should be valid");
     load_profile(path)
+}
+
+/// RAII guard that restores the current working directory when dropped.
+///
+/// This guard saves the current directory on creation and automatically
+/// restores it when it goes out of scope, even if a panic occurs.
+#[allow(dead_code)]
+pub struct CwdGuard {
+    original: Utf8PathBuf,
+}
+
+impl CwdGuard {
+    /// Creates a new CwdGuard, saving the current working directory.
+    ///
+    /// # Errors
+    /// Returns an error if the current directory cannot be determined.
+    pub fn new() -> Result<Self> {
+        let original = std::env::current_dir()?;
+        let original = Utf8PathBuf::from_path_buf(original)
+            .map_err(|_| anyhow::anyhow!("current directory path is not valid UTF-8"))?;
+        Ok(Self { original })
+    }
+
+    /// Changes the current working directory to the specified path.
+    ///
+    /// # Errors
+    /// Returns an error if the directory change fails.
+    pub fn change_to(&self, path: &std::path::Path) -> Result<()> {
+        std::env::set_current_dir(path)?;
+        Ok(())
+    }
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        // Best effort to restore - if it fails, there's nothing we can do
+        let _ = std::env::set_current_dir(&self.original);
+    }
 }

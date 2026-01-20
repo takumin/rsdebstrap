@@ -4,6 +4,7 @@ use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::backends::mmdebstrap;
 use rsdebstrap::config::{ProvisionerConfig, load_profile};
+use serial_test::serial;
 use tempfile::tempdir;
 
 #[test]
@@ -337,6 +338,7 @@ provisioners:
 }
 
 #[test]
+#[serial]
 fn test_shell_provisioner_path_resolution_with_relative_profile_path() -> Result<()> {
     let temp_dir = tempdir()?;
     let profile_dir = temp_dir.path().join("configs");
@@ -368,21 +370,15 @@ provisioners:
     )?;
     // editorconfig-checker-enable
 
-    // Save the current working directory
-    let original_cwd = std::env::current_dir()?;
-
-    // Change to the temp directory (not the profile dir)
-    std::env::set_current_dir(temp_dir.path())?;
+    // Use RAII guard to automatically restore working directory
+    let cwd_guard = helpers::CwdGuard::new()?;
+    cwd_guard.change_to(temp_dir.path())?;
 
     // Load profile using relative path from the new working directory
     let relative_profile_path = Utf8Path::new("configs/profile.yml");
-    let profile = load_profile(relative_profile_path);
+    let profile = load_profile(relative_profile_path)?;
 
-    // Restore original working directory before asserting
-    std::env::set_current_dir(&original_cwd)?;
-
-    // Now verify the results
-    let profile = profile?;
+    // CwdGuard will automatically restore the original directory when dropped
 
     // Verify the script path is absolute
     match &profile.provisioners[..] {
