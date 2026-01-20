@@ -399,7 +399,6 @@ provisioners:
     let profile = load_profile(path)?;
 
     let result = profile.validate();
-    assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("provisioners require directory output"));
 
