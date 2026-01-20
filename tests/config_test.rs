@@ -330,10 +330,7 @@ bootstrap:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    assert_eq!(
-        profile.dir,
-        Utf8PathBuf::from_path_buf(profile_dir.join("output")).unwrap()
-    );
+    assert_eq!(profile.dir, Utf8PathBuf::from_path_buf(profile_dir.join("output")).unwrap());
 
     Ok(())
 }
