@@ -54,7 +54,7 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Resul
         anyhow::bail!(
             "{} exited with non-zero status: {}. Spec: {:?}",
             command_name,
-            result.status.unwrap(),
+            result.status.expect("status should be present on failure"),
             spec
         );
     }
