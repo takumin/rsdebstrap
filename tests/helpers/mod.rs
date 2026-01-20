@@ -1,6 +1,87 @@
+use anyhow::Result;
+use camino::Utf8Path;
 use rsdebstrap::backends::debootstrap::DebootstrapConfig;
 use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
-use rsdebstrap::config::{Bootstrap, Profile};
+use rsdebstrap::config::{Bootstrap, Profile, load_profile};
+use std::io::Write;
+use tempfile::NamedTempFile;
+
+#[macro_export]
+macro_rules! yaml {
+    ($content:literal) => {
+        $crate::helpers::dedent($content)
+    };
+}
+
+#[allow(dead_code)]
+pub fn dedent(input: &str) -> String {
+    let mut lines: Vec<&str> = input.lines().collect();
+    while matches!(lines.first(), Some(line) if line.trim().is_empty()) {
+        lines.remove(0);
+    }
+    while matches!(lines.last(), Some(line) if line.trim().is_empty()) {
+        lines.pop();
+    }
+
+    let min_indent = lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            line.as_bytes()
+                .iter()
+                .take_while(|ch| **ch == b' ' || **ch == b'\t')
+                .count()
+        })
+        .min()
+        .unwrap_or(0);
+
+    let mut out = String::new();
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = if line.len() >= min_indent {
+            &line[min_indent..]
+        } else {
+            ""
+        };
+        out.push_str(trimmed);
+        if idx + 1 < lines.len() {
+            out.push('\n');
+        }
+    }
+    out.push('\n');
+    out
+}
+
+/// Minimal mmdebstrap profile YAML fixture (for future tests).
+#[allow(dead_code)]
+pub fn yaml_profile_mmdebstrap_minimal() -> String {
+    // editorconfig-checker-disable
+    dedent(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+"#,
+    )
+    // editorconfig-checker-enable
+}
+
+/// Minimal debootstrap profile YAML fixture (for future tests).
+#[allow(dead_code)]
+pub fn yaml_profile_debootstrap_minimal() -> String {
+    // editorconfig-checker-disable
+    dedent(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: debootstrap
+  suite: bookworm
+  target: rootfs
+"#,
+    )
+    // editorconfig-checker-enable
+}
 
 /// Test helper to create a MmdebstrapConfig with minimal required fields.
 ///
@@ -76,4 +157,17 @@ pub fn get_debootstrap_config(profile: &Profile) -> &DebootstrapConfig {
     } else {
         panic!("Expected debootstrap bootstrap type");
     }
+}
+
+/// Loads a Profile from YAML content in a temporary file.
+#[allow(dead_code)]
+pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
+    let yaml = yaml.as_ref();
+    let mut file = NamedTempFile::new()?;
+    file.write_all(yaml.as_bytes())?;
+    if !yaml.ends_with('\n') {
+        writeln!(file)?;
+    }
+    let path = Utf8Path::from_path(file.path()).expect("temp file path should be valid");
+    load_profile(path)
 }

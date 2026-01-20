@@ -4,15 +4,12 @@ use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::backends::mmdebstrap;
 use rsdebstrap::config::{ProvisionerConfig, load_profile};
-use std::io::Write;
-use tempfile::{NamedTempFile, tempdir};
+use tempfile::tempdir;
 
 #[test]
 fn test_load_profile_basic() -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 bootstrap:
@@ -20,11 +17,8 @@ bootstrap:
   suite: bookworm
   target: rootfs.tar.zst
 "#
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     assert_eq!(profile.dir, "/tmp/test");
 
@@ -51,10 +45,8 @@ bootstrap:
 
 #[test]
 fn test_load_profile_full() -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/debian-test
 bootstrap:
@@ -84,11 +76,8 @@ bootstrap:
   customize_hook:
   - 'echo customize'
 "#
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     assert_eq!(profile.dir, "/tmp/debian-test");
 
@@ -122,19 +111,14 @@ fn test_load_profile_invalid_file() {
 
 #[test]
 fn test_load_profile_invalid_yaml() -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 invalid: yaml
   no_proper_structure
 "#
-    )?;
+    ));
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let result = load_profile(path);
     assert!(result.is_err());
 
     Ok(())
@@ -142,10 +126,8 @@ invalid: yaml
 
 #[test]
 fn test_load_profile_with_mirrors() -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/debian-mirror-test
 bootstrap:
@@ -156,11 +138,8 @@ bootstrap:
   - 'http://ftp.jp.debian.org/debian'
   - 'http://security.debian.org/debian-security'
 "#
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     assert_eq!(profile.dir, "/tmp/debian-mirror-test");
 
@@ -180,10 +159,8 @@ bootstrap:
 
 #[test]
 fn test_load_profile_debootstrap() -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/debian-debootstrap-test
 bootstrap:
@@ -200,11 +177,8 @@ bootstrap:
   mirror: 'https://deb.debian.org/debian'
   merged_usr: true
 "#
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     assert_eq!(profile.dir, "/tmp/debian-debootstrap-test");
 
@@ -225,10 +199,8 @@ bootstrap:
 
 #[test]
 fn test_profile_validation_rejects_incomplete_shell_provisioner() -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 bootstrap:
@@ -238,11 +210,8 @@ bootstrap:
 provisioners:
   - type: shell
 "#
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     assert!(profile.validate().is_err());
 
@@ -251,10 +220,8 @@ provisioners:
 
 #[test]
 fn test_profile_validation_rejects_shell_provisioner_with_script_and_content() -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 bootstrap:
@@ -266,11 +233,8 @@ provisioners:
     script: /tmp/provision.sh
     content: echo "hello"
 "#
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     assert!(profile.validate().is_err());
 
@@ -279,11 +243,9 @@ provisioners:
 
 #[test]
 fn test_profile_validation_rejects_dir_file() -> Result<()> {
-    let dir_file = NamedTempFile::new()?;
-    let mut file = NamedTempFile::new()?;
+    let dir_file = tempfile::NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(&format!(
         r#"---
 dir: {}
 bootstrap:
@@ -292,11 +254,8 @@ bootstrap:
   target: rootfs.tar.zst
 "#,
         dir_file.path().display()
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     assert!(profile.validate().is_err());
 
@@ -312,11 +271,11 @@ fn test_load_profile_resolves_shell_script_relative_to_profile_dir() -> Result<(
     let script_path = scripts_dir.join("provision.sh");
     std::fs::write(&script_path, "#!/bin/sh\necho hello\n")?;
 
-    let mut file = std::fs::File::create(&profile_path)?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
-        r#"---
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
 dir: /tmp/test
 bootstrap:
   type: mmdebstrap
@@ -326,6 +285,7 @@ provisioners:
   - type: shell
     script: scripts/provision.sh
 "#
+        ),
     )?;
     // editorconfig-checker-enable
 
@@ -350,11 +310,11 @@ fn test_shell_provisioner_validation_requires_script_file() -> Result<()> {
     let temp_dir = tempdir()?;
     let profile_path = temp_dir.path().join("profile.yml");
 
-    let mut file = std::fs::File::create(&profile_path)?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
-        r#"---
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
 dir: /tmp/test
 bootstrap:
   type: mmdebstrap
@@ -364,6 +324,7 @@ provisioners:
   - type: shell
     script: scripts/missing.sh
 "#
+        ),
     )?;
     // editorconfig-checker-enable
 
@@ -377,10 +338,8 @@ provisioners:
 
 /// Helper function to test provisioner validation rejection with non-directory output
 fn test_provisioner_validation_rejects_target(target: &str) -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(&format!(
         r#"---
 dir: /tmp/test
 bootstrap:
@@ -392,11 +351,8 @@ provisioners:
     content: echo "hello"
 "#,
         target
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     let result = profile.validate();
     let err_msg = result.unwrap_err().to_string();
@@ -412,10 +368,8 @@ fn test_profile_validation_rejects_provisioners_with_tar_output() -> Result<()> 
 
 #[test]
 fn test_profile_validation_accepts_provisioners_with_directory_output() -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 bootstrap:
@@ -427,11 +381,8 @@ provisioners:
   - type: shell
     content: echo "hello"
 "#
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     let result = profile.validate();
     assert!(result.is_ok());
@@ -441,10 +392,8 @@ provisioners:
 
 #[test]
 fn test_profile_validation_accepts_provisioners_with_debootstrap() -> Result<()> {
-    let mut file = NamedTempFile::new()?;
     // editorconfig-checker-disable
-    writeln!(
-        file,
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 bootstrap:
@@ -455,11 +404,8 @@ provisioners:
   - type: shell
     content: echo "hello"
 "#
-    )?;
+    ))?;
     // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(file.path()).unwrap();
-    let profile = load_profile(path)?;
 
     let result = profile.validate();
     assert!(result.is_ok());
