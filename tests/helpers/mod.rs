@@ -5,6 +5,7 @@ use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
 use rsdebstrap::config::{Bootstrap, Profile, load_profile};
 use std::io::Write;
 use tempfile::NamedTempFile;
+use tracing::warn;
 
 #[macro_export]
 macro_rules! yaml {
@@ -211,9 +212,10 @@ impl Drop for CwdGuard {
     fn drop(&mut self) {
         // Best effort to restore - log warning if it fails for debugging
         if let Err(err) = std::env::set_current_dir(&self.original) {
-            eprintln!(
-                "Warning: failed to restore working directory to {}: {}",
-                self.original, err
+            warn!(
+                original = %self.original,
+                error = %err,
+                "failed to restore working directory"
             );
         }
     }

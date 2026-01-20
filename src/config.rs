@@ -160,11 +160,11 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
         .canonicalize_utf8()
         .with_context(|| format!("failed to canonicalize path: {}", path))?;
 
-    let file =
-        File::open(&canonical_path).with_context(|| format!("failed to load file: {}", path))?;
+    let file = File::open(&canonical_path)
+        .with_context(|| format!("failed to load file: {}", canonical_path))?;
     let reader = BufReader::new(file);
     let mut profile: Profile = serde_yaml::from_reader(reader)
-        .with_context(|| format!("failed to parse yaml: {}", path))?;
+        .with_context(|| format!("failed to parse yaml: {}", canonical_path))?;
     let profile_dir = canonical_path.parent().with_context(|| {
         format!(
             "failed to determine parent directory for profile: {}",
