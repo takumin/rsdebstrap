@@ -155,23 +155,30 @@ fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 /// ```
 #[tracing::instrument]
 pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
-    // Canonicalize the path to ensure profile_dir is always absolute
-    let canonical_path = path
+    // Extract parent directory and filename to reduce TOCTOU vulnerability
+    // by canonicalizing only the directory, not the full path
+    let profile_dir = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("path has no parent directory: {}", path))?;
+    let filename = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("path has no filename: {}", path))?;
+
+    // Canonicalize only the parent directory to ensure it's absolute
+    let canonical_dir = profile_dir
         .canonicalize_utf8()
-        .with_context(|| format!("failed to canonicalize path: {}", path))?;
+        .with_context(|| format!("failed to canonicalize directory: {}", profile_dir))?;
+
+    // Construct the full path from canonicalized directory + filename
+    let canonical_path = canonical_dir.join(filename);
 
     let file = File::open(&canonical_path)
         .with_context(|| format!("failed to load file: {}", canonical_path))?;
     let reader = BufReader::new(file);
     let mut profile: Profile = serde_yaml::from_reader(reader)
         .with_context(|| format!("failed to parse yaml: {}", canonical_path))?;
-    let profile_dir = canonical_path.parent().with_context(|| {
-        format!(
-            "failed to determine parent directory for profile: {}",
-            canonical_path
-        )
-    })?;
-    resolve_provisioner_paths(&mut profile, profile_dir);
+
+    resolve_provisioner_paths(&mut profile, &canonical_dir);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
 }
