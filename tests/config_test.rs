@@ -380,20 +380,15 @@ provisioners:
 
     // CwdGuard will automatically restore the original directory when dropped
 
-    // Verify the script path is absolute
+    // Verify the script path resolves to the expected absolute path
+    let expected_script_path =
+        Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
     match &profile.provisioners[..] {
         [ProvisionerConfig::Shell(shell)] => {
             let script = shell.script.as_ref().expect("script should be set");
-            assert!(
-                script.is_absolute(),
-                "Script path should be absolute, got: {}",
-                script
-            );
-            // Verify it points to the correct file
-            assert!(
-                script.ends_with("scripts/test.sh"),
-                "Script path should end with scripts/test.sh, got: {}",
-                script
+            assert_eq!(
+                script, &expected_script_path,
+                "Script path should resolve to the expected absolute path"
             );
         }
         _ => panic!("expected one shell provisioner"),
