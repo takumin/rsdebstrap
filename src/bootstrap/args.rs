@@ -1,4 +1,4 @@
-//! Shared command argument builder utilities for backends.
+//! Shared command argument builder utilities for bootstrap backends.
 
 use std::ffi::OsString;
 
@@ -11,7 +11,7 @@ pub enum FlagValueStyle {
     Equals,
 }
 
-/// Builder for assembling command arguments consistently across backends.
+/// Builder for assembling command arguments consistently across bootstrap backends.
 #[derive(Debug, Default)]
 pub struct CommandArgsBuilder {
     args: Vec<OsString>,

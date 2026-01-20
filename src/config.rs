@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::BufReader;
 use tracing::debug;
 
-use crate::backends::{
+use crate::bootstrap::{
     BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
 use crate::provisioners::{Provisioner, shell::ShellProvisioner};
