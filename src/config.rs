@@ -172,8 +172,8 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     let mut profile: Profile = serde_yaml::from_reader(reader)
         .with_context(|| format!("failed to parse yaml: {}", canonical_path))?;
 
-    // Derive profile directory from the canonical path for resolving relative paths.
-    // Since canonical_path is a file path, parent() is guaranteed to return Some.
+    // While parent() should always return Some for canonical file paths,
+    // we handle None for defensive programming
     let profile_dir = canonical_path.parent().with_context(|| {
         format!("could not determine parent directory of profile path: {}", canonical_path)
     })?;
