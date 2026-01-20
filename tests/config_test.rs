@@ -245,7 +245,7 @@ provisioners:
 fn test_profile_validation_rejects_dir_file() -> Result<()> {
     let dir_file = tempfile::NamedTempFile::new()?;
     // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(&format!(
+    let profile = helpers::load_profile_from_yaml(format!(
         r#"---
 dir: {}
 bootstrap:
@@ -431,7 +431,7 @@ provisioners:
 /// Helper function to test provisioner validation rejection with non-directory output
 fn test_provisioner_validation_rejects_target(target: &str) -> Result<()> {
     // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(&format!(
+    let profile = helpers::load_profile_from_yaml(format!(
         r#"---
 dir: /tmp/test
 bootstrap:
