@@ -196,10 +196,7 @@ impl CwdGuard {
     pub fn new() -> Result<Self> {
         let original = std::env::current_dir()?;
         let original = Utf8PathBuf::from_path_buf(original).map_err(|path| {
-            anyhow::anyhow!(
-                "current directory path is not valid UTF-8: {}",
-                path.display()
-            )
+            anyhow::anyhow!("current directory path is not valid UTF-8: {}", path.display())
         })?;
         Ok(Self { original })
     }
