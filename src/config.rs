@@ -75,19 +75,12 @@ impl Profile {
         // Validate provisioners are compatible with bootstrap output format
         if !self.provisioners.is_empty() {
             let backend = self.bootstrap.as_backend();
-            match backend.rootfs_output(&self.dir)? {
-                RootfsOutput::Directory(_) => {
-                    // This is fine - provisioners can run on directory output
-                }
-                RootfsOutput::NonDirectory { reason } => {
-                    bail!(
-                        "provisioners are specified but bootstrap output is not a directory: {}. \
-                        Provisioners require a directory-based bootstrap target. \
-                        For archive-based targets (tar, squashfs, etc.), \
-                        consider using backend-specific hooks instead or change the output format to directory.",
-                        reason
-                    );
-                }
+            if let RootfsOutput::NonDirectory { reason } = backend.rootfs_output(&self.dir)? {
+                bail!(
+                    "provisioners require directory output but got: {}. \
+                    Use backend-specific hooks or change format to directory.",
+                    reason
+                );
             }
         }
 
