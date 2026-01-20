@@ -159,22 +159,12 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 /// ```
 #[tracing::instrument]
 pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
-    // Extract filename first to validate path structure, then get parent directory.
-    // This ensures we can properly resolve relative paths to absolute ones for
-    // provisioner script resolution.
-    let filename = path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("path has no filename: {}", path))?;
-    // If path has a filename, it's guaranteed to have a parent
-    let profile_dir = path.parent().unwrap();
-
-    // Canonicalize only the parent directory to ensure it's absolute
-    let canonical_dir = profile_dir
+    // Canonicalize the entire path first to resolve all symlinks and get the true absolute path.
+    // This ensures relative paths in the profile are resolved relative to the actual file location,
+    // not the symlink location.
+    let canonical_path = path
         .canonicalize_utf8()
-        .with_context(|| format!("failed to canonicalize directory: {}", profile_dir))?;
-
-    // Construct the full path from canonicalized directory + filename
-    let canonical_path = canonical_dir.join(filename);
+        .with_context(|| format!("failed to canonicalize path: {}", path))?;
 
     let file = File::open(&canonical_path)
         .with_context(|| format!("failed to load file: {}", canonical_path))?;
@@ -182,7 +172,10 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     let mut profile: Profile = serde_yaml::from_reader(reader)
         .with_context(|| format!("failed to parse yaml: {}", canonical_path))?;
 
-    resolve_provisioner_paths(&mut profile, &canonical_dir);
+    // Derive profile directory from the canonical path for resolving relative paths.
+    // Since canonical_path is a file path, parent() is guaranteed to return Some.
+    let profile_dir = canonical_path.parent().unwrap();
+    resolve_profile_paths(&mut profile, profile_dir);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
 }
