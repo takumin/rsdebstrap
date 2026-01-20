@@ -118,7 +118,11 @@ impl ProvisionerConfig {
     }
 }
 
-fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
+fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
+    if profile.dir.is_relative() {
+        profile.dir = profile_dir.join(&profile.dir);
+    }
+
     for provisioner in &mut profile.provisioners {
         match provisioner {
             ProvisionerConfig::Shell(shell) => {
@@ -160,7 +164,7 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     let mut profile: Profile = serde_yaml::from_reader(reader)
         .with_context(|| format!("failed to parse yaml: {}", path))?;
     let profile_dir = path.parent().unwrap_or_else(|| Utf8Path::new("."));
-    resolve_provisioner_paths(&mut profile, profile_dir);
+    resolve_profile_paths(&mut profile, profile_dir);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
 }
