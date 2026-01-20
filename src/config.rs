@@ -174,7 +174,9 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
 
     // Derive profile directory from the canonical path for resolving relative paths.
     // Since canonical_path is a file path, parent() is guaranteed to return Some.
-    let profile_dir = canonical_path.parent().unwrap();
+    let profile_dir = canonical_path.parent().with_context(|| {
+        format!("could not determine parent directory of profile path: {}", canonical_path)
+    })?;
     resolve_profile_paths(&mut profile, profile_dir);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
