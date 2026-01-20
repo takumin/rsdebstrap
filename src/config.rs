@@ -15,7 +15,7 @@ use std::io::BufReader;
 use tracing::debug;
 
 use crate::backends::{
-    BootstrapBackend, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
+    BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
 use crate::provisioners::{Provisioner, shell::ShellProvisioner};
 
@@ -71,6 +71,26 @@ impl Profile {
                 .validate()
                 .with_context(|| format!("provisioner {} validation failed", index + 1))?;
         }
+
+        // Validate provisioners are compatible with bootstrap output format
+        if !self.provisioners.is_empty() {
+            let backend = self.bootstrap.as_backend();
+            match backend.rootfs_output(&self.dir)? {
+                RootfsOutput::Directory(_) => {
+                    // This is fine - provisioners can run on directory output
+                }
+                RootfsOutput::NonDirectory { reason } => {
+                    bail!(
+                        "provisioners are specified but bootstrap output is not a directory: {}. \
+                        Provisioners require a directory-based bootstrap target. \
+                        For archive-based targets (tar, squashfs, etc.), \
+                        consider using backend-specific hooks instead or change the output format to directory.",
+                        reason
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 }

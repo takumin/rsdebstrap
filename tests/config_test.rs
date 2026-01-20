@@ -374,3 +374,122 @@ provisioners:
 
     Ok(())
 }
+
+#[test]
+fn test_profile_validation_rejects_provisioners_with_tar_output() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+provisioners:
+  - type: shell
+    content: echo "hello"
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    let result = profile.validate();
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("provisioners are specified"));
+    assert!(err_msg.contains("not a directory"));
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_accepts_provisioners_with_directory_output() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    content: echo "hello"
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    let result = profile.validate();
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_accepts_provisioners_with_debootstrap() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: debootstrap
+  suite: bookworm
+  target: rootfs
+provisioners:
+  - type: shell
+    content: echo "hello"
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    let result = profile.validate();
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_provisioners_with_squashfs_output() -> Result<()> {
+    let mut file = NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    writeln!(
+        file,
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.squashfs
+provisioners:
+  - type: shell
+    content: echo "hello"
+"#
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(file.path()).unwrap();
+    let profile = load_profile(path)?;
+
+    let result = profile.validate();
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("provisioners are specified"));
+    assert!(err_msg.contains("not a directory"));
+
+    Ok(())
+}
