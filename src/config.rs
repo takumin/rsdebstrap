@@ -118,7 +118,11 @@ impl ProvisionerConfig {
     }
 }
 
-fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
+fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
+    if profile.dir.is_relative() {
+        profile.dir = profile_dir.join(&profile.dir);
+    }
+
     for provisioner in &mut profile.provisioners {
         match provisioner {
             ProvisionerConfig::Shell(shell) => {
