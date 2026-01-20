@@ -188,6 +188,7 @@ pub struct CwdGuard {
     original: Utf8PathBuf,
 }
 
+#[allow(dead_code)]
 impl CwdGuard {
     /// Creates a new CwdGuard, saving the current working directory.
     ///
