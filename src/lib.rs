@@ -64,7 +64,8 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Resul
         info!("starting provisioning phase with {} provisioner(s)", profile.provisioners.len());
 
         // Get rootfs directory (validation ensures it's a directory if provisioners exist)
-        let bootstrap::RootfsOutput::Directory(rootfs) = backend.rootfs_output(&profile.dir)? else {
+        let bootstrap::RootfsOutput::Directory(rootfs) = backend.rootfs_output(&profile.dir)?
+        else {
             unreachable!("validation should have caught provisioners with non-directory output")
         };
 
