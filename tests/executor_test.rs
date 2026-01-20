@@ -36,34 +36,24 @@ fn successful_command_captures_stdout() {
 
     assert!(result.success(), "echo command should return success");
     let stdout_text = String::from_utf8_lossy(&result.stdout);
-    assert!(
-        stdout_text.contains("hello world"),
-        "stdout should contain the echoed text"
-    );
+    assert!(stdout_text.contains("hello world"), "stdout should contain the echoed text");
 }
 
 #[test]
 fn failed_command_captures_stderr() {
     let executor = RealCommandExecutor { dry_run: false };
     // ls with a non-existent file should fail and write to stderr
-    let spec = CommandSpec::new(
-        "ls",
-        vec![OsString::from("/this/path/definitely/does/not/exist")],
-    );
+    let spec = CommandSpec::new("ls", vec![OsString::from("/this/path/definitely/does/not/exist")]);
 
     let result = executor
         .execute(&spec)
         .expect("executor should return Ok even when command fails");
 
     assert!(!result.success(), "ls on non-existent path should fail");
-    assert!(
-        !result.stderr.is_empty(),
-        "stderr should contain error output"
-    );
+    assert!(!result.stderr.is_empty(), "stderr should contain error output");
     let stderr_text = String::from_utf8_lossy(&result.stderr);
     assert!(
-        stderr_text.contains("No such file or directory")
-            || stderr_text.contains("cannot access"),
+        stderr_text.contains("No such file or directory") || stderr_text.contains("cannot access"),
         "stderr should contain error details: {}",
         stderr_text
     );
@@ -86,10 +76,7 @@ fn command_with_stderr_output() {
         .expect("executor should return Ok even when command fails");
 
     assert!(!result.success(), "command with exit 1 should fail");
-    assert!(
-        !result.stderr.is_empty(),
-        "stderr should contain error output"
-    );
+    assert!(!result.stderr.is_empty(), "stderr should contain error output");
     let stderr_text = String::from_utf8_lossy(&result.stderr);
     assert!(
         stderr_text.contains("error message"),
