@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::backends::debootstrap::DebootstrapConfig;
 use rsdebstrap::backends::mmdebstrap::MmdebstrapConfig;
@@ -206,8 +206,8 @@ impl CwdGuard {
     /// # Errors
     /// Returns an error if the directory change fails.
     pub fn change_to(&self, path: &std::path::Path) -> Result<()> {
-        std::env::set_current_dir(path)?;
-        Ok(())
+        std::env::set_current_dir(path)
+            .with_context(|| format!("failed to change directory to {}", path.display()))
     }
 }
 
