@@ -118,7 +118,11 @@ impl ProvisionerConfig {
     }
 }
 
-fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
+fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
+    if profile.dir.is_relative() {
+        profile.dir = profile_dir.join(&profile.dir);
+    }
+
     for provisioner in &mut profile.provisioners {
         match provisioner {
             ProvisionerConfig::Shell(shell) => {
@@ -155,12 +159,25 @@ fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 /// ```
 #[tracing::instrument]
 pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
-    let file = File::open(path).with_context(|| format!("failed to load file: {}", path))?;
+    // Canonicalize the entire path first to resolve all symlinks and get the true absolute path.
+    // This ensures relative paths in the profile are resolved relative to the actual file location,
+    // not the symlink location.
+    let canonical_path = path
+        .canonicalize_utf8()
+        .with_context(|| format!("failed to canonicalize path: {}", path))?;
+
+    let file = File::open(&canonical_path)
+        .with_context(|| format!("failed to load file: {}", canonical_path))?;
     let reader = BufReader::new(file);
     let mut profile: Profile = serde_yaml::from_reader(reader)
-        .with_context(|| format!("failed to parse yaml: {}", path))?;
-    let profile_dir = path.parent().unwrap_or_else(|| Utf8Path::new("."));
-    resolve_provisioner_paths(&mut profile, profile_dir);
+        .with_context(|| format!("failed to parse yaml: {}", canonical_path))?;
+
+    // While parent() should always return Some for canonical file paths,
+    // we handle None for defensive programming
+    let profile_dir = canonical_path.parent().with_context(|| {
+        format!("could not determine parent directory of profile path: {}", canonical_path)
+    })?;
+    resolve_profile_paths(&mut profile, profile_dir);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
 }
