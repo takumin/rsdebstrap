@@ -62,7 +62,7 @@ The codebase follows a clean separation of concerns with a pluggable backend arc
   - `init_logging()`: Initializes tracing/logging with configurable levels
   - `run_apply()`: Executes the two-phase bootstrap + provisioning workflow
   - `run_validate()`: Validates profile configuration
-  - Re-exports all public modules (backends, cli, config, executor, provisioners)
+  - Re-exports all public modules (bootstrap, cli, config, executor, provisioners)
 
 - **cli.rs**: Command-line interface definitions using clap. Defines the `Cli`, `Commands` enum (Apply, Validate, Completions), and their associated argument structs.
 
@@ -75,7 +75,7 @@ The codebase follows a clean separation of concerns with a pluggable backend arc
   - `load_profile()`: Loads and validates YAML configuration files with path resolution
   - `Profile::validate()`: Validates profile semantics including provisioner compatibility with backend output
 
-- **backends/**: Pluggable bootstrap backend implementations:
+- **bootstrap/**: Pluggable bootstrap backend implementations:
   - **mod.rs**: Defines the `BootstrapBackend` trait and `RootfsOutput` enum
     - `BootstrapBackend` trait: `command_name()`, `build_args()`, `rootfs_output()` methods
     - `RootfsOutput`: Classifies backend output as `Directory` (provisioner-compatible) or `NonDirectory`
@@ -256,7 +256,7 @@ The provisioners system runs post-bootstrap configuration steps inside the boots
 
 ### Hook Types (mmdebstrap only)
 
-mmdebstrap supports multiple hook phases (defined in `backends/mmdebstrap.rs`):
+mmdebstrap supports multiple hook phases (defined in `bootstrap/mmdebstrap.rs`):
 - `setup_hook`: Runs before package extraction
 - `extract_hook`: Runs after package extraction
 - `essential_hook`: Runs after essential packages are installed
@@ -270,9 +270,9 @@ Note: Hooks are backend-specific. If you need post-bootstrap steps that work acr
 Each backend originally had helper functions `add_flag()` and `add_flags()` to conditionally add arguments only when values are non-empty.
 
 **Modern Pattern (shared utility):**
-The `CommandArgsBuilder` in `backends/args.rs` provides a consistent, fluent API:
+The `CommandArgsBuilder` in `bootstrap/args.rs` provides a consistent, fluent API:
 ```rust
-use backends::{CommandArgsBuilder, FlagValueStyle};
+use bootstrap::{CommandArgsBuilder, FlagValueStyle};
 
 let mut builder = CommandArgsBuilder::new();
 builder.push_arg("bookworm");
@@ -335,7 +335,7 @@ Logging is initialized once in `lib::init_logging()` and used throughout the cod
 
 ### Adding New Bootstrap Backend
 
-1. Create new backend module in `src/backends/your_tool.rs`
+1. Create new backend module in `src/bootstrap/your_tool.rs`
 2. Define backend-specific config struct (e.g., `YourToolConfig`) with serde derives
 3. Implement the `BootstrapBackend` trait:
    ```rust
@@ -373,7 +373,7 @@ Logging is initialized once in `lib::init_logging()` and used throughout the cod
        }
    }
    ```
-6. Export the new module in `src/backends/mod.rs`:
+6. Export the new module in `src/bootstrap/mod.rs`:
    ```rust
    pub mod your_tool;
    ```
@@ -433,7 +433,7 @@ Logging is initialized once in `lib::init_logging()` and used throughout the cod
 
 ### Adding Options to Existing Backend
 
-1. Add field to backend config struct (e.g., `MmdebstrapConfig` in `backends/mmdebstrap.rs`) with `#[serde(default)]`
+1. Add field to backend config struct (e.g., `MmdebstrapConfig` in `bootstrap/mmdebstrap.rs`) with `#[serde(default)]`
 2. Add argument construction logic in backend's `build_args()` method:
    - Use `CommandArgsBuilder` for new code
    - Or use legacy `add_flag`/`add_flags` helpers if modifying existing code

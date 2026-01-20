@@ -2,8 +2,8 @@ mod helpers;
 
 use anyhow::Result;
 use camino::Utf8PathBuf;
-use rsdebstrap::backends::mmdebstrap::{Format, MmdebstrapConfig};
-use rsdebstrap::backends::{BootstrapBackend, RootfsOutput};
+use rsdebstrap::bootstrap::mmdebstrap::{Format, MmdebstrapConfig};
+use rsdebstrap::bootstrap::{BootstrapBackend, RootfsOutput};
 
 #[test]
 fn test_mmdebstrap_rootfs_output_directory_format() -> Result<()> {
