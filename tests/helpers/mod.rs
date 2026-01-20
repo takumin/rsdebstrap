@@ -209,7 +209,12 @@ impl CwdGuard {
 
 impl Drop for CwdGuard {
     fn drop(&mut self) {
-        // Best effort to restore - if it fails, there's nothing we can do
-        let _ = std::env::set_current_dir(&self.original);
+        // Best effort to restore - log warning if it fails for debugging
+        if let Err(err) = std::env::set_current_dir(&self.original) {
+            eprintln!(
+                "Warning: failed to restore working directory to {}: {}",
+                self.original, err
+            );
+        }
     }
 }
