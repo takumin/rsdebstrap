@@ -140,20 +140,12 @@ impl CommandExecutor for RealCommandExecutor {
                 );
             }
         };
-        tracing::trace!(
-            "executed command: {}: success={}",
-            spec.command,
-            output.status.success()
-        );
+        tracing::trace!("executed command: {}: success={}", spec.command, output.status.success());
 
         // Log stderr if the command failed and produced output
         if !output.status.success() && !output.stderr.is_empty() {
             let stderr_text = String::from_utf8_lossy(&output.stderr);
-            tracing::debug!(
-                "command `{}` failed with stderr:\n{}",
-                spec.command,
-                stderr_text
-            );
+            tracing::debug!("command `{}` failed with stderr:\n{}", spec.command, stderr_text);
         }
 
         Ok(ExecutionResult {
