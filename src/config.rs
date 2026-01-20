@@ -155,11 +155,19 @@ fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 /// ```
 #[tracing::instrument]
 pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
-    let file = File::open(path).with_context(|| format!("failed to load file: {}", path))?;
+    // Canonicalize the path to ensure profile_dir is always absolute
+    let canonical_path = path
+        .canonicalize_utf8()
+        .with_context(|| format!("failed to canonicalize path: {}", path))?;
+
+    let file =
+        File::open(&canonical_path).with_context(|| format!("failed to load file: {}", path))?;
     let reader = BufReader::new(file);
     let mut profile: Profile = serde_yaml::from_reader(reader)
         .with_context(|| format!("failed to parse yaml: {}", path))?;
-    let profile_dir = path.parent().unwrap_or_else(|| Utf8Path::new("."));
+    let profile_dir = canonical_path
+        .parent()
+        .unwrap_or_else(|| Utf8Path::new("."));
     resolve_provisioner_paths(&mut profile, profile_dir);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)

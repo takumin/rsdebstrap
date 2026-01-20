@@ -336,6 +336,76 @@ provisioners:
     Ok(())
 }
 
+#[test]
+fn test_shell_provisioner_path_resolution_with_relative_profile_path() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_dir = temp_dir.path().join("configs");
+    let scripts_dir = profile_dir.join("scripts");
+    std::fs::create_dir_all(&scripts_dir)?;
+
+    // Create a dummy script file
+    let script_path = scripts_dir.join("test.sh");
+    std::fs::write(&script_path, "#!/bin/bash\necho test")?;
+
+    // Create profile YAML with relative script path
+    let profile_path = profile_dir.join("profile.yml");
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    script: scripts/test.sh
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    // Save the current working directory
+    let original_cwd = std::env::current_dir()?;
+
+    // Change to the temp directory (not the profile dir)
+    std::env::set_current_dir(temp_dir.path())?;
+
+    // Load profile using relative path from the new working directory
+    let relative_profile_path = Utf8Path::new("configs/profile.yml");
+    let profile = load_profile(relative_profile_path);
+
+    // Restore original working directory before asserting
+    std::env::set_current_dir(&original_cwd)?;
+
+    // Now verify the results
+    let profile = profile?;
+
+    // Verify the script path is absolute
+    match &profile.provisioners[..] {
+        [ProvisionerConfig::Shell(shell)] => {
+            let script = shell.script.as_ref().expect("script should be set");
+            assert!(
+                script.is_absolute(),
+                "Script path should be absolute, got: {}",
+                script
+            );
+            // Verify it points to the correct file
+            assert!(
+                script.ends_with("scripts/test.sh"),
+                "Script path should end with scripts/test.sh, got: {}",
+                script
+            );
+        }
+        _ => panic!("expected one shell provisioner"),
+    }
+
+    Ok(())
+}
+
 /// Helper function to test provisioner validation rejection with non-directory output
 fn test_provisioner_validation_rejects_target(target: &str) -> Result<()> {
     // editorconfig-checker-disable
