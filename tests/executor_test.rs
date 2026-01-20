@@ -78,9 +78,5 @@ fn command_with_stderr_output() {
     assert!(!result.success(), "command with exit 1 should fail");
     assert!(!result.stderr.is_empty(), "stderr should contain error output");
     let stderr_text = String::from_utf8_lossy(&result.stderr);
-    assert_eq!(
-        stderr_text.trim(),
-        "error message",
-        "stderr should include error message"
-    );
+    assert_eq!(stderr_text.trim(), "error message", "stderr should include error message");
 }
