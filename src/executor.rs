@@ -97,15 +97,6 @@ pub struct RealCommandExecutor {
 
 impl CommandExecutor for RealCommandExecutor {
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
-        // Validate that the command exists
-        let cmd = match which(&spec.command) {
-            Ok(p) => p,
-            Err(e) => {
-                anyhow::bail!("command not found: {}: {}", spec.command, e);
-            }
-        };
-        tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
-
         if self.dry_run {
             tracing::info!("dry run: {:?}", spec);
             return Ok(ExecutionResult {
@@ -114,6 +105,15 @@ impl CommandExecutor for RealCommandExecutor {
                 stderr: Vec::new(),
             });
         }
+
+        // Validate that the command exists
+        let cmd = match which(&spec.command) {
+            Ok(p) => p,
+            Err(e) => {
+                anyhow::bail!("command not found: {}: {}", spec.command, e);
+            }
+        };
+        tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
 
         let mut command = Command::new(cmd);
         command.args(&spec.args);
