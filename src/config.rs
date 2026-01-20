@@ -157,12 +157,11 @@ fn resolve_provisioner_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     // Extract parent directory and filename to reduce TOCTOU vulnerability
     // by canonicalizing only the directory, not the full path
-    let profile_dir = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("path has no parent directory: {}", path))?;
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("path has no filename: {}", path))?;
+    // If path has a filename, it's guaranteed to have a parent
+    let profile_dir = path.parent().unwrap();
 
     // Canonicalize only the parent directory to ensure it's absolute
     let canonical_dir = profile_dir
