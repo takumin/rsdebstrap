@@ -2,9 +2,9 @@
 	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
 	"extends": [
 		"config:best-practices",
-		"github>aquaproj/aqua-renovate-config#2.9.0",
-		"github>aquaproj/aqua-renovate-config:file#2.9.0(.aqua/.*\\.ya?ml)",
-		"github>aquaproj/aqua-renovate-config:file#2.9.0(.aqua/pkgs/.*\\.ya?ml)"
+		"github>aquaproj/aqua-renovate-config#2.10.0",
+		"github>aquaproj/aqua-renovate-config:file#2.10.0(.aqua/.*\\.ya?ml)",
+		"github>aquaproj/aqua-renovate-config:file#2.10.0(.aqua/pkgs/.*\\.ya?ml)"
 	],
 	"timezone": "Asia/Tokyo",
 	"automerge": true
