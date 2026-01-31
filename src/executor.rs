@@ -7,14 +7,13 @@ use std::thread;
 use which::which;
 
 /// Maximum size of captured output in bytes (64KB)
-///
-/// This constant is public for testing purposes only and should not be
-/// considered part of the stable public API.
-#[doc(hidden)]
-pub const MAX_OUTPUT_SIZE: usize = 64 * 1024;
+pub(crate) const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 /// Buffer size for reading from pipes (4KB)
 const READ_BUFFER_SIZE: usize = 4 * 1024;
+
+/// Maximum bytes to show in trace logs for binary data chunks
+const BINARY_PREVIEW_LIMIT: usize = 64;
 
 /// Appends data to a buffer with a size limit.
 ///
@@ -62,14 +61,19 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
             Ok(_) => {
                 // Log the line (without trailing newline for cleaner output)
                 let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-                tracing::trace!("{}: {}", stream_name, trimmed);
+                tracing::trace!(stream = stream_name, "{}", trimmed);
 
                 // Append to buffer with size limit
                 truncated |= append_with_limit(&mut buffer, line.as_bytes(), MAX_OUTPUT_SIZE);
             }
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::InvalidData {
-                    // UTF-8 error: fall back to raw byte reading
+                    // UTF-8 error: fall back to raw byte reading.
+                    // Note: The bytes that triggered the UTF-8 error may be lost because
+                    // BufReader::read_line consumes input into an internal buffer before
+                    // attempting UTF-8 conversion. When conversion fails, those bytes are
+                    // neither returned nor recoverable. This is acceptable for logging
+                    // purposes but means binary output may have gaps.
                     tracing::trace!(stream = stream_name, error = %e, "switching to binary mode");
                     truncated |= read_binary_remainder(&mut reader, stream_name, &mut buffer);
                 } else {
@@ -123,13 +127,12 @@ fn read_binary_remainder<R: Read>(
 
                 // Log binary data with truncated preview to avoid flooding logs
                 if tracing::enabled!(tracing::Level::TRACE) {
-                    const PREVIEW_LIMIT: usize = 64;
-                    if n > PREVIEW_LIMIT {
-                        let preview = String::from_utf8_lossy(&read_buf[..PREVIEW_LIMIT]);
-                        tracing::trace!("{}: (binary) {}... ({} bytes)", stream_name, preview, n);
+                    if n > BINARY_PREVIEW_LIMIT {
+                        let preview = String::from_utf8_lossy(&read_buf[..BINARY_PREVIEW_LIMIT]);
+                        tracing::trace!(stream = stream_name, bytes = n, "(binary) {}...", preview);
                     } else {
                         let chunk = String::from_utf8_lossy(&read_buf[..n]);
-                        tracing::trace!("{}: (binary) {}", stream_name, chunk);
+                        tracing::trace!(stream = stream_name, "(binary) {}", chunk);
                     }
                 }
 

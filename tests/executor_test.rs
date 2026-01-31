@@ -1,5 +1,8 @@
-use rsdebstrap::executor::{CommandExecutor, CommandSpec, MAX_OUTPUT_SIZE, RealCommandExecutor};
+use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
 use std::ffi::OsString;
+
+/// Maximum output size for testing (must match the internal MAX_OUTPUT_SIZE constant: 64KB)
+const TEST_MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 #[test]
 fn dry_run_skips_command_lookup() {
@@ -89,10 +92,11 @@ fn command_with_stderr_output() {
 #[test]
 fn large_output_is_truncated_to_max_size() {
     let executor = RealCommandExecutor { dry_run: false };
-    // Generate output larger than MAX_OUTPUT_SIZE (64KB)
+    // Generate output larger than the 64KB limit.
     // Using 'yes' with 'head -c' to generate text output with newlines,
-    // which is more appropriate for testing line-based reading
-    let output_size = 100 * 1024; // 100KB, larger than 64KB limit
+    // which is more appropriate for testing line-based reading.
+    // We generate 100KB (about 1.5x the limit) to ensure truncation occurs.
+    let output_size = TEST_MAX_OUTPUT_SIZE + (TEST_MAX_OUTPUT_SIZE / 2); // ~100KB
     let spec = CommandSpec::new(
         "sh",
         vec![
@@ -105,17 +109,17 @@ fn large_output_is_truncated_to_max_size() {
 
     assert!(result.success(), "command should succeed");
     assert!(
-        result.stdout.len() <= MAX_OUTPUT_SIZE,
-        "stdout should be truncated to MAX_OUTPUT_SIZE ({} bytes), got {} bytes",
-        MAX_OUTPUT_SIZE,
+        result.stdout.len() <= TEST_MAX_OUTPUT_SIZE,
+        "stdout should be truncated to max output size ({} bytes), got {} bytes",
+        TEST_MAX_OUTPUT_SIZE,
         result.stdout.len()
     );
-    // Output should be substantial (at least half of MAX_OUTPUT_SIZE)
-    // since we're generating 100KB and the limit is 64KB
+    // Output should be substantial (at least half of max size)
+    // since we're generating ~100KB and the limit is 64KB
     assert!(
-        result.stdout.len() >= MAX_OUTPUT_SIZE / 2,
+        result.stdout.len() >= TEST_MAX_OUTPUT_SIZE / 2,
         "stdout should be substantial (at least {} bytes), got {} bytes",
-        MAX_OUTPUT_SIZE / 2,
+        TEST_MAX_OUTPUT_SIZE / 2,
         result.stdout.len()
     );
 }
