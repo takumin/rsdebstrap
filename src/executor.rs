@@ -170,7 +170,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
         match reader.read_until(b'\n', &mut line_buf) {
             Ok(0) => break, // EOF
             Ok(_) => {
-                // ログ出力（改行を除く）
+                // Log output (excluding newline)
                 let log_content = line_buf.strip_suffix(b"\n").unwrap_or(&line_buf);
                 log_line(log_content, stream_type);
                 ring_buffer.push_line(std::mem::take(&mut line_buf));
