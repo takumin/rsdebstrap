@@ -52,9 +52,10 @@ fn failed_command_captures_stderr() {
     assert!(!result.success(), "ls on non-existent path should fail");
     assert!(!result.stderr.is_empty(), "stderr should contain error output");
     let stderr_text = String::from_utf8_lossy(&result.stderr);
+    // Check that stderr contains the path - this is locale-independent
     assert!(
-        stderr_text.contains("No such file or directory") || stderr_text.contains("cannot access"),
-        "stderr should contain error details: {}",
+        stderr_text.contains("/this/path/definitely/does/not/exist"),
+        "stderr should contain the target path: {}",
         stderr_text
     );
 }
