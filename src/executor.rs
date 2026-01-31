@@ -53,6 +53,11 @@ impl std::fmt::Display for StreamType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessResult {
     /// Byte was added to the line buffer, continue processing.
+    ///
+    /// This variant enables callers to distinguish normal processing from
+    /// line completion or truncation. While currently only `BufferFull` is
+    /// checked by the caller, having explicit variants improves code clarity
+    /// and supports future extensions (e.g., progress reporting).
     Continue,
     /// A complete line was found (newline detected) and processed.
     LineComplete,
