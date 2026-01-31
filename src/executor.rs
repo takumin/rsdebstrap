@@ -61,16 +61,25 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
         }
     }
 
+    // Warn if output was truncated
+    if buffer.len() >= MAX_OUTPUT_SIZE {
+        tracing::warn!("{}: output truncated at {} bytes", stream_name, MAX_OUTPUT_SIZE);
+    }
+
     buffer
 }
 
 /// Reads remaining binary data from a reader when UTF-8 decoding fails.
+///
+/// Note: The caller (`read_pipe_to_buffer`) has already saved any data from
+/// BufReader's internal buffer before calling this function. We only need to
+/// consume and discard that buffer here before continuing with raw reads.
 fn read_binary_remainder<R: Read>(
     reader: &mut BufReader<R>,
     stream_name: &'static str,
     buffer: &mut Vec<u8>,
 ) {
-    // Consume the internal buffer first (already saved by caller)
+    // Consume the internal buffer (already saved by caller in read_pipe_to_buffer)
     reader.consume(reader.buffer().len());
 
     let mut read_buf = [0u8; READ_BUFFER_SIZE];
@@ -81,6 +90,10 @@ fn read_binary_remainder<R: Read>(
             Ok(0) => break, // EOF
             Ok(n) => {
                 total_binary_bytes += n;
+
+                // Log binary data using lossy UTF-8 conversion
+                let chunk = String::from_utf8_lossy(&read_buf[..n]);
+                tracing::trace!("{}: (binary) {}", stream_name, chunk);
 
                 // Append to buffer with size limit
                 if buffer.len() < MAX_OUTPUT_SIZE {
@@ -97,11 +110,7 @@ fn read_binary_remainder<R: Read>(
     }
 
     if total_binary_bytes > 0 {
-        tracing::trace!(
-            "{}: read {} bytes of binary data",
-            stream_name,
-            total_binary_bytes
-        );
+        tracing::trace!("{}: read {} bytes of binary data", stream_name, total_binary_bytes);
     }
 }
 
@@ -266,11 +275,21 @@ impl CommandExecutor for RealCommandExecutor {
 
         // Collect output from threads (with error logging on panic)
         let stdout = stdout_handle.join().unwrap_or_else(|e| {
-            tracing::error!("stdout reader thread panicked: {:?}", e);
+            let panic_msg = e
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| e.downcast_ref::<String>().map(|s| s.as_str()))
+                .unwrap_or("unknown panic");
+            tracing::error!("stdout reader thread panicked: {}", panic_msg);
             Vec::new()
         });
         let stderr = stderr_handle.join().unwrap_or_else(|e| {
-            tracing::error!("stderr reader thread panicked: {:?}", e);
+            let panic_msg = e
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| e.downcast_ref::<String>().map(|s| s.as_str()))
+                .unwrap_or("unknown panic");
+            tracing::error!("stderr reader thread panicked: {}", panic_msg);
             Vec::new()
         });
 

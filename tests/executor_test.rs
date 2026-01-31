@@ -1,4 +1,4 @@
-use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor, MAX_OUTPUT_SIZE};
+use rsdebstrap::executor::{CommandExecutor, CommandSpec, MAX_OUTPUT_SIZE, RealCommandExecutor};
 use std::ffi::OsString;
 
 #[test]
@@ -90,13 +90,16 @@ fn command_with_stderr_output() {
 fn large_output_is_truncated_to_max_size() {
     let executor = RealCommandExecutor { dry_run: false };
     // Generate output larger than MAX_OUTPUT_SIZE (64KB)
-    // Using 'yes' with head to generate exactly 100KB of 'y\n' lines
+    // Using dd with /dev/zero for portable, locale-independent output generation
+    // dd writes to stdout without relying on locale-specific tools
     let output_size = 100 * 1024; // 100KB, larger than 64KB limit
     let spec = CommandSpec::new(
-        "sh",
+        "dd",
         vec![
-            OsString::from("-c"),
-            OsString::from(format!("yes | head -c {}", output_size)),
+            OsString::from("if=/dev/zero"),
+            OsString::from(format!("bs={}", output_size)),
+            OsString::from("count=1"),
+            OsString::from("status=none"),
         ],
     );
 
