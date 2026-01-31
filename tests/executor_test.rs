@@ -3,13 +3,13 @@ use rsdebstrap::executor::{
 };
 use std::ffi::OsString;
 
-/// Test line length that exceeds MAX_LINE_SIZE (8000 > 4096).
+/// Test line length that exceeds MAX_LINE_SIZE (2x the limit).
 /// Used to verify single long lines are truncated correctly.
-const LONG_LINE_TEST_LENGTH: usize = 8000;
+const LONG_LINE_TEST_LENGTH: usize = MAX_LINE_SIZE * 2;
 
-/// Test line length for multiple long lines (6000 > 4096).
+/// Test line length for multiple long lines (1.5x the limit).
 /// Each line exceeds MAX_LINE_SIZE to verify independent truncation.
-const MULTI_LINE_TEST_LENGTH: usize = 6000;
+const MULTI_LINE_TEST_LENGTH: usize = MAX_LINE_SIZE + MAX_LINE_SIZE / 2;
 
 #[test]
 fn dry_run_skips_command_lookup() {
@@ -258,4 +258,79 @@ fn multiple_long_lines_are_each_truncated() {
         "stdout should contain exactly 2 newlines, got {}",
         newline_count
     );
+}
+
+#[test]
+fn empty_stdout_stderr_handled() {
+    let executor = RealCommandExecutor { dry_run: false };
+    // 'true' command produces no output and exits successfully
+    let spec = CommandSpec::new("true", Vec::new());
+
+    let result = executor.execute(&spec).expect("command should succeed");
+
+    assert!(result.success(), "true command should succeed");
+    assert!(result.stdout.is_empty(), "stdout should be empty");
+    assert!(result.stderr.is_empty(), "stderr should be empty");
+}
+
+#[test]
+fn crlf_line_endings_handled_correctly() {
+    let executor = RealCommandExecutor { dry_run: false };
+    // Generate output with CRLF line endings (Windows-style)
+    let spec = CommandSpec::new(
+        "sh",
+        vec![
+            OsString::from("-c"),
+            OsString::from(r"printf 'line1\r\nline2\r\n'"),
+        ],
+    );
+
+    let result = executor.execute(&spec).expect("command should succeed");
+
+    assert!(result.success(), "command should succeed");
+    // The raw bytes should preserve CRLF
+    assert_eq!(result.stdout, b"line1\r\nline2\r\n", "stdout should preserve CRLF line endings");
+}
+
+#[test]
+fn mixed_line_endings_lf_crlf_cr() {
+    let executor = RealCommandExecutor { dry_run: false };
+    // Generate output with mixed line endings: LF, CRLF, and standalone CR
+    let spec = CommandSpec::new(
+        "sh",
+        vec![
+            OsString::from("-c"),
+            OsString::from(r"printf 'lf_line\ncrlf_line\r\ncr_line\rend\n'"),
+        ],
+    );
+
+    let result = executor.execute(&spec).expect("command should succeed");
+
+    assert!(result.success(), "command should succeed");
+    // Verify raw bytes contain all line ending styles
+    let stdout_text = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout_text.contains("lf_line\n"), "should contain LF line ending");
+    assert!(stdout_text.contains("crlf_line\r\n"), "should contain CRLF line ending");
+    assert!(stdout_text.contains("cr_line\r"), "should contain CR (standalone)");
+}
+
+#[test]
+fn multibyte_utf8_characters_captured_correctly() {
+    let executor = RealCommandExecutor { dry_run: false };
+    // Generate output with various UTF-8 multibyte characters
+    let spec = CommandSpec::new(
+        "sh",
+        vec![
+            OsString::from("-c"),
+            OsString::from(r"printf '日本語\némoji: 🎉\n中文字符\n'"),
+        ],
+    );
+
+    let result = executor.execute(&spec).expect("command should succeed");
+
+    assert!(result.success(), "command should succeed");
+    let stdout_text = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout_text.contains("日本語"), "should contain Japanese characters");
+    assert!(stdout_text.contains("🎉"), "should contain emoji");
+    assert!(stdout_text.contains("中文字符"), "should contain Chinese characters");
 }

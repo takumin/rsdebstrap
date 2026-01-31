@@ -223,7 +223,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
 
         for &byte in available.iter() {
             if processor.process(byte) == ProcessResult::BufferFull {
-                // Buffer is full, stop processing
+                // Buffer is full; remaining bytes are discarded to prevent OOM
                 break;
             }
         }
