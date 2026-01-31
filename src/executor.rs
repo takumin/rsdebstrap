@@ -9,8 +9,10 @@ use which::which;
 /// Maximum size of captured output in bytes (64KB)
 pub(crate) const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
-/// Buffer size for reading from pipes (4KB)
-const READ_BUFFER_SIZE: usize = 4 * 1024;
+/// Maximum line size before truncation (4KB)
+///
+/// Lines longer than this limit are truncated to prevent OOM issues.
+const MAX_LINE_SIZE: usize = 4 * 1024;
 
 /// Type of output stream for logging purposes.
 #[derive(Clone, Copy)]
@@ -54,12 +56,31 @@ fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 
 /// Reads from a pipe into a buffer, streaming output to logs in real-time.
 ///
-/// This function starts in text mode using line-based reading for clean log output.
-/// If a UTF-8 decoding error occurs, it falls back to binary mode using raw byte reads.
+/// This function uses chunk-based reading with line splitting to handle output
+/// efficiently while preventing OOM issues from extremely long lines.
+///
+/// ## Line Length Handling
+///
+/// Lines longer than [`MAX_LINE_SIZE`] (4KB) are truncated. When truncation occurs:
+/// - The truncated portion is logged with a `[truncated]` marker
+/// - A debug-level log records the truncation event
+/// - Remaining bytes until the next newline are skipped
+///
+/// ## Binary Data Handling
+///
+/// Binary data (non-UTF-8 bytes) is handled gracefully using lossy UTF-8
+/// conversion for logging. The original bytes are preserved in the returned buffer.
+///
+/// ## Log Levels
 ///
 /// Log levels are determined by stream type:
-/// - stdout: logged at INFO level for real-time visibility
-/// - stderr: logged at WARN level for immediate attention
+/// - stdout: logged at INFO level for real-time visibility of bootstrap progress
+/// - stderr: logged at WARN level for immediate attention to potential issues
+///
+/// Note: INFO/WARN levels are intentionally chosen over DEBUG/TRACE for usability.
+/// Users need to see mmdebstrap/debootstrap progress in real-time. If sensitive
+/// data might appear in command output, consider adjusting the log level via
+/// environment variables (RUST_LOG).
 fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec<u8> {
     let mut buffer = Vec::new();
     let mut truncated = false;
@@ -69,39 +90,68 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
 
     let stream_name = stream_type.name();
     let mut reader = BufReader::new(pipe);
-    let mut line = String::new();
+    let mut line_buf: Vec<u8> = Vec::with_capacity(MAX_LINE_SIZE);
+    let mut skipping_to_newline = false;
 
     loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF
-            Ok(_) => {
-                // Log the line (without trailing newline for cleaner output)
-                let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-                match stream_type {
-                    StreamType::Stdout => tracing::info!(stream = stream_name, "{}", trimmed),
-                    StreamType::Stderr => tracing::warn!(stream = stream_name, "{}", trimmed),
-                }
-
-                // Append to buffer with size limit
-                truncated |= append_with_limit(&mut buffer, line.as_bytes(), MAX_OUTPUT_SIZE);
-            }
+        let available = match reader.fill_buf() {
+            Ok([]) => break, // EOF
+            Ok(buf) => buf,
             Err(e) => {
-                if e.kind() == std::io::ErrorKind::InvalidData {
-                    // UTF-8 error: fall back to raw byte reading.
-                    // Note: The bytes that triggered the UTF-8 error may be lost because
-                    // BufReader::read_line consumes input into an internal buffer before
-                    // attempting UTF-8 conversion. When conversion fails, those bytes are
-                    // neither returned nor recoverable. This is acceptable for logging
-                    // purposes but means binary output may have gaps.
-                    tracing::debug!(stream = stream_name, error = %e, "switching to binary mode");
-                    truncated |= read_binary_remainder(&mut reader, stream_type, &mut buffer);
-                } else {
-                    // Other I/O errors (e.g., pipe broken): warn and stop reading
-                    tracing::warn!(stream = stream_name, error = %e, "I/O error, stopping read");
-                }
+                tracing::warn!(stream = stream_name, error = %e, "I/O error, stopping read");
                 break;
             }
+        };
+
+        let mut consumed = 0;
+
+        for (i, &byte) in available.iter().enumerate() {
+            if byte == b'\n' {
+                // End of line found
+                if skipping_to_newline {
+                    // We were skipping after truncation; add newline to buffer and reset
+                    truncated |= append_with_limit(&mut buffer, b"\n", MAX_OUTPUT_SIZE);
+                    skipping_to_newline = false;
+                } else {
+                    // Process the complete line (excluding the newline itself)
+                    let line_content = &line_buf[..];
+                    log_line(line_content, stream_type, stream_name);
+                    // Append line + newline to buffer
+                    truncated |= append_with_limit(&mut buffer, line_content, MAX_OUTPUT_SIZE);
+                    truncated |= append_with_limit(&mut buffer, b"\n", MAX_OUTPUT_SIZE);
+                }
+                line_buf.clear();
+                consumed = i + 1;
+            } else if skipping_to_newline {
+                // Skip this byte (we're in truncation skip mode)
+                consumed = i + 1;
+            } else if line_buf.len() >= MAX_LINE_SIZE {
+                // Line is too long; truncate and switch to skip mode
+                let line_content = &line_buf[..];
+                log_truncated_line(line_content, stream_type, stream_name);
+                // Append truncated content to buffer (newline will be added when we find it)
+                truncated |= append_with_limit(&mut buffer, line_content, MAX_OUTPUT_SIZE);
+                line_buf.clear();
+                skipping_to_newline = true;
+                consumed = i + 1;
+            } else {
+                // Normal case: add byte to line buffer
+                line_buf.push(byte);
+                consumed = i + 1;
+            }
+        }
+
+        reader.consume(consumed);
+    }
+
+    // Handle any remaining data in line_buf (no trailing newline)
+    if !line_buf.is_empty() {
+        if skipping_to_newline {
+            // We were skipping; the remaining data is part of the skipped portion
+            // Nothing to log or add
+        } else {
+            log_line(&line_buf, stream_type, stream_name);
+            truncated |= append_with_limit(&mut buffer, &line_buf, MAX_OUTPUT_SIZE);
         }
     }
 
@@ -113,53 +163,34 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
     buffer
 }
 
-/// Reads remaining binary data from a reader when UTF-8 decoding fails.
-///
-/// This function saves any data already buffered by the BufReader before
-/// continuing to read remaining data in binary mode.
-///
-/// Returns `true` if data was truncated due to the size limit.
-fn read_binary_remainder<R: Read>(
-    reader: &mut BufReader<R>,
-    stream_type: StreamType,
-    buffer: &mut Vec<u8>,
-) -> bool {
-    let mut truncated = false;
-    let stream_name = stream_type.name();
-
-    // Save any data that was read into BufReader's internal buffer before the UTF-8 error
-    let buffered = reader.buffer();
-    let buffered_len = buffered.len();
-    if !buffered.is_empty() {
-        truncated |= append_with_limit(buffer, buffered, MAX_OUTPUT_SIZE);
+/// Logs a complete line at the appropriate level.
+fn log_line(line: &[u8], stream_type: StreamType, stream_name: &str) {
+    let text = String::from_utf8_lossy(line);
+    // Trim trailing CR for cleaner output (handles Windows-style CRLF)
+    let trimmed = text.trim_end_matches('\r');
+    match stream_type {
+        StreamType::Stdout => tracing::info!(stream = stream_name, "{}", trimmed),
+        StreamType::Stderr => tracing::warn!(stream = stream_name, "{}", trimmed),
     }
+}
 
-    // Consume the internal buffer to advance past it before continuing with raw reads
-    reader.consume(buffered_len);
-
-    let mut read_buf = [0u8; READ_BUFFER_SIZE];
-    let mut total_binary_bytes = 0usize;
-
-    loop {
-        match reader.read(&mut read_buf) {
-            Ok(0) => break, // EOF
-            Ok(n) => {
-                total_binary_bytes += n;
-                // Append to buffer with size limit
-                truncated |= append_with_limit(buffer, &read_buf[..n], MAX_OUTPUT_SIZE);
-            }
-            Err(e) => {
-                tracing::warn!(stream = stream_name, error = %e, "error reading binary data");
-                break;
-            }
+/// Logs a truncated line with a marker and debug information.
+fn log_truncated_line(line: &[u8], stream_type: StreamType, stream_name: &str) {
+    let text = String::from_utf8_lossy(line);
+    let trimmed = text.trim_end_matches('\r');
+    match stream_type {
+        StreamType::Stdout => {
+            tracing::info!(stream = stream_name, "{} [truncated]", trimmed)
+        }
+        StreamType::Stderr => {
+            tracing::warn!(stream = stream_name, "{} [truncated]", trimmed)
         }
     }
-
-    if total_binary_bytes > 0 {
-        tracing::debug!(stream = stream_name, bytes = total_binary_bytes, "read binary data");
-    }
-
-    truncated
+    tracing::debug!(
+        stream = stream_name,
+        max_line_size = MAX_LINE_SIZE,
+        "line exceeded maximum size and was truncated"
+    );
 }
 
 /// Specification for a command to be executed
@@ -309,18 +340,18 @@ impl CommandExecutor for RealCommandExecutor {
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
 
-        // Read stderr in a separate thread (only one thread needed)
+        // Read both stdout and stderr in separate threads for symmetric panic recovery
+        let stdout_handle =
+            thread::spawn(move || read_pipe_to_buffer(stdout_pipe, StreamType::Stdout));
         let stderr_handle =
             thread::spawn(move || read_pipe_to_buffer(stderr_pipe, StreamType::Stderr));
-
-        // Read stdout in the main thread
-        let stdout = read_pipe_to_buffer(stdout_pipe, StreamType::Stdout);
 
         // Wait for the child process to complete
         let status = match child.wait() {
             Ok(s) => s,
             Err(e) => {
-                // Join the stderr thread to prevent thread leak
+                // Join both threads to prevent thread leak
+                let _ = stdout_handle.join();
                 let _ = stderr_handle.join();
                 anyhow::bail!(
                     "failed to wait for command `{}` with args {:?}: {}",
@@ -330,6 +361,16 @@ impl CommandExecutor for RealCommandExecutor {
                 );
             }
         };
+
+        // Collect stdout from the thread (with error logging on panic)
+        let stdout = stdout_handle.join().unwrap_or_else(|e| {
+            tracing::error!(
+                stream = "stdout",
+                panic = panic_message(&*e),
+                "reader thread panicked"
+            );
+            Vec::new()
+        });
 
         // Collect stderr from the thread (with error logging on panic)
         let stderr = stderr_handle.join().unwrap_or_else(|e| {

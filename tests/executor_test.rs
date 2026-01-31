@@ -149,14 +149,11 @@ fn binary_output_is_captured_correctly() {
 }
 
 #[test]
-fn binary_after_text_triggers_fallback() {
+fn binary_data_mixed_with_text_is_captured() {
     let executor = RealCommandExecutor { dry_run: false };
     // Generate output with valid text followed by invalid UTF-8 bytes.
-    // This tests the fallback path when UTF-8 decoding fails mid-stream.
-    // Note: The implementation uses line-based reading first. When a UTF-8 error
-    // occurs, the data that triggered the error may be lost (this is a known
-    // limitation of BufReader::read_line). However, any data read successfully
-    // before the error and any data read after switching to binary mode is preserved.
+    // The implementation reads bytes and uses lossy UTF-8 conversion for logging,
+    // but preserves the original bytes in the returned buffer.
     let spec = CommandSpec::new(
         "sh",
         vec![
@@ -171,13 +168,86 @@ fn binary_after_text_triggers_fallback() {
     let result = executor.execute(&spec).expect("command should succeed");
 
     assert!(result.success(), "command should succeed");
-    // The first line is read in text mode, then UTF-8 error triggers binary mode.
-    // Due to BufReader::read_line behavior, the invalid bytes that caused the error
-    // may be lost, but subsequent binary data should be captured.
+    // All data should be captured, including invalid UTF-8 bytes
     let stdout_text = String::from_utf8_lossy(&result.stdout);
     assert!(
         stdout_text.contains("first line"),
         "stdout should contain the first line: {:?}",
         result.stdout
+    );
+    assert!(
+        stdout_text.contains("after binary"),
+        "stdout should contain text after binary data: {:?}",
+        result.stdout
+    );
+}
+
+/// Maximum line size for testing (must match the internal MAX_LINE_SIZE constant: 4KB)
+const TEST_MAX_LINE_SIZE: usize = 4 * 1024;
+
+#[test]
+fn long_line_is_truncated_at_max_line_size() {
+    let executor = RealCommandExecutor { dry_run: false };
+    // Generate a single line longer than 4KB without newline.
+    // We generate 8000 characters (nearly 2x the 4KB limit) to ensure truncation.
+    let spec = CommandSpec::new(
+        "sh",
+        vec![
+            OsString::from("-c"),
+            // printf with %0*d generates a string of zeros with specified width
+            OsString::from("printf '%0*d' 8000 0"),
+        ],
+    );
+
+    let result = executor.execute(&spec).expect("command should succeed");
+
+    assert!(result.success(), "command should succeed");
+    // The output should be truncated to MAX_LINE_SIZE (4KB)
+    // Since there's no newline, the line is treated as incomplete but still truncated
+    assert!(
+        result.stdout.len() <= TEST_MAX_LINE_SIZE,
+        "stdout should be truncated to max line size ({} bytes), got {} bytes",
+        TEST_MAX_LINE_SIZE,
+        result.stdout.len()
+    );
+    // Output should be exactly MAX_LINE_SIZE since we generated more than that
+    assert_eq!(
+        result.stdout.len(),
+        TEST_MAX_LINE_SIZE,
+        "stdout should be exactly max line size when truncated"
+    );
+}
+
+#[test]
+fn multiple_long_lines_are_each_truncated() {
+    let executor = RealCommandExecutor { dry_run: false };
+    // Generate two lines, each longer than 4KB
+    let spec = CommandSpec::new(
+        "sh",
+        vec![
+            OsString::from("-c"),
+            // Two lines of 6000 zeros each
+            OsString::from("printf '%0*d\\n%0*d\\n' 6000 1 6000 2"),
+        ],
+    );
+
+    let result = executor.execute(&spec).expect("command should succeed");
+
+    assert!(result.success(), "command should succeed");
+    // Each line should be truncated to 4KB, plus newlines
+    // Expected: 4KB + newline + 4KB + newline = 8194 bytes
+    let expected_max = TEST_MAX_LINE_SIZE * 2 + 2; // Two lines + two newlines
+    assert!(
+        result.stdout.len() <= expected_max,
+        "stdout should be at most {} bytes (two truncated lines + newlines), got {} bytes",
+        expected_max,
+        result.stdout.len()
+    );
+    // The output should contain exactly two newlines (one after each truncated line)
+    let newline_count = result.stdout.iter().filter(|&&b| b == b'\n').count();
+    assert_eq!(
+        newline_count, 2,
+        "stdout should contain exactly 2 newlines, got {}",
+        newline_count
     );
 }
