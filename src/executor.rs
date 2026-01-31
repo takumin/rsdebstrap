@@ -1,8 +1,13 @@
 use anyhow::Result;
 use std::ffi::OsString;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
+use std::thread;
 use which::which;
+
+/// Maximum size of captured output in bytes (64KB)
+const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 /// Specification for a command to be executed
 #[derive(Debug, Clone)]
@@ -128,9 +133,13 @@ impl CommandExecutor for RealCommandExecutor {
             command.env(key, value);
         }
 
-        // Execute command and capture output
-        let output = match command.output() {
-            Ok(o) => o,
+        // Set up stdout/stderr to be piped for streaming
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+
+        // Spawn the command
+        let mut child = match command.spawn() {
+            Ok(c) => c,
             Err(e) => {
                 anyhow::bail!(
                     "failed to execute command `{}` with args {:?}: {}",
@@ -140,18 +149,95 @@ impl CommandExecutor for RealCommandExecutor {
                 );
             }
         };
-        tracing::trace!("executed command: {}: success={}", spec.command, output.status.success());
+
+        // Take ownership of stdout and stderr
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        // Read stdout in a separate thread
+        let stdout_handle = thread::spawn(move || {
+            let mut stdout_buffer = Vec::new();
+            if let Some(pipe) = stdout_pipe {
+                let reader = BufReader::new(pipe);
+                for line in reader.lines() {
+                    match line {
+                        Ok(text) => {
+                            tracing::trace!("stdout: {}", text);
+                            // Append to buffer with size limit
+                            if stdout_buffer.len() < MAX_OUTPUT_SIZE {
+                                let remaining = MAX_OUTPUT_SIZE - stdout_buffer.len();
+                                let line_bytes = text.as_bytes();
+                                let to_append = line_bytes.len().min(remaining);
+                                stdout_buffer.extend_from_slice(&line_bytes[..to_append]);
+                                if stdout_buffer.len() < MAX_OUTPUT_SIZE {
+                                    stdout_buffer.push(b'\n');
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("error reading stdout: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+            stdout_buffer
+        });
+
+        // Read stderr in a separate thread
+        let stderr_handle = thread::spawn(move || {
+            let mut stderr_buffer = Vec::new();
+            if let Some(pipe) = stderr_pipe {
+                let reader = BufReader::new(pipe);
+                for line in reader.lines() {
+                    match line {
+                        Ok(text) => {
+                            tracing::trace!("stderr: {}", text);
+                            // Append to buffer with size limit
+                            if stderr_buffer.len() < MAX_OUTPUT_SIZE {
+                                let remaining = MAX_OUTPUT_SIZE - stderr_buffer.len();
+                                let line_bytes = text.as_bytes();
+                                let to_append = line_bytes.len().min(remaining);
+                                stderr_buffer.extend_from_slice(&line_bytes[..to_append]);
+                                if stderr_buffer.len() < MAX_OUTPUT_SIZE {
+                                    stderr_buffer.push(b'\n');
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("error reading stderr: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+            stderr_buffer
+        });
+
+        // Wait for the child process to complete
+        let status = match child.wait() {
+            Ok(s) => s,
+            Err(e) => {
+                anyhow::bail!("failed to wait for command `{}`: {}", spec.command, e);
+            }
+        };
+
+        // Collect output from threads
+        let stdout = stdout_handle.join().unwrap_or_default();
+        let stderr = stderr_handle.join().unwrap_or_default();
+
+        tracing::trace!("executed command: {}: success={}", spec.command, status.success());
 
         // Log stderr if the command failed and produced output
-        if !output.status.success() && !output.stderr.is_empty() {
-            let stderr_text = String::from_utf8_lossy(&output.stderr);
+        if !status.success() && !stderr.is_empty() {
+            let stderr_text = String::from_utf8_lossy(&stderr);
             tracing::debug!("command `{}` failed with stderr:\n{}", spec.command, stderr_text);
         }
 
         Ok(ExecutionResult {
-            status: Some(output.status),
-            stdout: output.stdout,
-            stderr: output.stderr,
+            status: Some(status),
+            stdout,
+            stderr,
         })
     }
 }

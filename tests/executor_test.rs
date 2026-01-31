@@ -36,7 +36,7 @@ fn successful_command_captures_stdout() {
 
     assert!(result.success(), "echo command should return success");
     let stdout_text = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout_text.contains("hello world"), "stdout should contain the echoed text");
+    assert_eq!(stdout_text.trim(), "hello world", "stdout should match the echoed text");
 }
 
 #[test]
