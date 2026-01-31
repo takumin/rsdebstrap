@@ -17,11 +17,7 @@ impl CommandExecutor for RecordingExecutor {
         self.calls
             .borrow_mut()
             .push((spec.command.clone(), spec.args.clone()));
-        Ok(ExecutionResult {
-            status: None,
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        })
+        Ok(ExecutionResult { status: None })
     }
 }
 
