@@ -67,7 +67,16 @@ impl RingLineBuffer {
     /// to fit. Old lines are removed from the front to maintain the
     /// size constraint.
     fn push_line(&mut self, line: Vec<u8>) {
-        // Truncate the line if it exceeds max_size
+        // ByteProcessor ensures lines don't exceed MAX_LINE_SIZE (plus newline).
+        // This assertion catches any future changes that might violate this invariant.
+        debug_assert!(
+            line.len() <= MAX_LINE_SIZE + 1,
+            "line length {} exceeds MAX_LINE_SIZE + 1 ({}); ByteProcessor should have truncated it",
+            line.len(),
+            MAX_LINE_SIZE + 1
+        );
+
+        // Truncate the line if it exceeds max_size (defensive fallback)
         let line = if line.len() > self.max_size {
             line[line.len() - self.max_size..].to_vec()
         } else {
@@ -107,12 +116,19 @@ enum StreamType {
     Stderr,
 }
 
+impl StreamType {
+    /// Returns the stream type as a static string slice.
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
 impl std::fmt::Display for StreamType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Stdout => write!(f, "stdout"),
-            Self::Stderr => write!(f, "stderr"),
-        }
+        f.write_str(self.as_str())
     }
 }
 
@@ -139,6 +155,14 @@ enum ProcessResult {
 /// This struct encapsulates the state needed to process input bytes one at a time,
 /// managing line boundaries and truncation of long lines. Output is stored in a
 /// ring buffer that automatically discards old data when the size limit is reached.
+///
+/// ## Line Ending Recognition
+///
+/// Only LF (`\n`) is recognized as a line terminator. CR (`\r`) alone
+/// (classic Mac format) is not treated as a line ending. This is intentional:
+/// - Modern systems (including mmdebstrap/debootstrap) use LF
+/// - CRLF (`\r\n`) is handled correctly (CR is preserved, LF terminates)
+/// - Simplifies implementation without sacrificing practical utility
 struct ByteProcessor<'a> {
     /// Buffer for accumulating the current line.
     line_buf: Vec<u8>,
