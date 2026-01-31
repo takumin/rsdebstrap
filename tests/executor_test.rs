@@ -9,7 +9,7 @@ const LONG_LINE_TEST_LENGTH: usize = MAX_LINE_SIZE * 2;
 
 /// Test line length for multiple long lines (1.5x the limit).
 /// Each line exceeds MAX_LINE_SIZE to verify independent truncation.
-const MULTI_LINE_TEST_LENGTH: usize = MAX_LINE_SIZE + MAX_LINE_SIZE / 2;
+const MULTI_LINE_TEST_LENGTH: usize = (MAX_LINE_SIZE * 3) / 2;
 
 #[test]
 fn dry_run_skips_command_lookup() {
