@@ -7,6 +7,10 @@ use std::thread;
 use which::which;
 
 /// Maximum size of captured output in bytes (64KB)
+///
+/// This constant is public for testing purposes only and should not be
+/// considered part of the stable public API.
+#[doc(hidden)]
 pub const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 /// Buffer size for reading from pipes (4KB)
@@ -26,6 +30,9 @@ fn append_with_limit(buffer: &mut Vec<u8>, data: &[u8], max_size: usize) -> bool
 }
 
 /// Extracts a human-readable message from a thread panic.
+///
+/// The returned `&str` borrows from the panic payload, so it is valid
+/// as long as the `err` reference is valid.
 fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
     err.downcast_ref::<&str>()
         .copied()
@@ -300,7 +307,14 @@ impl CommandExecutor for RealCommandExecutor {
         let status = match child.wait() {
             Ok(s) => s,
             Err(e) => {
-                anyhow::bail!("failed to wait for command `{}`: {}", spec.command, e);
+                // Join the stderr thread to prevent thread leak
+                let _ = stderr_handle.join();
+                anyhow::bail!(
+                    "failed to wait for command `{}` with args {:?}: {}",
+                    spec.command,
+                    spec.args,
+                    e
+                );
             }
         };
 
