@@ -97,18 +97,20 @@ fn command_with_stderr_output() {
 }
 
 #[test]
-fn large_output_is_truncated_to_max_size() {
+fn large_output_preserves_most_recent_data() {
     let executor = RealCommandExecutor { dry_run: false };
-    // Generate output larger than the 64KB limit.
-    // Using 'yes' with 'head -c' to generate text output with newlines,
-    // which is more appropriate for testing line-based reading.
-    // We generate 100KB (about 1.5x the limit) to ensure truncation occurs.
+    // Generate output larger than the 64KB limit with a distinctive ending.
+    // The ring buffer should discard old data and keep the most recent output.
+    // We generate ~100KB of data followed by a unique marker at the end.
     let output_size = MAX_OUTPUT_SIZE + (MAX_OUTPUT_SIZE / 2); // ~100KB
     let spec = CommandSpec::new(
         "sh",
         vec![
             OsString::from("-c"),
-            OsString::from(format!("yes 'line' | head -c {}", output_size)),
+            OsString::from(format!(
+                "yes 'line' | head -c {} && echo 'END_MARKER_12345'",
+                output_size
+            )),
         ],
     );
 
@@ -121,13 +123,39 @@ fn large_output_is_truncated_to_max_size() {
         MAX_OUTPUT_SIZE,
         result.stdout.len()
     );
-    // Output should be substantial (at least half of max size)
-    // since we're generating ~100KB and the limit is 64KB
+    // The ring buffer should preserve the most recent data (the end marker)
+    let stdout_text = String::from_utf8_lossy(&result.stdout);
     assert!(
-        result.stdout.len() >= MAX_OUTPUT_SIZE / 2,
-        "stdout should be substantial (at least {} bytes), got {} bytes",
-        MAX_OUTPUT_SIZE / 2,
-        result.stdout.len()
+        stdout_text.contains("END_MARKER_12345"),
+        "stdout should contain the end marker (most recent data), got: ...{}",
+        &stdout_text[stdout_text.len().saturating_sub(100)..]
+    );
+}
+
+#[test]
+fn ring_buffer_preserves_final_error_message() {
+    let executor = RealCommandExecutor { dry_run: false };
+    // Simulate a command that outputs a lot of data followed by an error message.
+    // This is the key use case: we want to preserve the final error message.
+    let output_size = MAX_OUTPUT_SIZE + 10000; // Exceed limit
+    let spec = CommandSpec::new(
+        "sh",
+        vec![
+            OsString::from("-c"),
+            OsString::from(format!(
+                "seq 1 {} && echo 'FATAL ERROR: Something went wrong!'",
+                output_size / 10 // ~10000 numbers, each ~6 bytes = ~60KB + marker
+            )),
+        ],
+    );
+
+    let result = executor.execute(&spec).expect("command should succeed");
+
+    assert!(result.success(), "command should succeed");
+    let stdout_text = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout_text.contains("FATAL ERROR: Something went wrong!"),
+        "stdout should contain the final error message"
     );
 }
 

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
@@ -30,6 +31,75 @@ pub const MAX_LINE_SIZE: usize = 4 * 1024;
 /// [`MAX_OUTPUT_SIZE`] if needed.
 pub const INITIAL_BUFFER_CAPACITY: usize = 8 * 1024;
 
+/// A single line entry in the ring buffer.
+struct LineEntry {
+    /// The line data including the trailing newline (if present).
+    data: Vec<u8>,
+}
+
+/// A FIFO ring buffer that stores lines up to a maximum total size.
+///
+/// When the buffer exceeds `max_size`, the oldest lines are removed
+/// to make room for new data. This ensures that the most recent output
+/// (including error messages at the end of a command) is preserved.
+struct RingLineBuffer {
+    /// Queue of line entries (oldest at front, newest at back).
+    lines: VecDeque<LineEntry>,
+    /// Current total size of all line data in bytes.
+    total_size: usize,
+    /// Maximum allowed total size in bytes.
+    max_size: usize,
+}
+
+impl RingLineBuffer {
+    /// Creates a new ring buffer with the specified maximum size.
+    fn new(max_size: usize) -> Self {
+        Self {
+            lines: VecDeque::new(),
+            total_size: 0,
+            max_size,
+        }
+    }
+
+    /// Adds a line to the buffer, removing old lines if necessary.
+    ///
+    /// If the new line itself exceeds `max_size`, it will be truncated
+    /// to fit. Old lines are removed from the front to maintain the
+    /// size constraint.
+    fn push_line(&mut self, line: Vec<u8>) {
+        // Truncate the line if it exceeds max_size
+        let line = if line.len() > self.max_size {
+            line[line.len() - self.max_size..].to_vec()
+        } else {
+            line
+        };
+
+        let line_size = line.len();
+
+        // Remove old lines until we have room for the new line
+        while self.total_size + line_size > self.max_size && !self.lines.is_empty() {
+            if let Some(old_line) = self.lines.pop_front() {
+                self.total_size -= old_line.data.len();
+            }
+        }
+
+        // Add the new line
+        self.total_size += line_size;
+        self.lines.push_back(LineEntry { data: line });
+    }
+
+    /// Converts the ring buffer into a contiguous `Vec<u8>`.
+    ///
+    /// The lines are concatenated in order (oldest to newest).
+    fn into_vec(self) -> Vec<u8> {
+        let mut result = Vec::with_capacity(self.total_size);
+        for entry in self.lines {
+            result.extend(entry.data);
+        }
+        result
+    }
+}
+
 /// Type of output stream for logging purposes.
 #[derive(Clone, Copy)]
 enum StreamType {
@@ -55,43 +125,38 @@ enum ProcessResult {
     /// Byte was added to the line buffer, continue processing.
     ///
     /// This variant enables callers to distinguish normal processing from
-    /// line completion or truncation. While currently only `BufferFull` is
-    /// checked by the caller, having explicit variants improves code clarity
-    /// and supports future extensions (e.g., progress reporting).
+    /// line completion or truncation. Having explicit variants improves code
+    /// clarity and supports future extensions (e.g., progress reporting).
     Continue,
     /// A complete line was found (newline detected) and processed.
     LineComplete,
     /// The line exceeded [`MAX_LINE_SIZE`] and was truncated.
     LineTruncated,
-    /// The output buffer reached [`MAX_OUTPUT_SIZE`] limit.
-    BufferFull,
 }
 
 /// Processes bytes from a stream, handling line buffering and truncation.
 ///
 /// This struct encapsulates the state needed to process input bytes one at a time,
-/// managing line boundaries, truncation of long lines, and output buffer limits.
+/// managing line boundaries and truncation of long lines. Output is stored in a
+/// ring buffer that automatically discards old data when the size limit is reached.
 struct ByteProcessor<'a> {
     /// Buffer for accumulating the current line.
     line_buf: Vec<u8>,
-    /// Output buffer where complete lines are appended.
-    buffer: &'a mut Vec<u8>,
+    /// Ring buffer where complete lines are stored.
+    ring_buffer: &'a mut RingLineBuffer,
     /// Whether we are skipping bytes until the next newline (after truncation).
     skipping_to_newline: bool,
-    /// Whether the output buffer has been truncated.
-    truncated: bool,
     /// The type of stream being processed (for logging).
     stream_type: StreamType,
 }
 
 impl<'a> ByteProcessor<'a> {
-    /// Creates a new `ByteProcessor` for the given buffer and stream type.
-    fn new(buffer: &'a mut Vec<u8>, stream_type: StreamType) -> Self {
+    /// Creates a new `ByteProcessor` for the given ring buffer and stream type.
+    fn new(ring_buffer: &'a mut RingLineBuffer, stream_type: StreamType) -> Self {
         Self {
             line_buf: Vec::with_capacity(MAX_LINE_SIZE),
-            buffer,
+            ring_buffer,
             skipping_to_newline: false,
-            truncated: false,
             stream_type,
         }
     }
@@ -102,21 +167,15 @@ impl<'a> ByteProcessor<'a> {
             // End of line found
             if self.skipping_to_newline {
                 // We were skipping after truncation; add newline to buffer and reset
-                self.truncated |= append_with_limit(self.buffer, b"\n", MAX_OUTPUT_SIZE);
+                self.ring_buffer.push_line(b"\n".to_vec());
                 self.skipping_to_newline = false;
-                if self.buffer.len() >= MAX_OUTPUT_SIZE {
-                    return ProcessResult::BufferFull;
-                }
             } else {
                 // Process the complete line (excluding the newline itself)
                 log_line(&self.line_buf, self.stream_type);
-                // Append line + newline to buffer
-                self.truncated |= append_with_limit(self.buffer, &self.line_buf, MAX_OUTPUT_SIZE);
-                self.truncated |= append_with_limit(self.buffer, b"\n", MAX_OUTPUT_SIZE);
-                if self.buffer.len() >= MAX_OUTPUT_SIZE {
-                    self.line_buf.clear();
-                    return ProcessResult::BufferFull;
-                }
+                // Append line + newline to ring buffer
+                let mut line_with_newline = std::mem::take(&mut self.line_buf);
+                line_with_newline.push(b'\n');
+                self.ring_buffer.push_line(line_with_newline);
             }
             self.line_buf.clear();
             ProcessResult::LineComplete
@@ -126,13 +185,10 @@ impl<'a> ByteProcessor<'a> {
         } else if self.line_buf.len() >= MAX_LINE_SIZE {
             // Line is too long; truncate and switch to skip mode
             log_truncated_line(&self.line_buf, self.stream_type);
-            // Append truncated content to buffer (newline will be added when we find it)
-            self.truncated |= append_with_limit(self.buffer, &self.line_buf, MAX_OUTPUT_SIZE);
-            self.line_buf.clear();
+            // Append truncated content to ring buffer (newline will be added when we find it)
+            self.ring_buffer
+                .push_line(std::mem::take(&mut self.line_buf));
             self.skipping_to_newline = true;
-            if self.buffer.len() >= MAX_OUTPUT_SIZE {
-                return ProcessResult::BufferFull;
-            }
             ProcessResult::LineTruncated
         } else {
             // Normal case: add byte to line buffer
@@ -141,40 +197,15 @@ impl<'a> ByteProcessor<'a> {
         }
     }
 
-    /// Finalizes processing, handling any remaining data and logging warnings.
-    ///
-    /// Returns the `truncated` flag indicating whether output was truncated.
-    fn finalize(mut self) -> bool {
+    /// Finalizes processing, handling any remaining data.
+    fn finalize(mut self) {
         // Handle any remaining data in line_buf (no trailing newline)
         if !self.line_buf.is_empty() && !self.skipping_to_newline {
             log_line(&self.line_buf, self.stream_type);
-            self.truncated |= append_with_limit(self.buffer, &self.line_buf, MAX_OUTPUT_SIZE);
+            self.ring_buffer
+                .push_line(std::mem::take(&mut self.line_buf));
         }
-
-        // Warn if output was truncated
-        if self.truncated {
-            tracing::warn!(
-                stream = %self.stream_type,
-                max_bytes = MAX_OUTPUT_SIZE,
-                "output truncated"
-            );
-        }
-
-        self.truncated
     }
-}
-
-/// Appends data to a buffer with a size limit.
-///
-/// Returns `true` if data was truncated due to the size limit.
-fn append_with_limit(buffer: &mut Vec<u8>, data: &[u8], max_size: usize) -> bool {
-    if buffer.len() >= max_size {
-        return true;
-    }
-    let remaining = max_size - buffer.len();
-    let to_append = data.len().min(remaining);
-    buffer.extend_from_slice(&data[..to_append]);
-    to_append < data.len()
 }
 
 /// Extracts a human-readable message from a thread panic.
@@ -192,6 +223,13 @@ fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 ///
 /// This function uses chunk-based reading with line splitting to handle output
 /// efficiently while preventing OOM issues from extremely long lines.
+///
+/// ## Ring Buffer Behavior
+///
+/// Output is stored in a ring buffer that holds up to [`MAX_OUTPUT_SIZE`] (64KB)
+/// of data. When the limit is exceeded, the oldest lines are automatically
+/// discarded to make room for new data. This ensures that the most recent
+/// output (including error messages at the end of a command) is preserved.
 ///
 /// ## Line Length Handling
 ///
@@ -222,13 +260,13 @@ fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 /// returned buffer for data fidelity. For logging purposes, trailing CR
 /// characters are trimmed to improve readability when viewing CRLF output.
 fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec<u8> {
-    let mut buffer = Vec::with_capacity(INITIAL_BUFFER_CAPACITY);
     let Some(pipe) = pipe else {
-        return buffer;
+        return Vec::new();
     };
 
+    let mut ring_buffer = RingLineBuffer::new(MAX_OUTPUT_SIZE);
     let mut reader = BufReader::new(pipe);
-    let mut processor = ByteProcessor::new(&mut buffer, stream_type);
+    let mut processor = ByteProcessor::new(&mut ring_buffer, stream_type);
 
     loop {
         let available = match reader.fill_buf() {
@@ -241,10 +279,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
         };
 
         for &byte in available.iter() {
-            if processor.process(byte) == ProcessResult::BufferFull {
-                // Buffer is full; remaining bytes are discarded to prevent OOM
-                break;
-            }
+            processor.process(byte);
         }
 
         let consumed = available.len();
@@ -252,7 +287,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
     }
 
     processor.finalize();
-    buffer
+    ring_buffer.into_vec()
 }
 
 /// Logs a complete line at the appropriate level.
