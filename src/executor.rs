@@ -102,9 +102,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
             }
         };
 
-        let mut consumed = 0;
-
-        for (i, &byte) in available.iter().enumerate() {
+        for &byte in available.iter() {
             if byte == b'\n' {
                 // End of line found
                 if skipping_to_newline {
@@ -120,10 +118,8 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
                     truncated |= append_with_limit(&mut buffer, b"\n", MAX_OUTPUT_SIZE);
                 }
                 line_buf.clear();
-                consumed = i + 1;
             } else if skipping_to_newline {
                 // Skip this byte (we're in truncation skip mode)
-                consumed = i + 1;
             } else if line_buf.len() >= MAX_LINE_SIZE {
                 // Line is too long; truncate and switch to skip mode
                 let line_content = &line_buf[..];
@@ -132,13 +128,13 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
                 truncated |= append_with_limit(&mut buffer, line_content, MAX_OUTPUT_SIZE);
                 line_buf.clear();
                 skipping_to_newline = true;
-                consumed = i + 1;
             } else {
                 // Normal case: add byte to line buffer
                 line_buf.push(byte);
-                consumed = i + 1;
             }
         }
+
+        let consumed = available.len();
 
         reader.consume(consumed);
     }

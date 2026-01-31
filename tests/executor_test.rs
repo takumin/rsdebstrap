@@ -233,9 +233,10 @@ fn multiple_long_lines_are_each_truncated() {
     // Each line should be truncated to 4KB, plus newlines
     // Expected: 4KB + newline + 4KB + newline = 8194 bytes
     let expected_max = MAX_LINE_SIZE * 2 + 2; // Two lines + two newlines
-    assert!(
-        result.stdout.len() <= expected_max,
-        "stdout should be at most {} bytes (two truncated lines + newlines), got {} bytes",
+    assert_eq!(
+        result.stdout.len(),
+        expected_max,
+        "stdout should be exactly {} bytes (two truncated lines + newlines), got {} bytes",
         expected_max,
         result.stdout.len()
     );
