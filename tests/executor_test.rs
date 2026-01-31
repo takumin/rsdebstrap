@@ -3,6 +3,14 @@ use rsdebstrap::executor::{
 };
 use std::ffi::OsString;
 
+/// Test line length that exceeds MAX_LINE_SIZE (8000 > 4096).
+/// Used to verify single long lines are truncated correctly.
+const LONG_LINE_TEST_LENGTH: usize = 8000;
+
+/// Test line length for multiple long lines (6000 > 4096).
+/// Each line exceeds MAX_LINE_SIZE to verify independent truncation.
+const MULTI_LINE_TEST_LENGTH: usize = 6000;
+
 #[test]
 fn dry_run_skips_command_lookup() {
     let executor = RealCommandExecutor { dry_run: true };
@@ -185,13 +193,13 @@ fn binary_data_mixed_with_text_is_captured() {
 fn long_line_is_truncated_at_max_line_size() {
     let executor = RealCommandExecutor { dry_run: false };
     // Generate a single line longer than 4KB without newline.
-    // We generate 8000 characters (nearly 2x the 4KB limit) to ensure truncation.
+    // We generate LONG_LINE_TEST_LENGTH characters (nearly 2x the 4KB limit) to ensure truncation.
     let spec = CommandSpec::new(
         "sh",
         vec![
             OsString::from("-c"),
             // printf with %0*d generates a string of zeros with specified width
-            OsString::from("printf '%0*d' 8000 0"),
+            OsString::from(format!("printf '%0*d' {} 0", LONG_LINE_TEST_LENGTH)),
         ],
     );
 
@@ -222,8 +230,11 @@ fn multiple_long_lines_are_each_truncated() {
         "sh",
         vec![
             OsString::from("-c"),
-            // Two lines of 6000 zeros each
-            OsString::from("printf '%0*d\\n%0*d\\n' 6000 1 6000 2"),
+            // Two lines of MULTI_LINE_TEST_LENGTH zeros each
+            OsString::from(format!(
+                "printf '%0*d\\n%0*d\\n' {} 1 {} 2",
+                MULTI_LINE_TEST_LENGTH, MULTI_LINE_TEST_LENGTH
+            )),
         ],
     );
 

@@ -7,11 +7,19 @@ use std::thread;
 use which::which;
 
 /// Maximum size of captured output in bytes (64KB)
+///
+/// This limit prevents unbounded memory growth when capturing output from
+/// long-running bootstrap processes. The value is chosen to be large enough
+/// to capture useful diagnostic information while remaining reasonable for
+/// error messages.
 pub const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 /// Maximum line size before truncation (4KB)
 ///
 /// Lines longer than this limit are truncated to prevent OOM issues.
+/// This value is chosen to accommodate most reasonable log lines while
+/// preventing memory exhaustion from extremely long lines (e.g., minified
+/// JavaScript or base64-encoded data).
 pub const MAX_LINE_SIZE: usize = 4 * 1024;
 
 /// Type of output stream for logging purposes.
@@ -27,6 +35,115 @@ impl std::fmt::Display for StreamType {
             Self::Stdout => write!(f, "stdout"),
             Self::Stderr => write!(f, "stderr"),
         }
+    }
+}
+
+/// Result of processing a single byte in [`ByteProcessor`].
+///
+/// This enum represents the different outcomes when processing input bytes,
+/// allowing the caller to understand what action was taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessResult {
+    /// Byte was added to the line buffer, continue processing.
+    Continue,
+    /// A complete line was found (newline detected) and processed.
+    LineComplete,
+    /// The line exceeded [`MAX_LINE_SIZE`] and was truncated.
+    LineTruncated,
+    /// The output buffer reached [`MAX_OUTPUT_SIZE`] limit.
+    BufferFull,
+}
+
+/// Processes bytes from a stream, handling line buffering and truncation.
+///
+/// This struct encapsulates the state needed to process input bytes one at a time,
+/// managing line boundaries, truncation of long lines, and output buffer limits.
+struct ByteProcessor<'a> {
+    /// Buffer for accumulating the current line.
+    line_buf: Vec<u8>,
+    /// Output buffer where complete lines are appended.
+    buffer: &'a mut Vec<u8>,
+    /// Whether we are skipping bytes until the next newline (after truncation).
+    skipping_to_newline: bool,
+    /// Whether the output buffer has been truncated.
+    truncated: bool,
+    /// The type of stream being processed (for logging).
+    stream_type: StreamType,
+}
+
+impl<'a> ByteProcessor<'a> {
+    /// Creates a new `ByteProcessor` for the given buffer and stream type.
+    fn new(buffer: &'a mut Vec<u8>, stream_type: StreamType) -> Self {
+        Self {
+            line_buf: Vec::with_capacity(MAX_LINE_SIZE),
+            buffer,
+            skipping_to_newline: false,
+            truncated: false,
+            stream_type,
+        }
+    }
+
+    /// Processes a single byte, returning the result of the operation.
+    fn process(&mut self, byte: u8) -> ProcessResult {
+        if byte == b'\n' {
+            // End of line found
+            if self.skipping_to_newline {
+                // We were skipping after truncation; add newline to buffer and reset
+                self.truncated |= append_with_limit(self.buffer, b"\n", MAX_OUTPUT_SIZE);
+                self.skipping_to_newline = false;
+                if self.buffer.len() >= MAX_OUTPUT_SIZE {
+                    return ProcessResult::BufferFull;
+                }
+            } else {
+                // Process the complete line (excluding the newline itself)
+                log_line(&self.line_buf, self.stream_type);
+                // Append line + newline to buffer
+                self.truncated |= append_with_limit(self.buffer, &self.line_buf, MAX_OUTPUT_SIZE);
+                self.truncated |= append_with_limit(self.buffer, b"\n", MAX_OUTPUT_SIZE);
+                if self.buffer.len() >= MAX_OUTPUT_SIZE {
+                    self.line_buf.clear();
+                    return ProcessResult::BufferFull;
+                }
+            }
+            self.line_buf.clear();
+            ProcessResult::LineComplete
+        } else if self.skipping_to_newline {
+            // Skip this byte (we're in truncation skip mode)
+            ProcessResult::Continue
+        } else if self.line_buf.len() >= MAX_LINE_SIZE {
+            // Line is too long; truncate and switch to skip mode
+            log_truncated_line(&self.line_buf, self.stream_type);
+            // Append truncated content to buffer (newline will be added when we find it)
+            self.truncated |= append_with_limit(self.buffer, &self.line_buf, MAX_OUTPUT_SIZE);
+            self.line_buf.clear();
+            self.skipping_to_newline = true;
+            if self.buffer.len() >= MAX_OUTPUT_SIZE {
+                return ProcessResult::BufferFull;
+            }
+            ProcessResult::LineTruncated
+        } else {
+            // Normal case: add byte to line buffer
+            self.line_buf.push(byte);
+            ProcessResult::Continue
+        }
+    }
+
+    /// Finalizes processing, handling any remaining data and logging warnings.
+    ///
+    /// Returns the `truncated` flag indicating whether output was truncated.
+    fn finalize(mut self) -> bool {
+        // Handle any remaining data in line_buf (no trailing newline)
+        if !self.line_buf.is_empty() && !self.skipping_to_newline {
+            log_line(&self.line_buf, self.stream_type);
+            self.truncated |= append_with_limit(self.buffer, &self.line_buf, MAX_OUTPUT_SIZE);
+        }
+
+        // Warn if output was truncated
+        if self.truncated {
+            tracing::warn!(stream = %self.stream_type, max_bytes = MAX_OUTPUT_SIZE, "output truncated");
+        }
+
+        self.truncated
     }
 }
 
@@ -83,14 +200,12 @@ fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 /// environment variables (RUST_LOG).
 fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec<u8> {
     let mut buffer = Vec::new();
-    let mut truncated = false;
     let Some(pipe) = pipe else {
         return buffer;
     };
 
     let mut reader = BufReader::new(pipe);
-    let mut line_buf: Vec<u8> = Vec::with_capacity(MAX_LINE_SIZE);
-    let mut skipping_to_newline = false;
+    let mut processor = ByteProcessor::new(&mut buffer, stream_type);
 
     loop {
         let available = match reader.fill_buf() {
@@ -103,58 +218,17 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
         };
 
         for &byte in available.iter() {
-            if byte == b'\n' {
-                // End of line found
-                if skipping_to_newline {
-                    // We were skipping after truncation; add newline to buffer and reset
-                    truncated |= append_with_limit(&mut buffer, b"\n", MAX_OUTPUT_SIZE);
-                    skipping_to_newline = false;
-                } else {
-                    // Process the complete line (excluding the newline itself)
-                    let line_content = &line_buf[..];
-                    log_line(line_content, stream_type);
-                    // Append line + newline to buffer
-                    truncated |= append_with_limit(&mut buffer, line_content, MAX_OUTPUT_SIZE);
-                    truncated |= append_with_limit(&mut buffer, b"\n", MAX_OUTPUT_SIZE);
-                }
-                line_buf.clear();
-            } else if skipping_to_newline {
-                // Skip this byte (we're in truncation skip mode)
-            } else if line_buf.len() >= MAX_LINE_SIZE {
-                // Line is too long; truncate and switch to skip mode
-                let line_content = &line_buf[..];
-                log_truncated_line(line_content, stream_type);
-                // Append truncated content to buffer (newline will be added when we find it)
-                truncated |= append_with_limit(&mut buffer, line_content, MAX_OUTPUT_SIZE);
-                line_buf.clear();
-                skipping_to_newline = true;
-            } else {
-                // Normal case: add byte to line buffer
-                line_buf.push(byte);
+            if processor.process(byte) == ProcessResult::BufferFull {
+                // Buffer is full, stop processing
+                break;
             }
         }
 
         let consumed = available.len();
-
         reader.consume(consumed);
     }
 
-    // Handle any remaining data in line_buf (no trailing newline)
-    if !line_buf.is_empty() {
-        if skipping_to_newline {
-            // We were skipping; the remaining data is part of the skipped portion
-            // Nothing to log or add
-        } else {
-            log_line(&line_buf, stream_type);
-            truncated |= append_with_limit(&mut buffer, &line_buf, MAX_OUTPUT_SIZE);
-        }
-    }
-
-    // Warn if output was truncated
-    if truncated {
-        tracing::warn!(stream = %stream_type, max_bytes = MAX_OUTPUT_SIZE, "output truncated");
-    }
-
+    processor.finalize();
     buffer
 }
 
@@ -339,11 +413,11 @@ impl CommandExecutor for RealCommandExecutor {
         let stdout_handle = thread::Builder::new()
             .name("stdout-reader".to_string())
             .spawn(move || read_pipe_to_buffer(stdout_pipe, StreamType::Stdout))
-            .expect("failed to spawn stdout reader thread");
+            .map_err(|e| anyhow::anyhow!("failed to spawn stdout reader thread: {}", e))?;
         let stderr_handle = thread::Builder::new()
             .name("stderr-reader".to_string())
             .spawn(move || read_pipe_to_buffer(stderr_pipe, StreamType::Stderr))
-            .expect("failed to spawn stderr reader thread");
+            .map_err(|e| anyhow::anyhow!("failed to spawn stderr reader thread: {}", e))?;
 
         // Wait for the child process to complete
         let status = match child.wait() {
