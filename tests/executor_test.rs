@@ -1,5 +1,8 @@
-use rsdebstrap::executor::{CommandExecutor, CommandSpec, MAX_OUTPUT_SIZE, RealCommandExecutor};
+use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
 use std::ffi::OsString;
+
+/// Maximum output size used in executor (must match the internal constant)
+const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 #[test]
 fn dry_run_skips_command_lookup() {
@@ -124,18 +127,20 @@ fn large_output_is_truncated_to_max_size() {
 fn binary_output_is_captured_correctly() {
     let executor = RealCommandExecutor { dry_run: false };
     // Generate some binary data (null bytes mixed with text)
+    // Use /usr/bin/printf with format string to produce null byte
     let spec = CommandSpec::new(
-        "sh",
-        vec![
-            OsString::from("-c"),
-            OsString::from("printf 'hello\\x00world\\n'"),
-        ],
+        "/usr/bin/printf",
+        vec![OsString::from(r"hello\x00world\n")],
     );
 
     let result = executor.execute(&spec).expect("command should succeed");
 
     assert!(result.success(), "command should succeed");
-    // Note: due to line-based reading, binary output behavior may vary
-    // The important thing is that it doesn't panic
-    assert!(!result.stdout.is_empty(), "stdout should not be empty");
+    // Verify the binary data is captured correctly
+    // Expected: b"hello\x00world\n" (12 bytes)
+    assert_eq!(
+        result.stdout,
+        b"hello\x00world\n",
+        "stdout should contain the exact binary data including null byte"
+    );
 }
