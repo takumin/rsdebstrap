@@ -22,6 +22,14 @@ pub const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 /// JavaScript or base64-encoded data).
 pub const MAX_LINE_SIZE: usize = 4 * 1024;
 
+/// Initial buffer capacity for captured output (8KB)
+///
+/// This value balances memory efficiency with typical output sizes.
+/// Most commands produce less than 8KB of output, so this avoids
+/// unnecessary reallocations. The buffer grows automatically up to
+/// [`MAX_OUTPUT_SIZE`] if needed.
+pub const INITIAL_BUFFER_CAPACITY: usize = 8 * 1024;
+
 /// Type of output stream for logging purposes.
 #[derive(Clone, Copy)]
 enum StreamType {
@@ -203,7 +211,7 @@ fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 /// data might appear in command output, consider adjusting the log level via
 /// environment variables (RUST_LOG).
 fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec<u8> {
-    let mut buffer = Vec::with_capacity(8 * 1024); // 8KB initial capacity
+    let mut buffer = Vec::with_capacity(INITIAL_BUFFER_CAPACITY);
     let Some(pipe) = pipe else {
         return buffer;
     };
