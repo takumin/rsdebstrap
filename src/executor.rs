@@ -215,6 +215,12 @@ fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 /// Users need to see mmdebstrap/debootstrap progress in real-time. If sensitive
 /// data might appear in command output, consider adjusting the log level via
 /// environment variables (RUST_LOG).
+///
+/// ## Line Ending Handling
+///
+/// The function preserves original line endings (LF, CRLF, CR) in the
+/// returned buffer for data fidelity. For logging purposes, trailing CR
+/// characters are trimmed to improve readability when viewing CRLF output.
 fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec<u8> {
     let mut buffer = Vec::with_capacity(INITIAL_BUFFER_CAPACITY);
     let Some(pipe) = pipe else {
@@ -250,6 +256,9 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
 }
 
 /// Logs a complete line at the appropriate level.
+///
+/// Note: Trailing CR is trimmed for cleaner log output when handling
+/// CRLF line endings, but the original bytes are preserved in the buffer.
 fn log_line(line: &[u8], stream_type: StreamType) {
     let text = String::from_utf8_lossy(line);
     // Trim trailing CR for cleaner output (handles Windows-style CRLF)
