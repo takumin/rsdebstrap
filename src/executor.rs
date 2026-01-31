@@ -199,7 +199,7 @@ fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 /// data might appear in command output, consider adjusting the log level via
 /// environment variables (RUST_LOG).
 fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec<u8> {
-    let mut buffer = Vec::new();
+    let mut buffer = Vec::with_capacity(8 * 1024); // 8KB initial capacity
     let Some(pipe) = pipe else {
         return buffer;
     };
@@ -414,10 +414,18 @@ impl CommandExecutor for RealCommandExecutor {
             .name("stdout-reader".to_string())
             .spawn(move || read_pipe_to_buffer(stdout_pipe, StreamType::Stdout))
             .map_err(|e| anyhow::anyhow!("failed to spawn stdout reader thread: {}", e))?;
-        let stderr_handle = thread::Builder::new()
+
+        let stderr_handle = match thread::Builder::new()
             .name("stderr-reader".to_string())
             .spawn(move || read_pipe_to_buffer(stderr_pipe, StreamType::Stderr))
-            .map_err(|e| anyhow::anyhow!("failed to spawn stderr reader thread: {}", e))?;
+        {
+            Ok(handle) => handle,
+            Err(e) => {
+                // Clean up stdout thread before returning error
+                let _ = stdout_handle.join();
+                anyhow::bail!("failed to spawn stderr reader thread: {}", e);
+            }
+        };
 
         // Wait for the child process to complete
         let status = match child.wait() {
