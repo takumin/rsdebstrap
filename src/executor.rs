@@ -140,7 +140,11 @@ impl<'a> ByteProcessor<'a> {
 
         // Warn if output was truncated
         if self.truncated {
-            tracing::warn!(stream = %self.stream_type, max_bytes = MAX_OUTPUT_SIZE, "output truncated");
+            tracing::warn!(
+                stream = %self.stream_type,
+                max_bytes = MAX_OUTPUT_SIZE,
+                "output truncated"
+            );
         }
 
         self.truncated
