@@ -275,20 +275,15 @@ impl CommandExecutor for RealCommandExecutor {
         };
 
         // Wait for reader threads to complete (with error logging on panic)
-        if let Err(e) = stdout_handle.join() {
-            tracing::error!(
-                stream = "stdout",
-                panic = panic_message(&*e),
-                "reader thread panicked"
-            );
-        }
-
-        if let Err(e) = stderr_handle.join() {
-            tracing::error!(
-                stream = "stderr",
-                panic = panic_message(&*e),
-                "reader thread panicked"
-            );
+        let handles = [("stdout", stdout_handle), ("stderr", stderr_handle)];
+        for (name, handle) in handles {
+            if let Err(e) = handle.join() {
+                tracing::error!(
+                    stream = name,
+                    panic = panic_message(&*e),
+                    "reader thread panicked"
+                );
+            }
         }
 
         tracing::trace!("executed command: {}: success={}", spec.command, status.success());
