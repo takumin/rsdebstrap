@@ -171,11 +171,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
             Ok(0) => break, // EOF
             Ok(_) => {
                 // ログ出力（改行を除く）
-                let log_content = if line_buf.ends_with(b"\n") {
-                    &line_buf[..line_buf.len() - 1]
-                } else {
-                    &line_buf[..]
-                };
+                let log_content = line_buf.strip_suffix(b"\n").unwrap_or(&line_buf);
                 log_line(log_content, stream_type);
                 ring_buffer.push_line(std::mem::take(&mut line_buf));
             }
