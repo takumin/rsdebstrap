@@ -1,7 +1,7 @@
 //! systemd-nspawn isolation implementation.
 
 use anyhow::Result;
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 use std::ffi::OsString;
 
@@ -20,6 +20,9 @@ use crate::executor::CommandSpec;
 ///   privilege: sudo
 ///   quiet: true
 ///   private_network: true
+///   bind_ro:
+///     - /etc/resolv.conf
+///     - /etc/hosts
 /// ```
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct NspawnIsolation {
@@ -34,6 +37,11 @@ pub struct NspawnIsolation {
     /// Disconnect networking from the container (--private-network)
     #[serde(default)]
     pub private_network: bool,
+
+    /// Read-only bind mount paths (`--bind-ro=`).
+    /// Each path is mounted at the same location inside the container.
+    #[serde(default)]
+    pub bind_ro: Vec<Utf8PathBuf>,
 }
 
 impl IsolationStrategy for NspawnIsolation {
@@ -70,6 +78,14 @@ impl IsolationStrategy for NspawnIsolation {
             args.push("--private-network".into());
         }
 
+        // Read-only bind mounts
+        for path in &self.bind_ro {
+            args.push(format!("--bind-ro={}", path).into());
+        }
+
+        // Separator to prevent script path from being interpreted as options
+        args.push("--".into());
+
         // Shell and script
         args.push(shell.into());
         args.push(script_path.into());
@@ -89,6 +105,7 @@ mod tests {
         assert_eq!(isolation.privilege, Privilege::None);
         assert!(!isolation.quiet);
         assert!(!isolation.private_network);
+        assert!(isolation.bind_ro.is_empty());
     }
 
     #[test]
@@ -115,6 +132,7 @@ mod tests {
             privilege: Privilege::None,
             quiet: false,
             private_network: false,
+            bind_ro: vec![],
         };
         let rootfs = Utf8Path::new("/rootfs");
         let spec = isolation
@@ -122,11 +140,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(spec.command, "systemd-nspawn");
-        assert_eq!(spec.args.len(), 4);
+        assert_eq!(spec.args.len(), 5);
         assert_eq!(spec.args[0], "-D");
         assert_eq!(spec.args[1], "/rootfs");
-        assert_eq!(spec.args[2], "/bin/sh");
-        assert_eq!(spec.args[3], "/tmp/script.sh");
+        assert_eq!(spec.args[2], "--");
+        assert_eq!(spec.args[3], "/bin/sh");
+        assert_eq!(spec.args[4], "/tmp/script.sh");
     }
 
     #[test]
@@ -135,6 +154,7 @@ mod tests {
             privilege: Privilege::None,
             quiet: true,
             private_network: true,
+            bind_ro: vec![],
         };
         let rootfs = Utf8Path::new("/rootfs");
         let spec = isolation
@@ -142,13 +162,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(spec.command, "systemd-nspawn");
-        assert_eq!(spec.args.len(), 6);
+        assert_eq!(spec.args.len(), 7);
         assert_eq!(spec.args[0], "-D");
         assert_eq!(spec.args[1], "/rootfs");
         assert_eq!(spec.args[2], "--quiet");
         assert_eq!(spec.args[3], "--private-network");
-        assert_eq!(spec.args[4], "/bin/sh");
-        assert_eq!(spec.args[5], "/tmp/script.sh");
+        assert_eq!(spec.args[4], "--");
+        assert_eq!(spec.args[5], "/bin/sh");
+        assert_eq!(spec.args[6], "/tmp/script.sh");
     }
 
     #[test]
@@ -157,6 +178,7 @@ mod tests {
             privilege: Privilege::Sudo,
             quiet: true,
             private_network: false,
+            bind_ro: vec![],
         };
         let rootfs = Utf8Path::new("/rootfs");
         let spec = isolation
@@ -164,13 +186,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(spec.command, "sudo");
-        assert_eq!(spec.args.len(), 6);
+        assert_eq!(spec.args.len(), 7);
         assert_eq!(spec.args[0], "systemd-nspawn");
         assert_eq!(spec.args[1], "-D");
         assert_eq!(spec.args[2], "/rootfs");
         assert_eq!(spec.args[3], "--quiet");
-        assert_eq!(spec.args[4], "/bin/sh");
-        assert_eq!(spec.args[5], "/tmp/script.sh");
+        assert_eq!(spec.args[4], "--");
+        assert_eq!(spec.args[5], "/bin/sh");
+        assert_eq!(spec.args[6], "/tmp/script.sh");
     }
 
     #[test]
@@ -203,6 +226,53 @@ type: nspawn
                 assert_eq!(nspawn.privilege, Privilege::None);
                 assert!(!nspawn.quiet);
                 assert!(!nspawn.private_network);
+                assert!(nspawn.bind_ro.is_empty());
+            }
+            _ => panic!("Expected NspawnIsolation"),
+        }
+    }
+
+    #[test]
+    fn test_nspawn_isolation_build_command_with_bind_ro() {
+        let isolation = NspawnIsolation {
+            privilege: Privilege::Sudo,
+            quiet: false,
+            private_network: false,
+            bind_ro: vec!["/etc/resolv.conf".into(), "/etc/hosts".into()],
+        };
+        let rootfs = Utf8Path::new("/rootfs");
+        let spec = isolation
+            .build_command(rootfs, "/bin/sh", "/tmp/script.sh")
+            .unwrap();
+
+        assert_eq!(spec.command, "sudo");
+        assert_eq!(spec.args.len(), 8);
+        assert_eq!(spec.args[0], "systemd-nspawn");
+        assert_eq!(spec.args[1], "-D");
+        assert_eq!(spec.args[2], "/rootfs");
+        assert_eq!(spec.args[3], "--bind-ro=/etc/resolv.conf");
+        assert_eq!(spec.args[4], "--bind-ro=/etc/hosts");
+        assert_eq!(spec.args[5], "--");
+        assert_eq!(spec.args[6], "/bin/sh");
+        assert_eq!(spec.args[7], "/tmp/script.sh");
+    }
+
+    #[test]
+    fn test_nspawn_isolation_deserialize_with_bind_ro() {
+        let yaml = r#"
+type: nspawn
+privilege: sudo
+bind_ro:
+    - /etc/resolv.conf
+    - /etc/hosts
+"#;
+        let config: super::super::IsolationConfig = serde_yaml::from_str(yaml).unwrap();
+        match config {
+            super::super::IsolationConfig::Nspawn(nspawn) => {
+                assert_eq!(nspawn.privilege, Privilege::Sudo);
+                assert_eq!(nspawn.bind_ro.len(), 2);
+                assert_eq!(nspawn.bind_ro[0], "/etc/resolv.conf");
+                assert_eq!(nspawn.bind_ro[1], "/etc/hosts");
             }
             _ => panic!("Expected NspawnIsolation"),
         }

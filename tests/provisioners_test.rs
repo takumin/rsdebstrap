@@ -78,13 +78,15 @@ mod yaml_parsing {
 
     #[test]
     fn test_profile_default_isolation() {
+        // editorconfig-checker-disable
         let yaml = r#"
 dir: /tmp/rootfs
 bootstrap:
-  type: mmdebstrap
-  suite: trixie
-  target: rootfs
+    type: mmdebstrap
+    suite: trixie
+    target: rootfs
 "#;
+        // editorconfig-checker-enable
         let profile: Profile = serde_yaml::from_str(yaml).unwrap();
         assert!(matches!(
             profile.isolation,
@@ -96,16 +98,18 @@ bootstrap:
 
     #[test]
     fn test_profile_chroot_isolation() {
+        // editorconfig-checker-disable
         let yaml = r#"
 dir: /tmp/rootfs
 bootstrap:
-  type: mmdebstrap
-  suite: trixie
-  target: rootfs
+    type: mmdebstrap
+    suite: trixie
+    target: rootfs
 isolation:
-  type: chroot
-  privilege: sudo
+    type: chroot
+    privilege: sudo
 "#;
+        // editorconfig-checker-enable
         let profile: Profile = serde_yaml::from_str(yaml).unwrap();
         match profile.isolation {
             IsolationConfig::Chroot(chroot) => {
@@ -117,18 +121,20 @@ isolation:
 
     #[test]
     fn test_profile_nspawn_isolation() {
+        // editorconfig-checker-disable
         let yaml = r#"
 dir: /tmp/rootfs
 bootstrap:
-  type: mmdebstrap
-  suite: trixie
-  target: rootfs
+    type: mmdebstrap
+    suite: trixie
+    target: rootfs
 isolation:
-  type: nspawn
-  privilege: sudo
-  quiet: true
-  private_network: true
+    type: nspawn
+    privilege: sudo
+    quiet: true
+    private_network: true
 "#;
+        // editorconfig-checker-enable
         let profile: Profile = serde_yaml::from_str(yaml).unwrap();
         match profile.isolation {
             IsolationConfig::Nspawn(nspawn) => {
@@ -142,23 +148,25 @@ isolation:
 
     #[test]
     fn test_profile_bwrap_isolation() {
+        // editorconfig-checker-disable
         let yaml = r#"
 dir: /tmp/rootfs
 bootstrap:
-  type: mmdebstrap
-  suite: trixie
-  target: rootfs
+    type: mmdebstrap
+    suite: trixie
+    target: rootfs
 isolation:
-  type: bwrap
-  dev: /dev
-  proc: /proc
-  unshare_net: true
+    type: bwrap
+    dev: /dev
+    proc: /proc
+    unshare_net: true
 "#;
+        // editorconfig-checker-enable
         let profile: Profile = serde_yaml::from_str(yaml).unwrap();
         match profile.isolation {
             IsolationConfig::Bwrap(bwrap) => {
-                assert_eq!(bwrap.dev, Some("/dev".to_string()));
-                assert_eq!(bwrap.proc, Some("/proc".to_string()));
+                assert_eq!(bwrap.dev, Some("/dev".into()));
+                assert_eq!(bwrap.proc, Some("/proc".into()));
                 assert!(bwrap.unshare_net);
             }
             _ => panic!("Expected BwrapIsolation"),
@@ -167,21 +175,23 @@ isolation:
 
     #[test]
     fn test_profile_with_provisioners_and_isolation() {
+        // editorconfig-checker-disable
         let yaml = r#"
 dir: /tmp/rootfs
 bootstrap:
-  type: mmdebstrap
-  suite: trixie
-  target: rootfs
+    type: mmdebstrap
+    suite: trixie
+    target: rootfs
 isolation:
-  type: nspawn
-  privilege: sudo
+    type: nspawn
+    privilege: sudo
 provisioners:
-  - type: shell
-    content: "apt update"
-  - type: shell
-    content: "apt install nginx"
+    - type: shell
+      content: "apt update"
+    - type: shell
+      content: "apt install nginx"
 "#;
+        // editorconfig-checker-enable
         let profile: Profile = serde_yaml::from_str(yaml).unwrap();
         // Isolation is at profile level
         assert!(matches!(profile.isolation, IsolationConfig::Nspawn(_)));
@@ -192,16 +202,18 @@ provisioners:
     #[test]
     fn test_profile_backward_compatibility_without_isolation() {
         // Old format without isolation should still work (defaults to chroot)
+        // editorconfig-checker-disable
         let yaml = r#"
 dir: /tmp/rootfs
 bootstrap:
-  type: mmdebstrap
-  suite: trixie
-  target: rootfs
+    type: mmdebstrap
+    suite: trixie
+    target: rootfs
 provisioners:
-  - type: shell
-    content: "echo hello"
+    - type: shell
+      content: "echo hello"
 "#;
+        // editorconfig-checker-enable
         let profile: Profile = serde_yaml::from_str(yaml).unwrap();
         assert!(matches!(
             profile.isolation,
@@ -210,5 +222,67 @@ provisioners:
             })
         ));
         assert_eq!(profile.provisioners.len(), 1);
+    }
+
+    #[test]
+    fn test_profile_nspawn_isolation_with_bind_ro() {
+        // editorconfig-checker-disable
+        let yaml = r#"
+dir: /tmp/rootfs
+bootstrap:
+    type: mmdebstrap
+    suite: trixie
+    target: rootfs
+isolation:
+    type: nspawn
+    privilege: sudo
+    bind_ro:
+        - /etc/resolv.conf
+        - /etc/hosts
+"#;
+        // editorconfig-checker-enable
+        let profile: Profile = serde_yaml::from_str(yaml).unwrap();
+        match profile.isolation {
+            IsolationConfig::Nspawn(nspawn) => {
+                assert_eq!(nspawn.privilege, Privilege::Sudo);
+                assert_eq!(nspawn.bind_ro.len(), 2);
+                assert_eq!(nspawn.bind_ro[0], "/etc/resolv.conf");
+                assert_eq!(nspawn.bind_ro[1], "/etc/hosts");
+            }
+            _ => panic!("Expected NspawnIsolation"),
+        }
+    }
+
+    #[test]
+    fn test_profile_bwrap_isolation_with_binds() {
+        // editorconfig-checker-disable
+        let yaml = r#"
+dir: /tmp/rootfs
+bootstrap:
+    type: mmdebstrap
+    suite: trixie
+    target: rootfs
+isolation:
+    type: bwrap
+    dev: /dev
+    proc: /proc
+    bind:
+        - /some/path
+    bind_ro:
+        - /etc/resolv.conf
+"#;
+        // editorconfig-checker-enable
+        let profile: Profile = serde_yaml::from_str(yaml).unwrap();
+        match profile.isolation {
+            IsolationConfig::Bwrap(bwrap) => {
+                assert_eq!(bwrap.dev, Some("/dev".into()));
+                assert_eq!(bwrap.proc, Some("/proc".into()));
+                assert_eq!(bwrap.bind.len(), 1);
+                assert_eq!(bwrap.bind[0], "/some/path");
+                assert_eq!(bwrap.bind_ro.len(), 1);
+                assert_eq!(bwrap.bind_ro[0], "/etc/resolv.conf");
+            }
+            _ => panic!("Expected BwrapIsolation"),
+        }
     }
 }

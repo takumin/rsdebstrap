@@ -1,7 +1,7 @@
 //! bubblewrap (bwrap) isolation implementation.
 
 use anyhow::Result;
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 use std::ffi::OsString;
 
@@ -20,20 +20,34 @@ use crate::executor::CommandSpec;
 ///   dev: /dev
 ///   proc: /proc
 ///   unshare_net: true
+///   bind:
+///     - /some/path
+///   bind_ro:
+///     - /etc/resolv.conf
 /// ```
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct BwrapIsolation {
-    /// Bind mount /dev from host (--dev)
+    /// Create a new /dev tmpfs at the given path inside the sandbox (`--dev <path>`).
     #[serde(default)]
-    pub dev: Option<String>,
+    pub dev: Option<Utf8PathBuf>,
 
-    /// Bind mount /proc from host (--proc)
+    /// Mount a new procfs at the given path inside the sandbox (`--proc <path>`).
     #[serde(default)]
-    pub proc: Option<String>,
+    pub proc: Option<Utf8PathBuf>,
 
     /// Unshare network namespace (--unshare-net)
     #[serde(default)]
     pub unshare_net: bool,
+
+    /// Bind mount paths read-write inside the sandbox (`--bind SRC DEST`).
+    /// Each path is mounted at the same location inside the sandbox.
+    #[serde(default)]
+    pub bind: Vec<Utf8PathBuf>,
+
+    /// Bind mount paths read-only inside the sandbox (`--ro-bind SRC DEST`).
+    /// Each path is mounted at the same location inside the sandbox.
+    #[serde(default)]
+    pub bind_ro: Vec<Utf8PathBuf>,
 }
 
 impl IsolationStrategy for BwrapIsolation {
@@ -66,10 +80,27 @@ impl IsolationStrategy for BwrapIsolation {
             args.push(proc.as_str().into());
         }
 
+        // Bind mounts (read-write)
+        for path in &self.bind {
+            args.push("--bind".into());
+            args.push(path.as_str().into());
+            args.push(path.as_str().into()); // Same dest as src
+        }
+
+        // Bind mounts (read-only)
+        for path in &self.bind_ro {
+            args.push("--ro-bind".into());
+            args.push(path.as_str().into());
+            args.push(path.as_str().into()); // Same dest as src
+        }
+
         // Optional network namespace unsharing
         if self.unshare_net {
             args.push("--unshare-net".into());
         }
+
+        // Separator to prevent script path from being interpreted as options
+        args.push("--".into());
 
         // Shell and script
         args.push(shell.into());
@@ -89,6 +120,8 @@ mod tests {
         assert!(isolation.dev.is_none());
         assert!(isolation.proc.is_none());
         assert!(!isolation.unshare_net);
+        assert!(isolation.bind.is_empty());
+        assert!(isolation.bind_ro.is_empty());
     }
 
     #[test]
@@ -103,6 +136,8 @@ mod tests {
             dev: None,
             proc: None,
             unshare_net: false,
+            bind: vec![],
+            bind_ro: vec![],
         };
         let rootfs = Utf8Path::new("/rootfs");
         let spec = isolation
@@ -110,20 +145,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(spec.command, "bwrap");
-        assert_eq!(spec.args.len(), 5);
+        assert_eq!(spec.args.len(), 6);
         assert_eq!(spec.args[0], "--bind");
         assert_eq!(spec.args[1], "/rootfs");
         assert_eq!(spec.args[2], "/");
-        assert_eq!(spec.args[3], "/bin/sh");
-        assert_eq!(spec.args[4], "/tmp/script.sh");
+        assert_eq!(spec.args[3], "--");
+        assert_eq!(spec.args[4], "/bin/sh");
+        assert_eq!(spec.args[5], "/tmp/script.sh");
     }
 
     #[test]
     fn test_bwrap_isolation_build_command_with_dev() {
         let isolation = BwrapIsolation {
-            dev: Some("/dev".to_string()),
+            dev: Some("/dev".into()),
             proc: None,
             unshare_net: false,
+            bind: vec![],
+            bind_ro: vec![],
         };
         let rootfs = Utf8Path::new("/rootfs");
         let spec = isolation
@@ -131,22 +169,25 @@ mod tests {
             .unwrap();
 
         assert_eq!(spec.command, "bwrap");
-        assert_eq!(spec.args.len(), 7);
+        assert_eq!(spec.args.len(), 8);
         assert_eq!(spec.args[0], "--bind");
         assert_eq!(spec.args[1], "/rootfs");
         assert_eq!(spec.args[2], "/");
         assert_eq!(spec.args[3], "--dev");
         assert_eq!(spec.args[4], "/dev");
-        assert_eq!(spec.args[5], "/bin/sh");
-        assert_eq!(spec.args[6], "/tmp/script.sh");
+        assert_eq!(spec.args[5], "--");
+        assert_eq!(spec.args[6], "/bin/sh");
+        assert_eq!(spec.args[7], "/tmp/script.sh");
     }
 
     #[test]
     fn test_bwrap_isolation_build_command_with_all_options() {
         let isolation = BwrapIsolation {
-            dev: Some("/dev".to_string()),
-            proc: Some("/proc".to_string()),
+            dev: Some("/dev".into()),
+            proc: Some("/proc".into()),
             unshare_net: true,
+            bind: vec![],
+            bind_ro: vec![],
         };
         let rootfs = Utf8Path::new("/rootfs");
         let spec = isolation
@@ -154,7 +195,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(spec.command, "bwrap");
-        assert_eq!(spec.args.len(), 10);
+        assert_eq!(spec.args.len(), 11);
         assert_eq!(spec.args[0], "--bind");
         assert_eq!(spec.args[1], "/rootfs");
         assert_eq!(spec.args[2], "/");
@@ -163,8 +204,9 @@ mod tests {
         assert_eq!(spec.args[5], "--proc");
         assert_eq!(spec.args[6], "/proc");
         assert_eq!(spec.args[7], "--unshare-net");
-        assert_eq!(spec.args[8], "/bin/sh");
-        assert_eq!(spec.args[9], "/tmp/script.sh");
+        assert_eq!(spec.args[8], "--");
+        assert_eq!(spec.args[9], "/bin/sh");
+        assert_eq!(spec.args[10], "/tmp/script.sh");
     }
 
     #[test]
@@ -178,8 +220,8 @@ unshare_net: true
         let config: super::super::IsolationConfig = serde_yaml::from_str(yaml).unwrap();
         match config {
             super::super::IsolationConfig::Bwrap(bwrap) => {
-                assert_eq!(bwrap.dev, Some("/dev".to_string()));
-                assert_eq!(bwrap.proc, Some("/proc".to_string()));
+                assert_eq!(bwrap.dev, Some("/dev".into()));
+                assert_eq!(bwrap.proc, Some("/proc".into()));
                 assert!(bwrap.unshare_net);
             }
             _ => panic!("Expected BwrapIsolation"),
@@ -197,6 +239,63 @@ type: bwrap
                 assert!(bwrap.dev.is_none());
                 assert!(bwrap.proc.is_none());
                 assert!(!bwrap.unshare_net);
+                assert!(bwrap.bind.is_empty());
+                assert!(bwrap.bind_ro.is_empty());
+            }
+            _ => panic!("Expected BwrapIsolation"),
+        }
+    }
+
+    #[test]
+    fn test_bwrap_isolation_build_command_with_binds() {
+        let isolation = BwrapIsolation {
+            dev: Some("/dev".into()),
+            proc: None,
+            unshare_net: false,
+            bind: vec!["/some/path".into()],
+            bind_ro: vec!["/etc/resolv.conf".into()],
+        };
+        let rootfs = Utf8Path::new("/rootfs");
+        let spec = isolation
+            .build_command(rootfs, "/bin/sh", "/tmp/script.sh")
+            .unwrap();
+
+        assert_eq!(spec.command, "bwrap");
+        assert_eq!(spec.args.len(), 14);
+        assert_eq!(spec.args[0], "--bind");
+        assert_eq!(spec.args[1], "/rootfs");
+        assert_eq!(spec.args[2], "/");
+        assert_eq!(spec.args[3], "--dev");
+        assert_eq!(spec.args[4], "/dev");
+        assert_eq!(spec.args[5], "--bind");
+        assert_eq!(spec.args[6], "/some/path");
+        assert_eq!(spec.args[7], "/some/path");
+        assert_eq!(spec.args[8], "--ro-bind");
+        assert_eq!(spec.args[9], "/etc/resolv.conf");
+        assert_eq!(spec.args[10], "/etc/resolv.conf");
+        assert_eq!(spec.args[11], "--");
+        assert_eq!(spec.args[12], "/bin/sh");
+        assert_eq!(spec.args[13], "/tmp/script.sh");
+    }
+
+    #[test]
+    fn test_bwrap_isolation_deserialize_with_binds() {
+        let yaml = r#"
+type: bwrap
+dev: /dev
+bind:
+    - /some/path
+bind_ro:
+    - /etc/resolv.conf
+"#;
+        let config: super::super::IsolationConfig = serde_yaml::from_str(yaml).unwrap();
+        match config {
+            super::super::IsolationConfig::Bwrap(bwrap) => {
+                assert_eq!(bwrap.dev, Some("/dev".into()));
+                assert_eq!(bwrap.bind.len(), 1);
+                assert_eq!(bwrap.bind[0], "/some/path");
+                assert_eq!(bwrap.bind_ro.len(), 1);
+                assert_eq!(bwrap.bind_ro[0], "/etc/resolv.conf");
             }
             _ => panic!("Expected BwrapIsolation"),
         }
