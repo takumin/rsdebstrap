@@ -1,8 +1,7 @@
-use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
+use rsdebstrap::executor::{
+    CommandExecutor, CommandSpec, MAX_LINE_SIZE, MAX_OUTPUT_SIZE, RealCommandExecutor,
+};
 use std::ffi::OsString;
-
-/// Maximum output size for testing (must match the internal MAX_OUTPUT_SIZE constant: 64KB)
-const TEST_MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 #[test]
 fn dry_run_skips_command_lookup() {
@@ -96,7 +95,7 @@ fn large_output_is_truncated_to_max_size() {
     // Using 'yes' with 'head -c' to generate text output with newlines,
     // which is more appropriate for testing line-based reading.
     // We generate 100KB (about 1.5x the limit) to ensure truncation occurs.
-    let output_size = TEST_MAX_OUTPUT_SIZE + (TEST_MAX_OUTPUT_SIZE / 2); // ~100KB
+    let output_size = MAX_OUTPUT_SIZE + (MAX_OUTPUT_SIZE / 2); // ~100KB
     let spec = CommandSpec::new(
         "sh",
         vec![
@@ -109,17 +108,17 @@ fn large_output_is_truncated_to_max_size() {
 
     assert!(result.success(), "command should succeed");
     assert!(
-        result.stdout.len() <= TEST_MAX_OUTPUT_SIZE,
+        result.stdout.len() <= MAX_OUTPUT_SIZE,
         "stdout should be truncated to max output size ({} bytes), got {} bytes",
-        TEST_MAX_OUTPUT_SIZE,
+        MAX_OUTPUT_SIZE,
         result.stdout.len()
     );
     // Output should be substantial (at least half of max size)
     // since we're generating ~100KB and the limit is 64KB
     assert!(
-        result.stdout.len() >= TEST_MAX_OUTPUT_SIZE / 2,
+        result.stdout.len() >= MAX_OUTPUT_SIZE / 2,
         "stdout should be substantial (at least {} bytes), got {} bytes",
-        TEST_MAX_OUTPUT_SIZE / 2,
+        MAX_OUTPUT_SIZE / 2,
         result.stdout.len()
     );
 }
@@ -182,9 +181,6 @@ fn binary_data_mixed_with_text_is_captured() {
     );
 }
 
-/// Maximum line size for testing (must match the internal MAX_LINE_SIZE constant: 4KB)
-const TEST_MAX_LINE_SIZE: usize = 4 * 1024;
-
 #[test]
 fn long_line_is_truncated_at_max_line_size() {
     let executor = RealCommandExecutor { dry_run: false };
@@ -205,15 +201,15 @@ fn long_line_is_truncated_at_max_line_size() {
     // The output should be truncated to MAX_LINE_SIZE (4KB)
     // Since there's no newline, the line is treated as incomplete but still truncated
     assert!(
-        result.stdout.len() <= TEST_MAX_LINE_SIZE,
+        result.stdout.len() <= MAX_LINE_SIZE,
         "stdout should be truncated to max line size ({} bytes), got {} bytes",
-        TEST_MAX_LINE_SIZE,
+        MAX_LINE_SIZE,
         result.stdout.len()
     );
     // Output should be exactly MAX_LINE_SIZE since we generated more than that
     assert_eq!(
         result.stdout.len(),
-        TEST_MAX_LINE_SIZE,
+        MAX_LINE_SIZE,
         "stdout should be exactly max line size when truncated"
     );
 }
@@ -236,7 +232,7 @@ fn multiple_long_lines_are_each_truncated() {
     assert!(result.success(), "command should succeed");
     // Each line should be truncated to 4KB, plus newlines
     // Expected: 4KB + newline + 4KB + newline = 8194 bytes
-    let expected_max = TEST_MAX_LINE_SIZE * 2 + 2; // Two lines + two newlines
+    let expected_max = MAX_LINE_SIZE * 2 + 2; // Two lines + two newlines
     assert!(
         result.stdout.len() <= expected_max,
         "stdout should be at most {} bytes (two truncated lines + newlines), got {} bytes",

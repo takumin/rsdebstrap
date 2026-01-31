@@ -7,12 +7,12 @@ use std::thread;
 use which::which;
 
 /// Maximum size of captured output in bytes (64KB)
-pub(crate) const MAX_OUTPUT_SIZE: usize = 64 * 1024;
+pub const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 /// Maximum line size before truncation (4KB)
 ///
 /// Lines longer than this limit are truncated to prevent OOM issues.
-const MAX_LINE_SIZE: usize = 4 * 1024;
+pub const MAX_LINE_SIZE: usize = 4 * 1024;
 
 /// Type of output stream for logging purposes.
 #[derive(Clone, Copy)]
