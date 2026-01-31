@@ -7,12 +7,13 @@ use std::thread;
 use which::which;
 
 /// Maximum size of captured output in bytes (64KB)
-const MAX_OUTPUT_SIZE: usize = 64 * 1024;
+pub const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 /// Buffer size for reading from pipes (4KB)
 const READ_BUFFER_SIZE: usize = 4 * 1024;
 
 /// Extracts a human-readable message from a thread panic.
+#[allow(clippy::borrowed_box)]
 fn panic_message(err: &Box<dyn std::any::Any + Send>) -> &str {
     err.downcast_ref::<&str>()
         .copied()
@@ -27,6 +28,7 @@ fn panic_message(err: &Box<dyn std::any::Any + Send>) -> &str {
 /// In binary mode, log output uses lossy UTF-8 conversion.
 fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> Vec<u8> {
     let mut buffer = Vec::new();
+    let mut truncated = false;
     let Some(pipe) = pipe else {
         return buffer;
     };
@@ -49,22 +51,18 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
                     let line_bytes = line.as_bytes();
                     let to_append = line_bytes.len().min(remaining);
                     buffer.extend_from_slice(&line_bytes[..to_append]);
+                    if to_append < line_bytes.len() {
+                        truncated = true;
+                    }
+                } else {
+                    truncated = true;
                 }
             }
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::InvalidData {
                     // UTF-8 error: fall back to raw byte reading
                     tracing::trace!(stream = stream_name, error = %e, "switching to binary mode");
-
-                    // Save any data that was read into BufReader's internal buffer before the error
-                    let buffered = reader.buffer();
-                    if !buffered.is_empty() && buffer.len() < MAX_OUTPUT_SIZE {
-                        let remaining = MAX_OUTPUT_SIZE - buffer.len();
-                        let to_append = buffered.len().min(remaining);
-                        buffer.extend_from_slice(&buffered[..to_append]);
-                    }
-
-                    read_binary_remainder(&mut reader, stream_name, &mut buffer);
+                    truncated |= read_binary_remainder(&mut reader, stream_name, &mut buffer);
                 } else {
                     // Other I/O errors (e.g., pipe broken): warn and stop reading
                     tracing::warn!(stream = stream_name, error = %e, "I/O error, stopping read");
@@ -75,7 +73,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
     }
 
     // Warn if output was truncated
-    if buffer.len() >= MAX_OUTPUT_SIZE {
+    if truncated {
         tracing::warn!(stream = stream_name, max_bytes = MAX_OUTPUT_SIZE, "output truncated");
     }
 
@@ -84,15 +82,33 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
 
 /// Reads remaining binary data from a reader when UTF-8 decoding fails.
 ///
-/// Note: The caller (`read_pipe_to_buffer`) has already copied data from
-/// BufReader's internal buffer before calling this function. We consume that
-/// buffer here to advance past it before continuing with raw reads.
+/// This function saves any data already buffered by the BufReader before
+/// continuing to read remaining data in binary mode.
+///
+/// Returns `true` if data was truncated due to the size limit.
 fn read_binary_remainder<R: Read>(
     reader: &mut BufReader<R>,
     stream_name: &'static str,
     buffer: &mut Vec<u8>,
-) {
-    // Consume the internal buffer (already saved by caller in read_pipe_to_buffer)
+) -> bool {
+    let mut truncated = false;
+
+    // Save any data that was read into BufReader's internal buffer before the UTF-8 error
+    let buffered = reader.buffer();
+    if !buffered.is_empty() {
+        if buffer.len() < MAX_OUTPUT_SIZE {
+            let remaining = MAX_OUTPUT_SIZE - buffer.len();
+            let to_append = buffered.len().min(remaining);
+            buffer.extend_from_slice(&buffered[..to_append]);
+            if to_append < buffered.len() {
+                truncated = true;
+            }
+        } else {
+            truncated = true;
+        }
+    }
+
+    // Consume the internal buffer to advance past it before continuing with raw reads
     reader.consume(reader.buffer().len());
 
     let mut read_buf = [0u8; READ_BUFFER_SIZE];
@@ -113,6 +129,11 @@ fn read_binary_remainder<R: Read>(
                     let remaining = MAX_OUTPUT_SIZE - buffer.len();
                     let to_append = n.min(remaining);
                     buffer.extend_from_slice(&read_buf[..to_append]);
+                    if to_append < n {
+                        truncated = true;
+                    }
+                } else {
+                    truncated = true;
                 }
             }
             Err(e) => {
@@ -125,6 +146,8 @@ fn read_binary_remainder<R: Read>(
     if total_binary_bytes > 0 {
         tracing::trace!(stream = stream_name, bytes = total_binary_bytes, "read binary data");
     }
+
+    truncated
 }
 
 /// Specification for a command to be executed
@@ -274,11 +297,11 @@ impl CommandExecutor for RealCommandExecutor {
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
 
-        // Read stdout in a separate thread
-        let stdout_handle = thread::spawn(move || read_pipe_to_buffer(stdout_pipe, "stdout"));
-
-        // Read stderr in a separate thread
+        // Read stderr in a separate thread (only one thread needed)
         let stderr_handle = thread::spawn(move || read_pipe_to_buffer(stderr_pipe, "stderr"));
+
+        // Read stdout in the main thread
+        let stdout = read_pipe_to_buffer(stdout_pipe, "stdout");
 
         // Wait for the child process to complete
         let status = match child.wait() {
@@ -288,11 +311,7 @@ impl CommandExecutor for RealCommandExecutor {
             }
         };
 
-        // Collect output from threads (with error logging on panic)
-        let stdout = stdout_handle.join().unwrap_or_else(|e| {
-            tracing::error!(stream = "stdout", panic = panic_message(&e), "reader thread panicked");
-            Vec::new()
-        });
+        // Collect stderr from the thread (with error logging on panic)
         let stderr = stderr_handle.join().unwrap_or_else(|e| {
             tracing::error!(stream = "stderr", panic = panic_message(&e), "reader thread panicked");
             Vec::new()
