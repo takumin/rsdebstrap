@@ -124,8 +124,14 @@ fn large_output_is_truncated_to_max_size() {
 fn binary_output_is_captured_correctly() {
     let executor = RealCommandExecutor { dry_run: false };
     // Generate some binary data (null bytes mixed with text)
-    // Use /usr/bin/printf with format string to produce null byte
-    let spec = CommandSpec::new("/usr/bin/printf", vec![OsString::from(r"hello\x00world\n")]);
+    // Use sh -c with printf and POSIX octal escape (\000) for portability
+    let spec = CommandSpec::new(
+        "sh",
+        vec![
+            OsString::from("-c"),
+            OsString::from(r"printf 'hello\000world\n'"),
+        ],
+    );
 
     let result = executor.execute(&spec).expect("command should succeed");
 

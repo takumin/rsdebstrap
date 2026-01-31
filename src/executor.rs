@@ -12,9 +12,21 @@ pub const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 /// Buffer size for reading from pipes (4KB)
 const READ_BUFFER_SIZE: usize = 4 * 1024;
 
+/// Appends data to a buffer with a size limit.
+///
+/// Returns `true` if data was truncated due to the size limit.
+fn append_with_limit(buffer: &mut Vec<u8>, data: &[u8], max_size: usize) -> bool {
+    if buffer.len() >= max_size {
+        return true;
+    }
+    let remaining = max_size - buffer.len();
+    let to_append = data.len().min(remaining);
+    buffer.extend_from_slice(&data[..to_append]);
+    to_append < data.len()
+}
+
 /// Extracts a human-readable message from a thread panic.
-#[allow(clippy::borrowed_box)]
-fn panic_message(err: &Box<dyn std::any::Any + Send>) -> &str {
+fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
     err.downcast_ref::<&str>()
         .copied()
         .or_else(|| err.downcast_ref::<String>().map(|s| s.as_str()))
@@ -46,17 +58,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
                 tracing::trace!("{}: {}", stream_name, trimmed);
 
                 // Append to buffer with size limit
-                if buffer.len() < MAX_OUTPUT_SIZE {
-                    let remaining = MAX_OUTPUT_SIZE - buffer.len();
-                    let line_bytes = line.as_bytes();
-                    let to_append = line_bytes.len().min(remaining);
-                    buffer.extend_from_slice(&line_bytes[..to_append]);
-                    if to_append < line_bytes.len() {
-                        truncated = true;
-                    }
-                } else {
-                    truncated = true;
-                }
+                truncated |= append_with_limit(&mut buffer, line.as_bytes(), MAX_OUTPUT_SIZE);
             }
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::InvalidData {
@@ -95,21 +97,13 @@ fn read_binary_remainder<R: Read>(
 
     // Save any data that was read into BufReader's internal buffer before the UTF-8 error
     let buffered = reader.buffer();
+    let buffered_len = buffered.len();
     if !buffered.is_empty() {
-        if buffer.len() < MAX_OUTPUT_SIZE {
-            let remaining = MAX_OUTPUT_SIZE - buffer.len();
-            let to_append = buffered.len().min(remaining);
-            buffer.extend_from_slice(&buffered[..to_append]);
-            if to_append < buffered.len() {
-                truncated = true;
-            }
-        } else {
-            truncated = true;
-        }
+        truncated |= append_with_limit(buffer, buffered, MAX_OUTPUT_SIZE);
     }
 
     // Consume the internal buffer to advance past it before continuing with raw reads
-    reader.consume(reader.buffer().len());
+    reader.consume(buffered_len);
 
     let mut read_buf = [0u8; READ_BUFFER_SIZE];
     let mut total_binary_bytes = 0usize;
@@ -120,21 +114,20 @@ fn read_binary_remainder<R: Read>(
             Ok(n) => {
                 total_binary_bytes += n;
 
-                // Log binary data using lossy UTF-8 conversion
-                let chunk = String::from_utf8_lossy(&read_buf[..n]);
-                tracing::trace!("{}: (binary) {}", stream_name, chunk);
+                // Log binary data with truncated preview to avoid flooding logs
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    const PREVIEW_LIMIT: usize = 64;
+                    if n > PREVIEW_LIMIT {
+                        let preview = String::from_utf8_lossy(&read_buf[..PREVIEW_LIMIT]);
+                        tracing::trace!("{}: (binary) {}... ({} bytes)", stream_name, preview, n);
+                    } else {
+                        let chunk = String::from_utf8_lossy(&read_buf[..n]);
+                        tracing::trace!("{}: (binary) {}", stream_name, chunk);
+                    }
+                }
 
                 // Append to buffer with size limit
-                if buffer.len() < MAX_OUTPUT_SIZE {
-                    let remaining = MAX_OUTPUT_SIZE - buffer.len();
-                    let to_append = n.min(remaining);
-                    buffer.extend_from_slice(&read_buf[..to_append]);
-                    if to_append < n {
-                        truncated = true;
-                    }
-                } else {
-                    truncated = true;
-                }
+                truncated |= append_with_limit(buffer, &read_buf[..n], MAX_OUTPUT_SIZE);
             }
             Err(e) => {
                 tracing::warn!(stream = stream_name, error = %e, "error reading binary data");
@@ -313,7 +306,11 @@ impl CommandExecutor for RealCommandExecutor {
 
         // Collect stderr from the thread (with error logging on panic)
         let stderr = stderr_handle.join().unwrap_or_else(|e| {
-            tracing::error!(stream = "stderr", panic = panic_message(&e), "reader thread panicked");
+            tracing::error!(
+                stream = "stderr",
+                panic = panic_message(&*e),
+                "reader thread panicked"
+            );
             Vec::new()
         });
 
