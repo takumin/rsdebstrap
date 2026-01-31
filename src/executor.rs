@@ -15,14 +15,6 @@ use which::which;
 /// error messages.
 pub const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
-/// Maximum line size before truncation (4KB)
-///
-/// Lines longer than this limit are truncated to prevent OOM issues.
-/// This value is chosen to accommodate most reasonable log lines while
-/// preventing memory exhaustion from extremely long lines (e.g., minified
-/// JavaScript or base64-encoded data).
-pub const MAX_LINE_SIZE: usize = 4 * 1024;
-
 /// Initial buffer capacity for captured output (8KB)
 ///
 /// This value balances memory efficiency with typical output sizes.
@@ -67,15 +59,6 @@ impl RingLineBuffer {
     /// to fit. Old lines are removed from the front to maintain the
     /// size constraint.
     fn push_line(&mut self, line: Vec<u8>) {
-        // ByteProcessor ensures lines don't exceed MAX_LINE_SIZE (plus newline).
-        // This assertion catches any future changes that might violate this invariant.
-        debug_assert!(
-            line.len() <= MAX_LINE_SIZE + 1,
-            "line length {} exceeds MAX_LINE_SIZE + 1 ({}); ByteProcessor should have truncated it",
-            line.len(),
-            MAX_LINE_SIZE + 1
-        );
-
         // Truncate the line if it exceeds max_size (defensive fallback)
         let line = if line.len() > self.max_size {
             line[line.len() - self.max_size..].to_vec()
@@ -132,106 +115,6 @@ impl std::fmt::Display for StreamType {
     }
 }
 
-/// Result of processing a single byte in [`ByteProcessor`].
-///
-/// This enum represents the different outcomes when processing input bytes,
-/// allowing the caller to understand what action was taken.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProcessResult {
-    /// Byte was added to the line buffer, continue processing.
-    ///
-    /// This variant enables callers to distinguish normal processing from
-    /// line completion or truncation. Having explicit variants improves code
-    /// clarity and supports future extensions (e.g., progress reporting).
-    Continue,
-    /// A complete line was found (newline detected) and processed.
-    LineComplete,
-    /// The line exceeded [`MAX_LINE_SIZE`] and was truncated.
-    LineTruncated,
-}
-
-/// Processes bytes from a stream, handling line buffering and truncation.
-///
-/// This struct encapsulates the state needed to process input bytes one at a time,
-/// managing line boundaries and truncation of long lines. Output is stored in a
-/// ring buffer that automatically discards old data when the size limit is reached.
-///
-/// ## Line Ending Recognition
-///
-/// Only LF (`\n`) is recognized as a line terminator. CR (`\r`) alone
-/// (classic Mac format) is not treated as a line ending. This is intentional:
-/// - Modern systems (including mmdebstrap/debootstrap) use LF
-/// - CRLF (`\r\n`) is handled correctly (CR is preserved, LF terminates)
-/// - Simplifies implementation without sacrificing practical utility
-struct ByteProcessor<'a> {
-    /// Buffer for accumulating the current line.
-    line_buf: Vec<u8>,
-    /// Ring buffer where complete lines are stored.
-    ring_buffer: &'a mut RingLineBuffer,
-    /// Whether we are skipping bytes until the next newline (after truncation).
-    skipping_to_newline: bool,
-    /// The type of stream being processed (for logging).
-    stream_type: StreamType,
-}
-
-impl<'a> ByteProcessor<'a> {
-    /// Creates a new `ByteProcessor` for the given ring buffer and stream type.
-    fn new(ring_buffer: &'a mut RingLineBuffer, stream_type: StreamType) -> Self {
-        Self {
-            line_buf: Vec::with_capacity(MAX_LINE_SIZE),
-            ring_buffer,
-            skipping_to_newline: false,
-            stream_type,
-        }
-    }
-
-    /// Processes a single byte, returning the result of the operation.
-    fn process(&mut self, byte: u8) -> ProcessResult {
-        if byte == b'\n' {
-            // End of line found
-            if self.skipping_to_newline {
-                // We were skipping after truncation; add newline to buffer and reset
-                self.ring_buffer.push_line(b"\n".to_vec());
-                self.skipping_to_newline = false;
-            } else {
-                // Process the complete line (excluding the newline itself)
-                log_line(&self.line_buf, self.stream_type);
-                // Append line + newline to ring buffer
-                let mut line_with_newline = std::mem::take(&mut self.line_buf);
-                line_with_newline.push(b'\n');
-                self.ring_buffer.push_line(line_with_newline);
-            }
-            self.line_buf.clear();
-            ProcessResult::LineComplete
-        } else if self.skipping_to_newline {
-            // Skip this byte (we're in truncation skip mode)
-            ProcessResult::Continue
-        } else if self.line_buf.len() >= MAX_LINE_SIZE {
-            // Line is too long; truncate and switch to skip mode
-            log_truncated_line(&self.line_buf, self.stream_type);
-            // Append truncated content to ring buffer (newline will be added when we find it)
-            self.ring_buffer
-                .push_line(std::mem::take(&mut self.line_buf));
-            self.skipping_to_newline = true;
-            ProcessResult::LineTruncated
-        } else {
-            // Normal case: add byte to line buffer
-            self.line_buf.push(byte);
-            ProcessResult::Continue
-        }
-    }
-
-    /// Finalizes processing, handling any remaining data.
-    fn finalize(mut self) {
-        // Handle any remaining data in line_buf (no trailing newline)
-        if !self.line_buf.is_empty() && !self.skipping_to_newline {
-            log_line(&self.line_buf, self.stream_type);
-            self.ring_buffer
-                .push_line(std::mem::take(&mut self.line_buf));
-        }
-    }
-}
-
 /// Extracts a human-readable message from a thread panic.
 ///
 /// The returned `&str` borrows from the panic payload, so it is valid
@@ -245,22 +128,12 @@ fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 
 /// Reads from a pipe into a buffer, streaming output to logs in real-time.
 ///
-/// This function uses chunk-based reading with line splitting to handle output
-/// efficiently while preventing OOM issues from extremely long lines.
-///
 /// ## Ring Buffer Behavior
 ///
 /// Output is stored in a ring buffer that holds up to [`MAX_OUTPUT_SIZE`] (64KB)
 /// of data. When the limit is exceeded, the oldest lines are automatically
 /// discarded to make room for new data. This ensures that the most recent
 /// output (including error messages at the end of a command) is preserved.
-///
-/// ## Line Length Handling
-///
-/// Lines longer than [`MAX_LINE_SIZE`] (4KB) are truncated. When truncation occurs:
-/// - The truncated portion is logged with a `[truncated]` marker
-/// - A debug-level log records the truncation event
-/// - Remaining bytes until the next newline are skipped
 ///
 /// ## Binary Data Handling
 ///
@@ -288,29 +161,31 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
         return Vec::new();
     };
 
-    let mut ring_buffer = RingLineBuffer::new(MAX_OUTPUT_SIZE);
     let mut reader = BufReader::new(pipe);
-    let mut processor = ByteProcessor::new(&mut ring_buffer, stream_type);
+    let mut ring_buffer = RingLineBuffer::new(MAX_OUTPUT_SIZE);
+    let mut line_buf = Vec::new();
 
     loop {
-        let available = match reader.fill_buf() {
-            Ok([]) => break, // EOF
-            Ok(buf) => buf,
+        line_buf.clear();
+        match reader.read_until(b'\n', &mut line_buf) {
+            Ok(0) => break, // EOF
+            Ok(_) => {
+                // ログ出力（改行を除く）
+                let log_content = if line_buf.ends_with(b"\n") {
+                    &line_buf[..line_buf.len() - 1]
+                } else {
+                    &line_buf[..]
+                };
+                log_line(log_content, stream_type);
+                ring_buffer.push_line(std::mem::take(&mut line_buf));
+            }
             Err(e) => {
                 tracing::warn!(stream = %stream_type, error = %e, "I/O error, stopping read");
                 break;
             }
-        };
-
-        for &byte in available.iter() {
-            processor.process(byte);
         }
-
-        let consumed = available.len();
-        reader.consume(consumed);
     }
 
-    processor.finalize();
     ring_buffer.into_vec()
 }
 
@@ -326,25 +201,6 @@ fn log_line(line: &[u8], stream_type: StreamType) {
         StreamType::Stdout => tracing::info!(stream = %stream_type, "{}", trimmed),
         StreamType::Stderr => tracing::warn!(stream = %stream_type, "{}", trimmed),
     }
-}
-
-/// Logs a truncated line with a marker and debug information.
-fn log_truncated_line(line: &[u8], stream_type: StreamType) {
-    let text = String::from_utf8_lossy(line);
-    let trimmed = text.trim_end_matches('\r');
-    match stream_type {
-        StreamType::Stdout => {
-            tracing::info!(stream = %stream_type, "{} [truncated]", trimmed)
-        }
-        StreamType::Stderr => {
-            tracing::warn!(stream = %stream_type, "{} [truncated]", trimmed)
-        }
-    }
-    tracing::debug!(
-        stream = %stream_type,
-        max_line_size = MAX_LINE_SIZE,
-        "line exceeded maximum size and was truncated"
-    );
 }
 
 /// Specification for a command to be executed
