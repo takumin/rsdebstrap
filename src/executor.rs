@@ -321,7 +321,7 @@ impl CommandExecutor for RealCommandExecutor {
             Ok(c) => c,
             Err(e) => {
                 anyhow::bail!(
-                    "failed to execute command `{}` with args {:?}: {}",
+                    "failed to spawn command `{}` with args {:?}: {}",
                     spec.command,
                     spec.args,
                     e
