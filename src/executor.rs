@@ -44,18 +44,23 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
                 }
             }
             Err(e) => {
-                // For invalid UTF-8, fall back to raw byte reading
-                tracing::trace!("{}: switching to binary mode due to: {}", stream_name, e);
+                if e.kind() == std::io::ErrorKind::InvalidData {
+                    // UTF-8 error: fall back to raw byte reading
+                    tracing::trace!("{}: switching to binary mode due to: {}", stream_name, e);
 
-                // Save any data that was read into BufReader's internal buffer before the error
-                let buffered = reader.buffer();
-                if !buffered.is_empty() && buffer.len() < MAX_OUTPUT_SIZE {
-                    let remaining = MAX_OUTPUT_SIZE - buffer.len();
-                    let to_append = buffered.len().min(remaining);
-                    buffer.extend_from_slice(&buffered[..to_append]);
+                    // Save any data that was read into BufReader's internal buffer before the error
+                    let buffered = reader.buffer();
+                    if !buffered.is_empty() && buffer.len() < MAX_OUTPUT_SIZE {
+                        let remaining = MAX_OUTPUT_SIZE - buffer.len();
+                        let to_append = buffered.len().min(remaining);
+                        buffer.extend_from_slice(&buffered[..to_append]);
+                    }
+
+                    read_binary_remainder(&mut reader, stream_name, &mut buffer);
+                } else {
+                    // Other I/O errors (e.g., pipe broken): warn and stop reading
+                    tracing::warn!("{}: I/O error, stopping read: {}", stream_name, e);
                 }
-
-                read_binary_remainder(&mut reader, stream_name, &mut buffer);
                 break;
             }
         }
@@ -254,6 +259,8 @@ impl CommandExecutor for RealCommandExecutor {
                 );
             }
         };
+
+        tracing::trace!("spawned command: {}: pid={}", spec.command, child.id());
 
         // Take ownership of stdout and stderr
         let stdout_pipe = child.stdout.take();

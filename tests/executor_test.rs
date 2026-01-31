@@ -90,16 +90,14 @@ fn command_with_stderr_output() {
 fn large_output_is_truncated_to_max_size() {
     let executor = RealCommandExecutor { dry_run: false };
     // Generate output larger than MAX_OUTPUT_SIZE (64KB)
-    // Using dd with /dev/zero for portable, locale-independent output generation
-    // dd writes to stdout without relying on locale-specific tools
+    // Using 'yes' with 'head -c' to generate text output with newlines,
+    // which is more appropriate for testing line-based reading
     let output_size = 100 * 1024; // 100KB, larger than 64KB limit
     let spec = CommandSpec::new(
-        "dd",
+        "sh",
         vec![
-            OsString::from("if=/dev/zero"),
-            OsString::from(format!("bs={}", output_size)),
-            OsString::from("count=1"),
-            OsString::from("status=none"),
+            OsString::from("-c"),
+            OsString::from(format!("yes 'line' | head -c {}", output_size)),
         ],
     );
 
