@@ -12,8 +12,21 @@ pub(crate) const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 /// Buffer size for reading from pipes (4KB)
 const READ_BUFFER_SIZE: usize = 4 * 1024;
 
-/// Maximum bytes to show in trace logs for binary data chunks
-const BINARY_PREVIEW_LIMIT: usize = 64;
+/// Type of output stream for logging purposes.
+#[derive(Clone, Copy)]
+enum StreamType {
+    Stdout,
+    Stderr,
+}
+
+impl StreamType {
+    fn name(self) -> &'static str {
+        match self {
+            StreamType::Stdout => "stdout",
+            StreamType::Stderr => "stderr",
+        }
+    }
+}
 
 /// Appends data to a buffer with a size limit.
 ///
@@ -39,18 +52,22 @@ fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
         .unwrap_or("unknown panic")
 }
 
-/// Reads from a pipe into a buffer, streaming output to the trace log.
+/// Reads from a pipe into a buffer, streaming output to logs in real-time.
 ///
 /// This function starts in text mode using line-based reading for clean log output.
 /// If a UTF-8 decoding error occurs, it falls back to binary mode using raw byte reads.
-/// In binary mode, log output uses lossy UTF-8 conversion.
-fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> Vec<u8> {
+///
+/// Log levels are determined by stream type:
+/// - stdout: logged at INFO level for real-time visibility
+/// - stderr: logged at WARN level for immediate attention
+fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec<u8> {
     let mut buffer = Vec::new();
     let mut truncated = false;
     let Some(pipe) = pipe else {
         return buffer;
     };
 
+    let stream_name = stream_type.name();
     let mut reader = BufReader::new(pipe);
     let mut line = String::new();
 
@@ -61,7 +78,10 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
             Ok(_) => {
                 // Log the line (without trailing newline for cleaner output)
                 let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-                tracing::trace!(stream = stream_name, "{}", trimmed);
+                match stream_type {
+                    StreamType::Stdout => tracing::info!(stream = stream_name, "{}", trimmed),
+                    StreamType::Stderr => tracing::warn!(stream = stream_name, "{}", trimmed),
+                }
 
                 // Append to buffer with size limit
                 truncated |= append_with_limit(&mut buffer, line.as_bytes(), MAX_OUTPUT_SIZE);
@@ -74,8 +94,8 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
                     // attempting UTF-8 conversion. When conversion fails, those bytes are
                     // neither returned nor recoverable. This is acceptable for logging
                     // purposes but means binary output may have gaps.
-                    tracing::trace!(stream = stream_name, error = %e, "switching to binary mode");
-                    truncated |= read_binary_remainder(&mut reader, stream_name, &mut buffer);
+                    tracing::debug!(stream = stream_name, error = %e, "switching to binary mode");
+                    truncated |= read_binary_remainder(&mut reader, stream_type, &mut buffer);
                 } else {
                     // Other I/O errors (e.g., pipe broken): warn and stop reading
                     tracing::warn!(stream = stream_name, error = %e, "I/O error, stopping read");
@@ -101,10 +121,11 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> V
 /// Returns `true` if data was truncated due to the size limit.
 fn read_binary_remainder<R: Read>(
     reader: &mut BufReader<R>,
-    stream_name: &'static str,
+    stream_type: StreamType,
     buffer: &mut Vec<u8>,
 ) -> bool {
     let mut truncated = false;
+    let stream_name = stream_type.name();
 
     // Save any data that was read into BufReader's internal buffer before the UTF-8 error
     let buffered = reader.buffer();
@@ -124,18 +145,6 @@ fn read_binary_remainder<R: Read>(
             Ok(0) => break, // EOF
             Ok(n) => {
                 total_binary_bytes += n;
-
-                // Log binary data with truncated preview to avoid flooding logs
-                if tracing::enabled!(tracing::Level::TRACE) {
-                    if n > BINARY_PREVIEW_LIMIT {
-                        let preview = String::from_utf8_lossy(&read_buf[..BINARY_PREVIEW_LIMIT]);
-                        tracing::trace!(stream = stream_name, bytes = n, "(binary) {}...", preview);
-                    } else {
-                        let chunk = String::from_utf8_lossy(&read_buf[..n]);
-                        tracing::trace!(stream = stream_name, "(binary) {}", chunk);
-                    }
-                }
-
                 // Append to buffer with size limit
                 truncated |= append_with_limit(buffer, &read_buf[..n], MAX_OUTPUT_SIZE);
             }
@@ -147,7 +156,7 @@ fn read_binary_remainder<R: Read>(
     }
 
     if total_binary_bytes > 0 {
-        tracing::trace!(stream = stream_name, bytes = total_binary_bytes, "read binary data");
+        tracing::debug!(stream = stream_name, bytes = total_binary_bytes, "read binary data");
     }
 
     truncated
@@ -301,10 +310,11 @@ impl CommandExecutor for RealCommandExecutor {
         let stderr_pipe = child.stderr.take();
 
         // Read stderr in a separate thread (only one thread needed)
-        let stderr_handle = thread::spawn(move || read_pipe_to_buffer(stderr_pipe, "stderr"));
+        let stderr_handle =
+            thread::spawn(move || read_pipe_to_buffer(stderr_pipe, StreamType::Stderr));
 
         // Read stdout in the main thread
-        let stdout = read_pipe_to_buffer(stdout_pipe, "stdout");
+        let stdout = read_pipe_to_buffer(stdout_pipe, StreamType::Stdout);
 
         // Wait for the child process to complete
         let status = match child.wait() {
@@ -332,12 +342,6 @@ impl CommandExecutor for RealCommandExecutor {
         });
 
         tracing::trace!("executed command: {}: success={}", spec.command, status.success());
-
-        // Log stderr if the command failed and produced output
-        if !status.success() && !stderr.is_empty() {
-            let stderr_text = String::from_utf8_lossy(&stderr);
-            tracing::debug!("command `{}` failed with stderr:\n{}", spec.command, stderr_text);
-        }
 
         Ok(ExecutionResult {
             status: Some(status),
