@@ -2,6 +2,7 @@ pub mod bootstrap;
 pub mod cli;
 pub mod config;
 pub mod executor;
+pub mod isolation;
 pub mod provisioners;
 
 use std::fs;
@@ -73,7 +74,7 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Resul
             info!("running provisioner {}/{}", index + 1, profile.provisioners.len());
             let provisioner = provisioner_config.as_provisioner();
             provisioner
-                .provision(&rootfs, executor, opts.dry_run)
+                .provision(&rootfs, executor, &profile.isolation, opts.dry_run)
                 .with_context(|| format!("failed to run provisioner {}", index + 1))?;
         }
 

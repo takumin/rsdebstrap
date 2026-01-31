@@ -1,10 +1,10 @@
 //! Shell provisioner implementation.
 
 use super::Provisioner;
+use crate::isolation::IsolationConfig;
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
-use std::ffi::OsString;
 use std::fs;
 use tracing::{debug, info};
 
@@ -12,9 +12,24 @@ use crate::executor::CommandExecutor;
 
 /// Shell provisioner configuration.
 ///
-/// Executes shell scripts inside the bootstrapped rootfs using chroot.
+/// Executes shell scripts inside the bootstrapped rootfs using an isolation strategy.
 /// Either `script` (external file) or `content` (inline script) must be specified,
 /// but not both.
+///
+/// The isolation strategy is configured at the profile level, not per-provisioner.
+///
+/// # Example YAML
+///
+/// ```yaml
+/// isolation:
+///   type: nspawn
+///   privilege: sudo
+///   private_network: true
+///
+/// provisioners:
+///   - type: shell
+///     content: "apt-get update"
+/// ```
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct ShellProvisioner {
     /// Path to external shell script file (mutually exclusive with `content`)
@@ -167,6 +182,7 @@ impl Provisioner for ShellProvisioner {
         &self,
         rootfs: &Utf8Path,
         executor: &dyn CommandExecutor,
+        isolation: &IsolationConfig,
         dry_run: bool,
     ) -> Result<()> {
         if !dry_run {
@@ -221,18 +237,33 @@ impl Provisioner for ShellProvisioner {
             }
         }
 
-        // Execute script in chroot
+        // Execute script using the isolation strategy
         let script_path_in_chroot = format!("/tmp/{}", script_name);
-        let args: Vec<OsString> = vec![
-            rootfs.as_str().into(),
-            self.shell.as_str().into(),
-            script_path_in_chroot.into(),
-        ];
+        let isolation_strategy = isolation.as_strategy();
 
-        let spec = crate::executor::CommandSpec::new("chroot", args);
-        let result = executor
-            .execute(&spec)
-            .context("failed to execute provisioning script in chroot")?;
+        // Validate isolation environment if not dry-run
+        if !dry_run {
+            isolation_strategy
+                .validate_environment(rootfs)
+                .context("isolation environment validation failed")?;
+        }
+
+        let spec = isolation_strategy
+            .build_command(rootfs, &self.shell, &script_path_in_chroot)
+            .context("failed to build isolation command")?;
+
+        debug!(
+            "executing with isolation strategy '{}': {:?}",
+            isolation_strategy.command_name(),
+            spec
+        );
+
+        let result = executor.execute(&spec).with_context(|| {
+            format!(
+                "failed to execute provisioning script with isolation '{}'",
+                isolation_strategy.command_name()
+            )
+        })?;
 
         if !result.success() {
             anyhow::bail!(

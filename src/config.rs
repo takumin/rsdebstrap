@@ -17,6 +17,7 @@ use tracing::debug;
 use crate::bootstrap::{
     BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
+use crate::isolation::IsolationConfig;
 use crate::provisioners::{Provisioner, shell::ShellProvisioner};
 
 /// Represents a bootstrap profile configuration.
@@ -29,6 +30,9 @@ pub struct Profile {
     pub dir: Utf8PathBuf,
     /// Bootstrap tool configuration
     pub bootstrap: Bootstrap,
+    /// Isolation strategy for provisioners (default: chroot)
+    #[serde(default)]
+    pub isolation: IsolationConfig,
     /// Provisioners to run after bootstrap (optional)
     #[serde(default)]
     pub provisioners: Vec<ProvisionerConfig>,
