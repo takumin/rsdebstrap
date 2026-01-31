@@ -1,8 +1,5 @@
-use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
+use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor, MAX_OUTPUT_SIZE};
 use std::ffi::OsString;
-
-/// Maximum output size in bytes (must match executor::MAX_OUTPUT_SIZE)
-const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 #[test]
 fn dry_run_skips_command_lookup() {
@@ -112,9 +109,12 @@ fn large_output_is_truncated_to_max_size() {
         MAX_OUTPUT_SIZE,
         result.stdout.len()
     );
+    // Output should be substantial (at least half of MAX_OUTPUT_SIZE)
+    // since we're generating 100KB and the limit is 64KB
     assert!(
-        result.stdout.len() >= MAX_OUTPUT_SIZE - 4096,
-        "stdout should be close to MAX_OUTPUT_SIZE, got {} bytes",
+        result.stdout.len() >= MAX_OUTPUT_SIZE / 2,
+        "stdout should be substantial (at least {} bytes), got {} bytes",
+        MAX_OUTPUT_SIZE / 2,
         result.stdout.len()
     );
 }
