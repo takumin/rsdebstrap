@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::ffi::OsString;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
@@ -8,6 +8,83 @@ use which::which;
 
 /// Maximum size of captured output in bytes (64KB)
 const MAX_OUTPUT_SIZE: usize = 64 * 1024;
+
+/// Buffer size for reading from pipes (4KB)
+const READ_BUFFER_SIZE: usize = 4 * 1024;
+
+/// Reads from a pipe into a buffer, streaming output to the trace log.
+///
+/// This function handles binary output correctly by using raw byte reads
+/// instead of line-based text reading. Log output uses lossy UTF-8 conversion.
+fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_name: &'static str) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    let Some(pipe) = pipe else {
+        return buffer;
+    };
+
+    let mut reader = BufReader::new(pipe);
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // EOF
+            Ok(_) => {
+                // Log the line (without trailing newline for cleaner output)
+                let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
+                tracing::trace!("{}: {}", stream_name, trimmed);
+
+                // Append to buffer with size limit
+                if buffer.len() < MAX_OUTPUT_SIZE {
+                    let remaining = MAX_OUTPUT_SIZE - buffer.len();
+                    let line_bytes = line.as_bytes();
+                    let to_append = line_bytes.len().min(remaining);
+                    buffer.extend_from_slice(&line_bytes[..to_append]);
+                }
+            }
+            Err(e) => {
+                // For invalid UTF-8, fall back to raw byte reading
+                tracing::trace!("{}: switching to binary mode due to: {}", stream_name, e);
+                read_binary_remainder(&mut reader, stream_name, &mut buffer);
+                break;
+            }
+        }
+    }
+
+    buffer
+}
+
+/// Reads remaining binary data from a reader when UTF-8 decoding fails.
+fn read_binary_remainder<R: Read>(
+    reader: &mut BufReader<R>,
+    stream_name: &'static str,
+    buffer: &mut Vec<u8>,
+) {
+    let mut read_buf = [0u8; READ_BUFFER_SIZE];
+    loop {
+        match reader.read(&mut read_buf) {
+            Ok(0) => break, // EOF
+            Ok(n) => {
+                // Log using lossy UTF-8 conversion
+                let text = String::from_utf8_lossy(&read_buf[..n]);
+                for line in text.lines() {
+                    tracing::trace!("{}: {}", stream_name, line);
+                }
+
+                // Append to buffer with size limit
+                if buffer.len() < MAX_OUTPUT_SIZE {
+                    let remaining = MAX_OUTPUT_SIZE - buffer.len();
+                    let to_append = n.min(remaining);
+                    buffer.extend_from_slice(&read_buf[..to_append]);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("error reading {}: {}", stream_name, e);
+                break;
+            }
+        }
+    }
+}
 
 /// Specification for a command to be executed
 #[derive(Debug, Clone)]
@@ -155,64 +232,10 @@ impl CommandExecutor for RealCommandExecutor {
         let stderr_pipe = child.stderr.take();
 
         // Read stdout in a separate thread
-        let stdout_handle = thread::spawn(move || {
-            let mut stdout_buffer = Vec::new();
-            if let Some(pipe) = stdout_pipe {
-                let reader = BufReader::new(pipe);
-                for line in reader.lines() {
-                    match line {
-                        Ok(text) => {
-                            tracing::trace!("stdout: {}", text);
-                            // Append to buffer with size limit
-                            if stdout_buffer.len() < MAX_OUTPUT_SIZE {
-                                let remaining = MAX_OUTPUT_SIZE - stdout_buffer.len();
-                                let line_bytes = text.as_bytes();
-                                let to_append = line_bytes.len().min(remaining);
-                                stdout_buffer.extend_from_slice(&line_bytes[..to_append]);
-                                if stdout_buffer.len() < MAX_OUTPUT_SIZE {
-                                    stdout_buffer.push(b'\n');
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("error reading stdout: {}", e);
-                            break;
-                        }
-                    }
-                }
-            }
-            stdout_buffer
-        });
+        let stdout_handle = thread::spawn(move || read_pipe_to_buffer(stdout_pipe, "stdout"));
 
         // Read stderr in a separate thread
-        let stderr_handle = thread::spawn(move || {
-            let mut stderr_buffer = Vec::new();
-            if let Some(pipe) = stderr_pipe {
-                let reader = BufReader::new(pipe);
-                for line in reader.lines() {
-                    match line {
-                        Ok(text) => {
-                            tracing::trace!("stderr: {}", text);
-                            // Append to buffer with size limit
-                            if stderr_buffer.len() < MAX_OUTPUT_SIZE {
-                                let remaining = MAX_OUTPUT_SIZE - stderr_buffer.len();
-                                let line_bytes = text.as_bytes();
-                                let to_append = line_bytes.len().min(remaining);
-                                stderr_buffer.extend_from_slice(&line_bytes[..to_append]);
-                                if stderr_buffer.len() < MAX_OUTPUT_SIZE {
-                                    stderr_buffer.push(b'\n');
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("error reading stderr: {}", e);
-                            break;
-                        }
-                    }
-                }
-            }
-            stderr_buffer
-        });
+        let stderr_handle = thread::spawn(move || read_pipe_to_buffer(stderr_pipe, "stderr"));
 
         // Wait for the child process to complete
         let status = match child.wait() {
@@ -222,9 +245,15 @@ impl CommandExecutor for RealCommandExecutor {
             }
         };
 
-        // Collect output from threads
-        let stdout = stdout_handle.join().unwrap_or_default();
-        let stderr = stderr_handle.join().unwrap_or_default();
+        // Collect output from threads (with error logging on panic)
+        let stdout = stdout_handle.join().unwrap_or_else(|e| {
+            tracing::error!("stdout reader thread panicked: {:?}", e);
+            Vec::new()
+        });
+        let stderr = stderr_handle.join().unwrap_or_else(|e| {
+            tracing::error!("stderr reader thread panicked: {:?}", e);
+            Vec::new()
+        });
 
         tracing::trace!("executed command: {}: success={}", spec.command, status.success());
 

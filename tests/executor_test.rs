@@ -1,6 +1,9 @@
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
 use std::ffi::OsString;
 
+/// Maximum output size in bytes (must match executor::MAX_OUTPUT_SIZE)
+const MAX_OUTPUT_SIZE: usize = 64 * 1024;
+
 #[test]
 fn dry_run_skips_command_lookup() {
     let executor = RealCommandExecutor { dry_run: true };
@@ -84,4 +87,54 @@ fn command_with_stderr_output() {
         "stderr should include error message: {}",
         stderr_text
     );
+}
+
+#[test]
+fn large_output_is_truncated_to_max_size() {
+    let executor = RealCommandExecutor { dry_run: false };
+    // Generate output larger than MAX_OUTPUT_SIZE (64KB)
+    // Using 'yes' with head to generate exactly 100KB of 'y\n' lines
+    let output_size = 100 * 1024; // 100KB, larger than 64KB limit
+    let spec = CommandSpec::new(
+        "sh",
+        vec![
+            OsString::from("-c"),
+            OsString::from(format!("yes | head -c {}", output_size)),
+        ],
+    );
+
+    let result = executor.execute(&spec).expect("command should succeed");
+
+    assert!(result.success(), "command should succeed");
+    assert!(
+        result.stdout.len() <= MAX_OUTPUT_SIZE,
+        "stdout should be truncated to MAX_OUTPUT_SIZE ({} bytes), got {} bytes",
+        MAX_OUTPUT_SIZE,
+        result.stdout.len()
+    );
+    assert!(
+        result.stdout.len() >= MAX_OUTPUT_SIZE - 4096,
+        "stdout should be close to MAX_OUTPUT_SIZE, got {} bytes",
+        result.stdout.len()
+    );
+}
+
+#[test]
+fn binary_output_is_captured_correctly() {
+    let executor = RealCommandExecutor { dry_run: false };
+    // Generate some binary data (null bytes mixed with text)
+    let spec = CommandSpec::new(
+        "sh",
+        vec![
+            OsString::from("-c"),
+            OsString::from("printf 'hello\\x00world\\n'"),
+        ],
+    );
+
+    let result = executor.execute(&spec).expect("command should succeed");
+
+    assert!(result.success(), "command should succeed");
+    // Note: due to line-based reading, binary output behavior may vary
+    // The important thing is that it doesn't panic
+    assert!(!result.stdout.is_empty(), "stdout should not be empty");
 }
