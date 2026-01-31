@@ -21,11 +21,11 @@ enum StreamType {
     Stderr,
 }
 
-impl StreamType {
-    fn name(self) -> &'static str {
+impl std::fmt::Display for StreamType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StreamType::Stdout => "stdout",
-            StreamType::Stderr => "stderr",
+            Self::Stdout => write!(f, "stdout"),
+            Self::Stderr => write!(f, "stderr"),
         }
     }
 }
@@ -88,7 +88,6 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
         return buffer;
     };
 
-    let stream_name = stream_type.name();
     let mut reader = BufReader::new(pipe);
     let mut line_buf: Vec<u8> = Vec::with_capacity(MAX_LINE_SIZE);
     let mut skipping_to_newline = false;
@@ -98,7 +97,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
             Ok([]) => break, // EOF
             Ok(buf) => buf,
             Err(e) => {
-                tracing::warn!(stream = stream_name, error = %e, "I/O error, stopping read");
+                tracing::warn!(stream = %stream_type, error = %e, "I/O error, stopping read");
                 break;
             }
         };
@@ -115,7 +114,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
                 } else {
                     // Process the complete line (excluding the newline itself)
                     let line_content = &line_buf[..];
-                    log_line(line_content, stream_type, stream_name);
+                    log_line(line_content, stream_type);
                     // Append line + newline to buffer
                     truncated |= append_with_limit(&mut buffer, line_content, MAX_OUTPUT_SIZE);
                     truncated |= append_with_limit(&mut buffer, b"\n", MAX_OUTPUT_SIZE);
@@ -128,7 +127,7 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
             } else if line_buf.len() >= MAX_LINE_SIZE {
                 // Line is too long; truncate and switch to skip mode
                 let line_content = &line_buf[..];
-                log_truncated_line(line_content, stream_type, stream_name);
+                log_truncated_line(line_content, stream_type);
                 // Append truncated content to buffer (newline will be added when we find it)
                 truncated |= append_with_limit(&mut buffer, line_content, MAX_OUTPUT_SIZE);
                 line_buf.clear();
@@ -150,44 +149,44 @@ fn read_pipe_to_buffer<R: Read>(pipe: Option<R>, stream_type: StreamType) -> Vec
             // We were skipping; the remaining data is part of the skipped portion
             // Nothing to log or add
         } else {
-            log_line(&line_buf, stream_type, stream_name);
+            log_line(&line_buf, stream_type);
             truncated |= append_with_limit(&mut buffer, &line_buf, MAX_OUTPUT_SIZE);
         }
     }
 
     // Warn if output was truncated
     if truncated {
-        tracing::warn!(stream = stream_name, max_bytes = MAX_OUTPUT_SIZE, "output truncated");
+        tracing::warn!(stream = %stream_type, max_bytes = MAX_OUTPUT_SIZE, "output truncated");
     }
 
     buffer
 }
 
 /// Logs a complete line at the appropriate level.
-fn log_line(line: &[u8], stream_type: StreamType, stream_name: &str) {
+fn log_line(line: &[u8], stream_type: StreamType) {
     let text = String::from_utf8_lossy(line);
     // Trim trailing CR for cleaner output (handles Windows-style CRLF)
     let trimmed = text.trim_end_matches('\r');
     match stream_type {
-        StreamType::Stdout => tracing::info!(stream = stream_name, "{}", trimmed),
-        StreamType::Stderr => tracing::warn!(stream = stream_name, "{}", trimmed),
+        StreamType::Stdout => tracing::info!(stream = %stream_type, "{}", trimmed),
+        StreamType::Stderr => tracing::warn!(stream = %stream_type, "{}", trimmed),
     }
 }
 
 /// Logs a truncated line with a marker and debug information.
-fn log_truncated_line(line: &[u8], stream_type: StreamType, stream_name: &str) {
+fn log_truncated_line(line: &[u8], stream_type: StreamType) {
     let text = String::from_utf8_lossy(line);
     let trimmed = text.trim_end_matches('\r');
     match stream_type {
         StreamType::Stdout => {
-            tracing::info!(stream = stream_name, "{} [truncated]", trimmed)
+            tracing::info!(stream = %stream_type, "{} [truncated]", trimmed)
         }
         StreamType::Stderr => {
-            tracing::warn!(stream = stream_name, "{} [truncated]", trimmed)
+            tracing::warn!(stream = %stream_type, "{} [truncated]", trimmed)
         }
     }
     tracing::debug!(
-        stream = stream_name,
+        stream = %stream_type,
         max_line_size = MAX_LINE_SIZE,
         "line exceeded maximum size and was truncated"
     );
@@ -341,10 +340,14 @@ impl CommandExecutor for RealCommandExecutor {
         let stderr_pipe = child.stderr.take();
 
         // Read both stdout and stderr in separate threads for symmetric panic recovery
-        let stdout_handle =
-            thread::spawn(move || read_pipe_to_buffer(stdout_pipe, StreamType::Stdout));
-        let stderr_handle =
-            thread::spawn(move || read_pipe_to_buffer(stderr_pipe, StreamType::Stderr));
+        let stdout_handle = thread::Builder::new()
+            .name("stdout-reader".to_string())
+            .spawn(move || read_pipe_to_buffer(stdout_pipe, StreamType::Stdout))
+            .expect("failed to spawn stdout reader thread");
+        let stderr_handle = thread::Builder::new()
+            .name("stderr-reader".to_string())
+            .spawn(move || read_pipe_to_buffer(stderr_pipe, StreamType::Stderr))
+            .expect("failed to spawn stderr reader thread");
 
         // Wait for the child process to complete
         let status = match child.wait() {
