@@ -80,12 +80,7 @@ impl IsolationContext for MockContext {
 
         // Check if we should return an error
         if self.should_error {
-            anyhow::bail!(
-                "{}",
-                self.error_message
-                    .as_deref()
-                    .unwrap_or("mock error")
-            );
+            anyhow::bail!("{}", self.error_message.as_deref().unwrap_or("mock error"));
         }
 
         if self.should_fail {
