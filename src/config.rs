@@ -11,6 +11,7 @@ use anyhow::{Context, Ok, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 use std::fs::File;
+use std::io;
 use std::io::BufReader;
 use tracing::debug;
 
@@ -167,6 +168,16 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
     }
 }
 
+/// Formats an IO error with a descriptive message based on the error kind.
+fn io_error_message(err: &io::Error, path: &Utf8Path) -> String {
+    match err.kind() {
+        io::ErrorKind::NotFound => format!("{}: not found", path),
+        io::ErrorKind::PermissionDenied => format!("{}: permission denied", path),
+        io::ErrorKind::IsADirectory => format!("{}: is a directory", path),
+        _ => format!("{}: {}", path, err),
+    }
+}
+
 /// Loads a bootstrap profile from a YAML file.
 ///
 /// # Arguments
@@ -194,13 +205,32 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     // not the symlink location.
     let canonical_path = path
         .canonicalize_utf8()
-        .with_context(|| format!("failed to canonicalize path: {}", path))?;
+        .map_err(|e| anyhow::anyhow!(io_error_message(&e, path)))?;
+
+    // Check if the path is a directory before attempting to open as a file
+    if canonical_path.is_dir() {
+        return Err(anyhow::anyhow!("{}: is a directory", canonical_path));
+    }
 
     let file = File::open(&canonical_path)
-        .with_context(|| format!("failed to load file: {}", canonical_path))?;
+        .map_err(|e| anyhow::anyhow!(io_error_message(&e, &canonical_path)))?;
     let reader = BufReader::new(file);
-    let mut profile: Profile = serde_yaml::from_reader(reader)
-        .with_context(|| format!("failed to parse yaml: {}", canonical_path))?;
+    let mut profile: Profile = serde_yaml::from_reader(reader).map_err(|e| {
+        let location = e
+            .location()
+            .map(|loc| format!(" at line {}, column {}", loc.line(), loc.column()));
+        // Remove duplicate "at line X column Y" from serde_yaml's error message
+        let msg = e.to_string();
+        let clean_msg = regex::Regex::new(r" at line \d+ column \d+")
+            .map(|re| re.replace(&msg, "").to_string())
+            .unwrap_or(msg);
+        anyhow::anyhow!(
+            "{}: YAML parse error{}: {}",
+            canonical_path,
+            location.unwrap_or_default(),
+            clean_msg
+        )
+    })?;
 
     // While parent() should always return Some for canonical file paths,
     // we handle None for defensive programming

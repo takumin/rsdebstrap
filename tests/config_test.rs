@@ -107,6 +107,18 @@ fn test_load_profile_invalid_file() {
     let path = Utf8PathBuf::from("/non/existent/file.yml");
     let result = load_profile(path.as_path());
     assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not found"),
+        "Expected error message to contain 'not found', got: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains(&path.to_string()),
+        "Expected error message to contain path '{}', got: {}",
+        path,
+        err_msg
+    );
 }
 
 #[test]
@@ -120,6 +132,17 @@ invalid: yaml
     ));
     // editorconfig-checker-enable
     assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("YAML parse error"),
+        "Expected error message to contain 'YAML parse error', got: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("line"),
+        "Expected error message to contain line number information, got: {}",
+        err_msg
+    );
 
     Ok(())
 }
@@ -621,6 +644,136 @@ bootstrap:
 
     let cfg = helpers::get_mmdebstrap_config(&profile);
     assert_eq!(cfg.format, Format::TarZst);
+
+    Ok(())
+}
+
+#[test]
+#[ignore] // Skip in CI: requires file permission manipulation
+fn test_load_profile_permission_denied() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    // Remove read permissions
+    std::fs::set_permissions(&profile_path, std::fs::Permissions::from_mode(0o000))?;
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let result = load_profile(path);
+
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("permission denied"),
+        "Expected error message to contain 'permission denied', got: {}",
+        err_msg
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_yaml_missing_required_field() -> Result<()> {
+    // Missing 'bootstrap' field which is required
+    // editorconfig-checker-disable
+    let result = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+"#
+    ));
+    // editorconfig-checker-enable
+
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("YAML parse error"),
+        "Expected error message to contain 'YAML parse error', got: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("bootstrap"),
+        "Expected error message to mention missing 'bootstrap' field, got: {}",
+        err_msg
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_is_a_directory() {
+    let path = Utf8PathBuf::from("/tmp");
+    let result = load_profile(path.as_path());
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("is a directory"),
+        "Expected error message to contain 'is a directory', got: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("/tmp"),
+        "Expected error message to contain path '/tmp', got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_load_profile_yaml_error_includes_path_and_location() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+  invalid_indent
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let result = load_profile(path);
+
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("YAML parse error"),
+        "Expected error message to contain 'YAML parse error', got: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("line"),
+        "Expected error message to contain line number, got: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("column"),
+        "Expected error message to contain column number, got: {}",
+        err_msg
+    );
+    // Should contain the file path
+    assert!(
+        err_msg.contains(&profile_path.to_string_lossy().to_string()),
+        "Expected error message to contain file path, got: {}",
+        err_msg
+    );
 
     Ok(())
 }
