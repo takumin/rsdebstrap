@@ -7,11 +7,15 @@
 //! The configuration is typically loaded from YAML files using the
 //! `load_profile` function.
 
+use std::fs::File;
+use std::io;
+use std::io::BufReader;
+use std::sync::LazyLock;
+
 use anyhow::{Context, Ok, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
+use regex::Regex;
 use serde::Deserialize;
-use std::fs::File;
-use std::io::BufReader;
 use tracing::debug;
 
 use crate::bootstrap::{
@@ -19,6 +23,10 @@ use crate::bootstrap::{
 };
 use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::provisioners::{Provisioner, shell::ShellProvisioner};
+
+/// Static regex for removing duplicate location info from serde_yaml error messages.
+static YAML_LOCATION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r" at line \d+ column \d+").unwrap());
 
 /// Bootstrap backend configuration.
 ///
@@ -167,6 +175,16 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
     }
 }
 
+/// Formats an IO error with a descriptive message based on the error kind.
+fn io_error_message(err: &io::Error, path: &Utf8Path) -> String {
+    match err.kind() {
+        io::ErrorKind::NotFound => format!("{}: I/O error: file not found", path),
+        io::ErrorKind::PermissionDenied => format!("{}: I/O error: permission denied", path),
+        io::ErrorKind::IsADirectory => format!("{}: I/O error: is a directory", path),
+        _ => format!("{}: I/O error: {}", path, err),
+    }
+}
+
 /// Loads a bootstrap profile from a YAML file.
 ///
 /// # Arguments
@@ -194,13 +212,31 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     // not the symlink location.
     let canonical_path = path
         .canonicalize_utf8()
-        .with_context(|| format!("failed to canonicalize path: {}", path))?;
+        .map_err(|e| anyhow::anyhow!(io_error_message(&e, path)))?;
+
+    // Check if the path is a directory before attempting to open it.
+    // On Linux, File::open succeeds on directories but read fails later.
+    if canonical_path.is_dir() {
+        bail!("{}: I/O error: is a directory", canonical_path);
+    }
 
     let file = File::open(&canonical_path)
-        .with_context(|| format!("failed to load file: {}", canonical_path))?;
+        .map_err(|e| anyhow::anyhow!(io_error_message(&e, &canonical_path)))?;
     let reader = BufReader::new(file);
-    let mut profile: Profile = serde_yaml::from_reader(reader)
-        .with_context(|| format!("failed to parse yaml: {}", canonical_path))?;
+    let mut profile: Profile = serde_yaml::from_reader(reader).map_err(|e| {
+        let location = e
+            .location()
+            .map(|loc| format!(" at line {}, column {}", loc.line(), loc.column()));
+        // Remove duplicate "at line X column Y" from serde_yaml's error message
+        let msg = e.to_string();
+        let clean_msg = YAML_LOCATION_RE.replace(&msg, "").to_string();
+        anyhow::anyhow!(
+            "{}: YAML parse error{}: {}",
+            canonical_path,
+            location.unwrap_or_default(),
+            clean_msg
+        )
+    })?;
 
     // While parent() should always return Some for canonical file paths,
     // we handle None for defensive programming
