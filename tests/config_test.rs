@@ -720,9 +720,10 @@ fn test_load_profile_is_a_directory() {
     let result = load_profile(path.as_path());
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
+    // Case-insensitive check: Linux returns "Is a directory" from the OS error
     assert!(
-        err_msg.contains("is a directory"),
-        "Expected error message to contain 'is a directory', got: {}",
+        err_msg.to_lowercase().contains("is a directory"),
+        "Expected error message to contain 'is a directory' (case-insensitive), got: {}",
         err_msg
     );
     assert!(

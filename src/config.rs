@@ -7,12 +7,15 @@
 //! The configuration is typically loaded from YAML files using the
 //! `load_profile` function.
 
-use anyhow::{Context, Ok, Result, bail};
-use camino::{Utf8Path, Utf8PathBuf};
-use serde::Deserialize;
 use std::fs::File;
 use std::io;
 use std::io::BufReader;
+use std::sync::LazyLock;
+
+use anyhow::{Context, Ok, Result, bail};
+use camino::{Utf8Path, Utf8PathBuf};
+use regex::Regex;
+use serde::Deserialize;
 use tracing::debug;
 
 use crate::bootstrap::{
@@ -20,6 +23,10 @@ use crate::bootstrap::{
 };
 use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::provisioners::{Provisioner, shell::ShellProvisioner};
+
+/// Static regex for removing duplicate location info from serde_yaml error messages.
+static YAML_LOCATION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r" at line \d+ column \d+").unwrap());
 
 /// Bootstrap backend configuration.
 ///
@@ -207,11 +214,6 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
         .canonicalize_utf8()
         .map_err(|e| anyhow::anyhow!(io_error_message(&e, path)))?;
 
-    // Check if the path is a directory before attempting to open as a file
-    if canonical_path.is_dir() {
-        return Err(anyhow::anyhow!("{}: is a directory", canonical_path));
-    }
-
     let file = File::open(&canonical_path)
         .map_err(|e| anyhow::anyhow!(io_error_message(&e, &canonical_path)))?;
     let reader = BufReader::new(file);
@@ -221,9 +223,7 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
             .map(|loc| format!(" at line {}, column {}", loc.line(), loc.column()));
         // Remove duplicate "at line X column Y" from serde_yaml's error message
         let msg = e.to_string();
-        let clean_msg = regex::Regex::new(r" at line \d+ column \d+")
-            .map(|re| re.replace(&msg, "").to_string())
-            .unwrap_or(msg);
+        let clean_msg = YAML_LOCATION_RE.replace(&msg, "").to_string();
         anyhow::anyhow!(
             "{}: YAML parse error{}: {}",
             canonical_path,
