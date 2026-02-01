@@ -51,7 +51,7 @@ impl ShellProvisioner {
 
     /// Returns a mutable reference to the script path if this provisioner uses an
     /// external script file.
-    pub fn script_path_mut(&mut self) -> Option<&mut Utf8PathBuf> {
+    pub(crate) fn script_path_mut(&mut self) -> Option<&mut Utf8PathBuf> {
         self.0.script_path_mut()
     }
 }

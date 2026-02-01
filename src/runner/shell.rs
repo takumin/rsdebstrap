@@ -120,7 +120,7 @@ impl ShellRunner {
 
     /// Returns a mutable reference to the script path if this runner uses an
     /// external script file.
-    pub fn script_path_mut(&mut self) -> Option<&mut Utf8PathBuf> {
+    pub(crate) fn script_path_mut(&mut self) -> Option<&mut Utf8PathBuf> {
         match &mut self.source {
             ScriptSource::Script(path) => Some(path),
             ScriptSource::Content(_) => None,
@@ -274,8 +274,9 @@ impl ShellRunner {
                     })?
                     .permissions();
                 perms.set_mode(0o700);
-                fs::set_permissions(&target_script, perms)
-                    .context("failed to set execute permission on script")?;
+                fs::set_permissions(&target_script, perms).with_context(|| {
+                    format!("failed to set execute permission on script {}", target_script)
+                })?;
             }
         }
 

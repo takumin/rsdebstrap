@@ -409,3 +409,17 @@ fn test_run_fails_when_script_copy_fails() {
         err_msg
     );
 }
+
+#[test]
+fn test_validate_script_path_traversal_rejected() {
+    let runner = ShellRunner::new(ScriptSource::Script("../../../etc/passwd".into()));
+    let result = runner.validate();
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains(".."), "Expected '..' in error message, got: {}", err_msg);
+    assert!(
+        err_msg.contains("security"),
+        "Expected 'security' in error message, got: {}",
+        err_msg
+    );
+}
