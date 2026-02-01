@@ -3,14 +3,34 @@
 //! This module provides [`RealCommandExecutor`], which executes commands
 //! using `std::process::Command` with real-time output streaming.
 
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
+use std::thread::JoinHandle;
 
 use anyhow::{Context, Result};
 use which::which;
 
 use super::pipe::{StreamType, panic_message, read_pipe_to_log};
 use super::{CommandExecutor, CommandSpec, ExecutionResult};
+
+/// Cleans up a child process and its associated reader threads.
+///
+/// This function kills the child process, waits for it to terminate,
+/// and joins all reader threads to prevent resource leaks.
+fn cleanup_child_process<I>(child: &mut Child, handles: I)
+where
+    I: IntoIterator<Item = JoinHandle<()>>,
+{
+    if let Err(e) = child.kill() {
+        tracing::error!("failed to kill child process: {}", e);
+    }
+    if let Err(e) = child.wait() {
+        tracing::error!("failed to wait for child process after kill: {}", e);
+    }
+    for handle in handles {
+        let _ = handle.join();
+    }
+}
 
 /// Real command executor that uses std::process::Command to execute actual commands
 pub struct RealCommandExecutor {
@@ -77,8 +97,8 @@ impl CommandExecutor for RealCommandExecutor {
         {
             Ok(handle) => handle,
             Err(e) => {
-                // Clean up stdout thread before returning error
-                let _ = stdout_handle.join();
+                // Clean up by killing the child process and joining the stdout thread
+                cleanup_child_process(&mut child, [stdout_handle]);
                 anyhow::bail!("failed to spawn stderr reader thread: {}", e);
             }
         };
@@ -87,6 +107,17 @@ impl CommandExecutor for RealCommandExecutor {
         let status = match child.wait() {
             Ok(s) => s,
             Err(e) => {
+                // If waiting fails, the process might still be running.
+                // Kill it to ensure the reader threads can terminate.
+                if let Err(kill_err) = child.kill() {
+                    // It's okay if the process is already dead.
+                    if kill_err.kind() != std::io::ErrorKind::InvalidInput {
+                        tracing::error!(
+                            "failed to kill child process after wait failed: {}",
+                            kill_err
+                        );
+                    }
+                }
                 // Join both threads to prevent thread leak
                 let _ = stdout_handle.join();
                 let _ = stderr_handle.join();
