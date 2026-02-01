@@ -4,6 +4,7 @@ pub mod config;
 pub mod executor;
 pub mod isolation;
 pub mod provisioners;
+pub mod runner;
 
 use std::fs;
 use std::sync::Arc;
