@@ -332,7 +332,7 @@ provisioners:
         [ProvisionerConfig::Shell(shell)] => {
             assert_eq!(
                 shell.script_path().unwrap(),
-                &Utf8PathBuf::from_path_buf(script_path).unwrap()
+                &Utf8PathBuf::from_path_buf(script_path.canonicalize()?).unwrap()
             );
         }
         _ => panic!("expected one shell provisioner"),
@@ -366,7 +366,10 @@ bootstrap:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    assert_eq!(profile.dir, Utf8PathBuf::from_path_buf(profile_dir.join("output")).unwrap());
+    assert_eq!(
+        profile.dir,
+        Utf8PathBuf::from_path_buf(profile_dir.canonicalize()?.join("output")).unwrap()
+    );
 
     Ok(())
 }
@@ -448,8 +451,8 @@ provisioners:
     // CwdGuard will automatically restore the original directory when dropped
 
     // Verify the script path resolves to the expected absolute path
-    let expected_script_path =
-        Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
+    let expected_script_path = Utf8PathBuf::from_path_buf(script_path.canonicalize()?)
+        .expect("script path should be valid UTF-8");
     match &profile.provisioners[..] {
         [ProvisionerConfig::Shell(shell)] => {
             let script = shell.script_path().expect("script should be set");
