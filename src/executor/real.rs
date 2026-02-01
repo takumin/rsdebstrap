@@ -52,7 +52,6 @@ impl CommandExecutor for RealCommandExecutor {
             return Ok(ExecutionResult { status: None });
         }
 
-        // Validate that the command exists
         let cmd =
             which(&spec.command).with_context(|| format!("command not found: {}", spec.command))?;
         tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
@@ -60,7 +59,6 @@ impl CommandExecutor for RealCommandExecutor {
         let mut command = Command::new(cmd);
         command.args(&spec.args);
 
-        // Set working directory if specified
         if let Some(ref cwd) = spec.cwd {
             command.current_dir(cwd);
         }
@@ -81,7 +79,6 @@ impl CommandExecutor for RealCommandExecutor {
 
         tracing::trace!("spawned command: {}: pid={}", spec.command, child.id());
 
-        // Take ownership of stdout and stderr
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
 

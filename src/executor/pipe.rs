@@ -64,12 +64,28 @@ pub(super) fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 ///
 /// ## None Pipe Handling
 ///
-/// If the pipe is `None`, a warning is logged (since `Stdio::piped()` is always
+/// If the pipe is `None`, an error is logged (since `Stdio::piped()` is always
 /// set, `None` indicates an unexpected state) and the function returns early
 /// without processing any output.
+///
+/// ## I/O Error Handling
+///
+/// When an I/O error occurs during pipe reading, the error is logged and reading
+/// stops, but this does not cause the command execution to fail. This is intentional:
+///
+/// - The command's success is determined by its exit status, not by whether we
+///   successfully read all output
+/// - I/O errors on pipes are rare and typically indicate the process was killed
+///   or encountered an exceptional condition
+/// - Failing the entire command due to a logging I/O error would be overly strict
+/// - The process itself may have completed successfully; we just couldn't capture
+///   all output
+///
+/// If stricter error handling is needed in the future (e.g., for audit logging),
+/// this function's signature could be changed to return `Result<()>`.
 pub(super) fn read_pipe_to_log<R: Read>(pipe: Option<R>, stream_type: StreamType) {
     let Some(pipe) = pipe else {
-        tracing::warn!(stream = %stream_type, "pipe was None (unexpected: Stdio::piped() was set), no output will be captured");
+        tracing::error!(stream = %stream_type, "pipe was None (unexpected: Stdio::piped() was set), no output will be captured");
         return;
     };
 

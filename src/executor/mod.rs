@@ -56,10 +56,10 @@ impl CommandSpec {
         self
     }
 
-    /// Adds multiple environment variables
+    /// Adds multiple environment variables.
     ///
     /// Accepts any iterator of key-value pairs that can be converted into strings,
-    /// such as `Vec<(String, String)>` or `&[(&str, &str)]`.
+    /// such as `Vec<(String, String)>`, `&[(&str, &str)]`, or `HashMap<String, String>`.
     #[must_use]
     pub fn with_envs<I, K, V>(mut self, envs: I) -> Self
     where
@@ -81,8 +81,9 @@ pub struct ExecutionResult {
 }
 
 impl ExecutionResult {
-    /// Returns true if the command executed successfully
-    /// In dry-run mode (status is None), this always returns true
+    /// Returns true if the command executed successfully.
+    ///
+    /// In dry-run mode (status is None), this always returns true.
     pub fn success(&self) -> bool {
         self.status.is_none_or(|s| s.success())
     }
@@ -93,8 +94,12 @@ impl ExecutionResult {
     }
 }
 
-/// Trait for command execution
+/// Trait for command execution.
+///
+/// Implementations must be `Send + Sync` to allow the executor to be shared
+/// across threads (e.g., when used with `Arc<dyn CommandExecutor>` in async
+/// contexts or parallel provisioning).
 pub trait CommandExecutor: Send + Sync {
-    /// Execute a command with the given specification
+    /// Executes a command with the given specification.
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult>;
 }
