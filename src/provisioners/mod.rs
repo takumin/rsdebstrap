@@ -8,6 +8,7 @@ use anyhow::Result;
 use camino::Utf8Path;
 
 use crate::executor::CommandExecutor;
+use crate::isolation::Isolation;
 
 pub mod shell;
 
@@ -20,6 +21,7 @@ pub trait Provisioner {
     ///
     /// # Arguments
     /// * `rootfs` - The path to the bootstrapped rootfs directory
+    /// * `isolation` - The isolation backend for executing commands in rootfs
     /// * `executor` - The command executor for running commands
     /// * `dry_run` - If true, skip actual file operations and only log what would be done
     ///
@@ -28,6 +30,7 @@ pub trait Provisioner {
     fn provision(
         &self,
         rootfs: &Utf8Path,
+        isolation: &dyn Isolation,
         executor: &dyn CommandExecutor,
         dry_run: bool,
     ) -> Result<()>;

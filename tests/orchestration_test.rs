@@ -48,3 +48,31 @@ fn run_validate_succeeds_on_valid_profile() {
 
     run_validate(&opts).expect("run_validate should succeed for sample profile");
 }
+
+#[test]
+fn run_apply_with_provisioners_uses_isolation() {
+    let opts = cli::ApplyArgs {
+        file: "examples/debian_trixie_with_provisioners.yml".into(),
+        log_level: cli::LogLevel::Error,
+        dry_run: true,
+    };
+    let executor = RecordingExecutor::default();
+
+    run_apply(&opts, &executor).expect("run_apply should succeed");
+
+    let calls = executor.calls.borrow();
+    // Expect 2 calls: 1 for bootstrap (mmdebstrap), 1 for provisioner (chroot)
+    assert_eq!(calls.len(), 2);
+
+    // First call should be mmdebstrap
+    let (command, _) = &calls[0];
+    assert_eq!(command, "mmdebstrap");
+
+    // Second call should be chroot (from provisioner via isolation)
+    let (command, args) = &calls[1];
+    assert_eq!(command, "chroot");
+    // First arg should be the rootfs path
+    assert!(args[0].to_string_lossy().contains("rootfs"));
+    // Second arg should be the shell
+    assert_eq!(args[1], "/bin/sh");
+}
