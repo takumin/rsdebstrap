@@ -18,8 +18,9 @@ use super::{CommandExecutor, CommandSpec, ExecutionResult};
 /// This function kills the child process, waits for it to terminate,
 /// and joins all reader threads to prevent resource leaks.
 ///
-/// This is called from error paths in `RealCommandExecutor::execute()` when:
-/// - Thread spawning fails after the child process is started
+/// Called from error paths in `RealCommandExecutor::execute()` when:
+/// - stdout reader thread spawning fails
+/// - stderr reader thread spawning fails
 /// - `child.wait()` fails during normal execution
 fn cleanup_child_process<I>(child: &mut Child, handles: I)
 where
@@ -40,7 +41,10 @@ where
     }
 }
 
-/// Real command executor that uses std::process::Command to execute actual commands
+/// Command executor that runs actual system commands.
+///
+/// When `dry_run` is true, commands are logged but not executed,
+/// and `execute()` returns `Ok(ExecutionResult { status: None })`.
 pub struct RealCommandExecutor {
     pub dry_run: bool,
 }
@@ -63,16 +67,13 @@ impl CommandExecutor for RealCommandExecutor {
             command.current_dir(cwd);
         }
 
-        // Set environment variables if specified
         for (key, value) in &spec.env {
             command.env(key, value);
         }
 
-        // Set up stdout/stderr to be piped for streaming
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
 
-        // Spawn the command
         let mut child = command.spawn().with_context(|| {
             format!("failed to spawn command `{}` with args {:?}", spec.command, spec.args)
         })?;
