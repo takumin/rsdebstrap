@@ -98,7 +98,9 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> R
             (Err(e), Ok(())) => return Err(e),
             (Ok(()), Err(e)) => return Err(e).context("failed to teardown isolation context"),
             (Err(prov_err), Err(tear_err)) => {
-                return Err(prov_err).context(format!("teardown also failed: {}", tear_err));
+                // Provisioning error is primary; log teardown error separately
+                tracing::error!("Isolation context teardown also failed: {:#}", tear_err);
+                return Err(prov_err);
             }
         }
 
