@@ -1,5 +1,5 @@
-use std::cell::RefCell;
 use std::ffi::OsString;
+use std::sync::{Arc, Mutex};
 
 use rsdebstrap::{
     cli,
@@ -7,15 +7,18 @@ use rsdebstrap::{
     run_apply, run_validate,
 };
 
+type CommandCalls = Arc<Mutex<Vec<(String, Vec<OsString>)>>>;
+
 #[derive(Default)]
 struct RecordingExecutor {
-    calls: RefCell<Vec<(String, Vec<OsString>)>>,
+    calls: CommandCalls,
 }
 
 impl CommandExecutor for RecordingExecutor {
     fn execute(&self, spec: &CommandSpec) -> anyhow::Result<ExecutionResult> {
         self.calls
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push((spec.command.clone(), spec.args.clone()));
         Ok(ExecutionResult { status: None })
     }
@@ -28,11 +31,14 @@ fn run_apply_uses_executor_with_built_args() {
         log_level: cli::LogLevel::Error,
         dry_run: true,
     };
-    let executor = RecordingExecutor::default();
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
 
-    run_apply(&opts, &executor).expect("run_apply should succeed");
+    run_apply(&opts, executor).expect("run_apply should succeed");
 
-    let calls = executor.calls.borrow();
+    let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
     let (command, args) = calls.first().expect("at least one call");
     assert_eq!(command, "mmdebstrap");
@@ -56,11 +62,14 @@ fn run_apply_with_provisioners_uses_isolation() {
         log_level: cli::LogLevel::Error,
         dry_run: true,
     };
-    let executor = RecordingExecutor::default();
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
 
-    run_apply(&opts, &executor).expect("run_apply should succeed");
+    run_apply(&opts, executor).expect("run_apply should succeed");
 
-    let calls = executor.calls.borrow();
+    let calls = calls.lock().unwrap();
     // Expect 2 calls: 1 for bootstrap (mmdebstrap), 1 for provisioner (chroot)
     assert_eq!(calls.len(), 2);
 

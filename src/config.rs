@@ -17,7 +17,7 @@ use tracing::debug;
 use crate::bootstrap::{
     BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
-use crate::isolation::{ChrootIsolation, Isolation};
+use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::provisioners::{Provisioner, shell::ShellProvisioner};
 
 /// Bootstrap backend configuration.
@@ -61,13 +61,13 @@ pub enum IsolationConfig {
 }
 
 impl IsolationConfig {
-    /// Returns a boxed isolation backend instance.
+    /// Returns a boxed isolation provider instance.
     ///
-    /// This allows calling `Isolation` methods without matching
+    /// This allows calling `IsolationProvider` methods without matching
     /// on each variant explicitly.
-    pub fn as_isolation(&self) -> Box<dyn Isolation> {
+    pub fn as_provider(&self) -> Box<dyn IsolationProvider> {
         match self {
-            IsolationConfig::Chroot => Box::new(ChrootIsolation),
+            IsolationConfig::Chroot => Box::new(ChrootProvider),
         }
     }
 }

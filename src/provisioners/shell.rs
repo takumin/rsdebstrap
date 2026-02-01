@@ -8,8 +8,7 @@ use std::ffi::OsString;
 use std::fs;
 use tracing::{debug, info};
 
-use crate::executor::CommandExecutor;
-use crate::isolation::Isolation;
+use crate::isolation::IsolationContext;
 
 /// Shell provisioner configuration.
 ///
@@ -164,13 +163,9 @@ impl Drop for ScriptGuard {
 }
 
 impl Provisioner for ShellProvisioner {
-    fn provision(
-        &self,
-        rootfs: &Utf8Path,
-        isolation: &dyn Isolation,
-        executor: &dyn CommandExecutor,
-        dry_run: bool,
-    ) -> Result<()> {
+    fn provision(&self, context: &dyn IsolationContext, dry_run: bool) -> Result<()> {
+        let rootfs = context.rootfs();
+
         if !dry_run {
             self.validate_rootfs(rootfs)
                 .context("rootfs validation failed")?;
@@ -179,7 +174,7 @@ impl Provisioner for ShellProvisioner {
         info!(
             "running shell provisioner: {} (isolation: {})",
             self.script_source(),
-            isolation.name()
+            context.name()
         );
         debug!("rootfs: {}, shell: {}, dry_run: {}", rootfs, self.shell, dry_run);
 
@@ -231,8 +226,8 @@ impl Provisioner for ShellProvisioner {
         let script_path_in_chroot = format!("/tmp/{}", script_name);
         let command: Vec<OsString> = vec![self.shell.as_str().into(), script_path_in_chroot.into()];
 
-        let result = isolation
-            .execute(rootfs, &command, executor)
+        let result = context
+            .execute(&command)
             .context("failed to execute provisioning script")?;
 
         if !result.success() {
@@ -240,7 +235,7 @@ impl Provisioner for ShellProvisioner {
                 "provisioning script with command `{:?}` \
                 failed in isolation backend '{}' with status: {}",
                 command,
-                isolation.name(),
+                context.name(),
                 result.status.expect("status should be present on failure")
             );
         }
