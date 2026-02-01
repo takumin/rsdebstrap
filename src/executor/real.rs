@@ -17,16 +17,21 @@ use super::{CommandExecutor, CommandSpec, ExecutionResult};
 ///
 /// This function kills the child process, waits for it to terminate,
 /// and joins all reader threads to prevent resource leaks.
+///
+/// This is called from error paths in `RealCommandExecutor::execute()` when:
+/// - Thread spawning fails after the child process is started
+/// - `child.wait()` fails during normal execution
 fn cleanup_child_process<I>(child: &mut Child, handles: I)
 where
     I: IntoIterator<Item = JoinHandle<()>>,
 {
+    let pid = child.id();
     if let Err(e) = child.kill() {
         // Errors here are typically benign (process already exited) or platform-specific.
-        tracing::debug!("kill returned error (process may have already exited): {}", e);
+        tracing::debug!(pid = pid, "kill returned error (process may have already exited): {}", e);
     }
     if let Err(e) = child.wait() {
-        tracing::warn!("failed to wait for child process after kill: {}", e);
+        tracing::warn!(pid = pid, "failed to wait for child process after kill: {}", e);
     }
     for handle in handles {
         if let Err(e) = handle.join() {

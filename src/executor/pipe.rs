@@ -64,11 +64,12 @@ pub(super) fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 ///
 /// ## None Pipe Handling
 ///
-/// If the pipe is `None`, a debug message is logged and the function returns
-/// early without processing any output.
+/// If the pipe is `None`, a warning is logged (since `Stdio::piped()` is always
+/// set, `None` indicates an unexpected state) and the function returns early
+/// without processing any output.
 pub(super) fn read_pipe_to_log<R: Read>(pipe: Option<R>, stream_type: StreamType) {
     let Some(pipe) = pipe else {
-        tracing::debug!(stream = %stream_type, "pipe was None, no output will be captured");
+        tracing::warn!(stream = %stream_type, "pipe was None (unexpected: Stdio::piped() was set), no output will be captured");
         return;
     };
 
@@ -85,7 +86,7 @@ pub(super) fn read_pipe_to_log<R: Read>(pipe: Option<R>, stream_type: StreamType
                 log_line(log_content, stream_type);
             }
             Err(e) => {
-                tracing::warn!(stream = %stream_type, error = %e, "I/O error, stopping read");
+                tracing::error!(stream = %stream_type, error = %e, "I/O error, stopping read");
                 break;
             }
         }

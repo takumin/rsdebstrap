@@ -55,7 +55,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
 - **`Provisioner`** trait (`src/provisioners/mod.rs`) - Interface for post-bootstrap steps
   - `ShellProvisioner` - Runs shell scripts in chroot via `chroot` command
 
-- **`CommandExecutor`** trait (`src/executor.rs`) - Abstracts command execution
+- **`CommandExecutor`** trait (`src/executor/mod.rs`) - Abstracts command execution
   - `RealCommandExecutor` - Actual execution with dry-run support
   - Tests use mock executors to verify command construction without running real commands
 
