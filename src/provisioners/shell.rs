@@ -237,7 +237,8 @@ impl Provisioner for ShellProvisioner {
 
         if !result.success() {
             anyhow::bail!(
-                "provisioning script with command `{:?}` failed in isolation backend '{}' with status: {}",
+                "provisioning script with command `{:?}` \
+                failed in isolation backend '{}' with status: {}",
                 command,
                 isolation.name(),
                 result.status.expect("status should be present on failure")
