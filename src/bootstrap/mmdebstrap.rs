@@ -5,7 +5,7 @@ use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::fmt;
+use strum::Display;
 use tracing::debug;
 
 /// Known archive file extensions that indicate non-directory output formats.
@@ -14,8 +14,9 @@ const KNOWN_ARCHIVE_EXTENSIONS: &[&str] =
     &["tar", "gz", "bz2", "xz", "zst", "squashfs", "ext2", "img"];
 
 /// Variant defines the package selection strategy for mmdebstrap
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum Variant {
     /// The `required` set plus all packages with `Priority:important` (default)
     #[serde(alias = "")]
@@ -43,26 +44,10 @@ pub enum Variant {
     Standard,
 }
 
-impl fmt::Display for Variant {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Variant::Debootstrap => write!(f, "debootstrap"),
-            Variant::Extract => write!(f, "extract"),
-            Variant::Custom => write!(f, "custom"),
-            Variant::Essential => write!(f, "essential"),
-            Variant::Apt => write!(f, "apt"),
-            Variant::Buildd => write!(f, "buildd"),
-            Variant::Required => write!(f, "required"),
-            Variant::Minbase => write!(f, "minbase"),
-            Variant::Important => write!(f, "important"),
-            Variant::Standard => write!(f, "standard"),
-        }
-    }
-}
-
 /// Mode for mmdebstrap operation
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum Mode {
     /// Auto detect best mode (default)
     #[serde(alias = "")]
@@ -82,23 +67,10 @@ pub enum Mode {
     Chrootless,
 }
 
-impl fmt::Display for Mode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Mode::Auto => write!(f, "auto"),
-            Mode::Sudo => write!(f, "sudo"),
-            Mode::Root => write!(f, "root"),
-            Mode::Unshare => write!(f, "unshare"),
-            Mode::Fakeroot => write!(f, "fakeroot"),
-            Mode::Fakechroot => write!(f, "fakechroot"),
-            Mode::Chrootless => write!(f, "chrootless"),
-        }
-    }
-}
-
 /// Format for the target output
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum Format {
     /// Auto detect based on file extension (default)
     #[serde(alias = "")]
@@ -109,10 +81,13 @@ pub enum Format {
     /// Tarball
     Tar,
     /// Compressed tarball (xz)
+    #[strum(serialize = "tar.xz")]
     TarXz,
     /// Compressed tarball (gz)
+    #[strum(serialize = "tar.gz")]
     TarGz,
     /// Compressed tarball (zst)
+    #[strum(serialize = "tar.zst")]
     TarZst,
     /// Squashfs filesystem
     Squashfs,
@@ -120,22 +95,6 @@ pub enum Format {
     Ext2,
     /// Null
     Null,
-}
-
-impl fmt::Display for Format {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Format::Auto => write!(f, "auto"),
-            Format::Directory => write!(f, "directory"),
-            Format::Tar => write!(f, "tar"),
-            Format::TarXz => write!(f, "tar.xz"),
-            Format::TarGz => write!(f, "tar.gz"),
-            Format::TarZst => write!(f, "tar.zst"),
-            Format::Squashfs => write!(f, "squashfs"),
-            Format::Ext2 => write!(f, "ext2"),
-            Format::Null => write!(f, "null"),
-        }
-    }
 }
 
 /// Configuration for mmdebstrap operations.
@@ -203,19 +162,9 @@ impl BootstrapBackend for MmdebstrapConfig {
         let mut builder = CommandArgsBuilder::new();
 
         // Only add flags if they differ from defaults
-        if self.mode != Mode::Auto {
-            builder.push_flag_value("--mode", &self.mode.to_string(), FlagValueStyle::Separate);
-        }
-        if self.format != Format::Auto {
-            builder.push_flag_value("--format", &self.format.to_string(), FlagValueStyle::Separate);
-        }
-        if self.variant != Variant::Debootstrap {
-            builder.push_flag_value(
-                "--variant",
-                &self.variant.to_string(),
-                FlagValueStyle::Separate,
-            );
-        }
+        builder.push_if_not_default("--mode", &self.mode, FlagValueStyle::Separate);
+        builder.push_if_not_default("--format", &self.format, FlagValueStyle::Separate);
+        builder.push_if_not_default("--variant", &self.variant, FlagValueStyle::Separate);
 
         builder.push_flag_value(
             "--architectures",
