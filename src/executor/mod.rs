@@ -59,7 +59,7 @@ impl CommandSpec {
     /// Adds multiple environment variables
     ///
     /// Accepts any iterator of key-value pairs that can be converted into strings,
-    /// such as `Vec<(String, String)>`, `&[(&str, &str)]`, or `HashMap<String, String>`.
+    /// such as `Vec<(String, String)>` or `&[(&str, &str)]`.
     #[must_use]
     pub fn with_envs<I, K, V>(mut self, envs: I) -> Self
     where

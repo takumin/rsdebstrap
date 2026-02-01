@@ -22,16 +22,16 @@ where
     I: IntoIterator<Item = JoinHandle<()>>,
 {
     if let Err(e) = child.kill() {
-        // It's okay if the process is already dead.
-        if e.kind() != std::io::ErrorKind::InvalidInput {
-            tracing::warn!("failed to kill child process: {}", e);
-        }
+        // Errors here are typically benign (process already exited) or platform-specific.
+        tracing::debug!("kill returned error (process may have already exited): {}", e);
     }
     if let Err(e) = child.wait() {
         tracing::warn!("failed to wait for child process after kill: {}", e);
     }
     for handle in handles {
-        let _ = handle.join();
+        if let Err(e) = handle.join() {
+            tracing::warn!("reader thread panicked during cleanup: {}", panic_message(&*e));
+        }
     }
 }
 
@@ -70,17 +70,9 @@ impl CommandExecutor for RealCommandExecutor {
         command.stderr(Stdio::piped());
 
         // Spawn the command
-        let mut child = match command.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                anyhow::bail!(
-                    "failed to spawn command `{}` with args {:?}: {}",
-                    spec.command,
-                    spec.args,
-                    e
-                );
-            }
-        };
+        let mut child = command.spawn().with_context(|| {
+            format!("failed to spawn command `{}` with args {:?}", spec.command, spec.args)
+        })?;
 
         tracing::trace!("spawned command: {}: pid={}", spec.command, child.id());
 
@@ -89,10 +81,16 @@ impl CommandExecutor for RealCommandExecutor {
         let stderr_pipe = child.stderr.take();
 
         // Read both stdout and stderr in separate threads with panic error propagation
-        let stdout_handle = thread::Builder::new()
+        let stdout_handle = match thread::Builder::new()
             .name("stdout-reader".to_string())
             .spawn(move || read_pipe_to_log(stdout_pipe, StreamType::Stdout))
-            .map_err(|e| anyhow::anyhow!("failed to spawn stdout reader thread: {}", e))?;
+        {
+            Ok(handle) => handle,
+            Err(e) => {
+                cleanup_child_process(&mut child, []);
+                anyhow::bail!("failed to spawn stdout reader thread: {}", e);
+            }
+        };
 
         let stderr_handle = match thread::Builder::new()
             .name("stderr-reader".to_string())
