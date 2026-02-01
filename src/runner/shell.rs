@@ -79,6 +79,18 @@ impl ShellRunner {
     pub fn validate(&self) -> Result<()> {
         match &self.source {
             ScriptSource::Script(script) => {
+                // Prevent path traversal attacks
+                if camino::Utf8Path::new(script.as_str())
+                    .components()
+                    .any(|c| c == camino::Utf8Component::ParentDir)
+                {
+                    bail!(
+                        "script path '{}' contains '..' components, \
+                        which is not allowed for security reasons",
+                        script
+                    );
+                }
+
                 let metadata = fs::metadata(script)
                     .with_context(|| format!("failed to read shell script metadata: {}", script))?;
                 if !metadata.is_file() {
@@ -261,7 +273,7 @@ impl ShellRunner {
                         format!("failed to read metadata for script {}", target_script)
                     })?
                     .permissions();
-                perms.set_mode(0o755);
+                perms.set_mode(0o700);
                 fs::set_permissions(&target_script, perms)
                     .context("failed to set execute permission on script")?;
             }

@@ -86,7 +86,7 @@ impl IsolationContext for MockContext {
         if self.should_fail {
             // Create an ExitStatus from the raw exit code
             // On Unix, exit codes are stored as (code << 8) in the raw wait status
-            let status = self.exit_code.map(|code| ExitStatus::from_raw(code << 8));
+            let status = Some(ExitStatus::from_raw(self.exit_code.unwrap_or(1) << 8));
             Ok(ExecutionResult { status })
         } else {
             // Success case: return exit code 0
