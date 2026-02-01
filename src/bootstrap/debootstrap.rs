@@ -5,12 +5,13 @@ use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::fmt;
+use strum::Display;
 use tracing::debug;
 
 /// Variant defines the package selection strategy for debootstrap
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum Variant {
     /// Minimal base system (default)
     #[serde(alias = "")]
@@ -22,17 +23,6 @@ pub enum Variant {
     Fakechroot,
     /// Scratchbox variant
     Scratchbox,
-}
-
-impl fmt::Display for Variant {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Variant::Minbase => write!(f, "minbase"),
-            Variant::Buildd => write!(f, "buildd"),
-            Variant::Fakechroot => write!(f, "fakechroot"),
-            Variant::Scratchbox => write!(f, "scratchbox"),
-        }
-    }
 }
 
 /// Configuration for debootstrap operations.
@@ -95,9 +85,7 @@ impl BootstrapBackend for DebootstrapConfig {
         }
 
         // Only add --variant if it's not the default (Minbase)
-        if self.variant != Variant::Minbase {
-            builder.push_flag_value("--variant", &self.variant.to_string(), FlagValueStyle::Equals);
-        }
+        builder.push_if_not_default("--variant", &self.variant, FlagValueStyle::Equals);
 
         if !self.components.is_empty() {
             builder.push_flag_value(
