@@ -1,0 +1,126 @@
+//! Real command executor implementation.
+//!
+//! This module provides [`RealCommandExecutor`], which executes commands
+//! using `std::process::Command` with real-time output streaming.
+
+use std::process::{Command, Stdio};
+use std::thread;
+
+use anyhow::{Context, Result};
+use which::which;
+
+use super::pipe::{StreamType, panic_message, read_pipe_to_log};
+use super::{CommandExecutor, CommandSpec, ExecutionResult};
+
+/// Real command executor that uses std::process::Command to execute actual commands
+pub struct RealCommandExecutor {
+    pub dry_run: bool,
+}
+
+impl CommandExecutor for RealCommandExecutor {
+    fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
+        if self.dry_run {
+            tracing::info!("dry run: {:?}", spec);
+            return Ok(ExecutionResult { status: None });
+        }
+
+        // Validate that the command exists
+        let cmd =
+            which(&spec.command).with_context(|| format!("command not found: {}", spec.command))?;
+        tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
+
+        let mut command = Command::new(cmd);
+        command.args(&spec.args);
+
+        // Set working directory if specified
+        if let Some(ref cwd) = spec.cwd {
+            command.current_dir(cwd);
+        }
+
+        // Set environment variables if specified
+        for (key, value) in &spec.env {
+            command.env(key, value);
+        }
+
+        // Set up stdout/stderr to be piped for streaming
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+
+        // Spawn the command
+        let mut child = match command.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                anyhow::bail!(
+                    "failed to spawn command `{}` with args {:?}: {}",
+                    spec.command,
+                    spec.args,
+                    e
+                );
+            }
+        };
+
+        tracing::trace!("spawned command: {}: pid={}", spec.command, child.id());
+
+        // Take ownership of stdout and stderr
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        // Read both stdout and stderr in separate threads with panic error propagation
+        let stdout_handle = thread::Builder::new()
+            .name("stdout-reader".to_string())
+            .spawn(move || read_pipe_to_log(stdout_pipe, StreamType::Stdout))
+            .map_err(|e| anyhow::anyhow!("failed to spawn stdout reader thread: {}", e))?;
+
+        let stderr_handle = match thread::Builder::new()
+            .name("stderr-reader".to_string())
+            .spawn(move || read_pipe_to_log(stderr_pipe, StreamType::Stderr))
+        {
+            Ok(handle) => handle,
+            Err(e) => {
+                // Clean up stdout thread before returning error
+                let _ = stdout_handle.join();
+                anyhow::bail!("failed to spawn stderr reader thread: {}", e);
+            }
+        };
+
+        // Wait for the child process to complete
+        let status = match child.wait() {
+            Ok(s) => s,
+            Err(e) => {
+                // Join both threads to prevent thread leak
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
+                anyhow::bail!(
+                    "failed to wait for command `{}` with args {:?}: {}",
+                    spec.command,
+                    spec.args,
+                    e
+                );
+            }
+        };
+
+        // Wait for reader threads to complete (with error propagation on panic)
+        let mut panicked_streams = Vec::new();
+        let handles = [("stdout", stdout_handle), ("stderr", stderr_handle)];
+        for (name, handle) in handles {
+            if let Err(e) = handle.join() {
+                let msg = panic_message(&*e);
+                tracing::error!(stream = name, panic = msg, "reader thread panicked");
+                panicked_streams.push(format!("{}: {}", name, msg));
+            }
+        }
+
+        if !panicked_streams.is_empty() {
+            anyhow::bail!(
+                "reader thread(s) panicked during command execution: {}",
+                panicked_streams.join(", ")
+            );
+        }
+
+        tracing::trace!("executed command: {}: success={}", spec.command, status.success());
+
+        Ok(ExecutionResult {
+            status: Some(status),
+        })
+    }
+}

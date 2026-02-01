@@ -1,0 +1,100 @@
+//! Command execution abstraction for rsdebstrap.
+//!
+//! This module provides:
+//! - [`CommandSpec`]: Specification for commands to execute
+//! - [`ExecutionResult`]: Result of command execution
+//! - [`CommandExecutor`]: Trait for command execution strategies
+//! - [`RealCommandExecutor`]: Production implementation using `std::process::Command`
+
+mod pipe;
+mod real;
+
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::process::ExitStatus;
+
+use anyhow::Result;
+
+pub use real::RealCommandExecutor;
+
+/// Specification for a command to be executed
+#[derive(Debug, Clone)]
+pub struct CommandSpec {
+    /// The command to execute (e.g., "mmdebstrap")
+    pub command: String,
+    /// Command arguments
+    pub args: Vec<OsString>,
+    /// Working directory (optional, defaults to current directory)
+    pub cwd: Option<PathBuf>,
+    /// Environment variables to set (in addition to inherited environment)
+    pub env: Vec<(String, String)>,
+}
+
+impl CommandSpec {
+    /// Creates a new CommandSpec with command and args
+    #[must_use]
+    pub fn new(command: impl Into<String>, args: Vec<OsString>) -> Self {
+        Self {
+            command: command.into(),
+            args,
+            cwd: None,
+            env: Vec::new(),
+        }
+    }
+
+    /// Sets the working directory
+    #[must_use]
+    pub fn with_cwd(mut self, cwd: PathBuf) -> Self {
+        self.cwd = Some(cwd);
+        self
+    }
+
+    /// Adds an environment variable
+    #[must_use]
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+
+    /// Adds multiple environment variables
+    ///
+    /// Accepts any iterator of key-value pairs that can be converted into strings,
+    /// such as `Vec<(String, String)>`, `&[(&str, &str)]`, or `HashMap<String, String>`.
+    #[must_use]
+    pub fn with_envs<I, K, V>(mut self, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.env
+            .extend(envs.into_iter().map(|(k, v)| (k.into(), v.into())));
+        self
+    }
+}
+
+/// Result of command execution
+#[derive(Debug)]
+pub struct ExecutionResult {
+    /// Exit status of the command (None in dry-run mode)
+    pub status: Option<ExitStatus>,
+}
+
+impl ExecutionResult {
+    /// Returns true if the command executed successfully
+    /// In dry-run mode (status is None), this always returns true
+    pub fn success(&self) -> bool {
+        self.status.is_none_or(|s| s.success())
+    }
+
+    /// Returns the exit code if available
+    pub fn code(&self) -> Option<i32> {
+        self.status.and_then(|s| s.code())
+    }
+}
+
+/// Trait for command execution
+pub trait CommandExecutor: Send + Sync {
+    /// Execute a command with the given specification
+    fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult>;
+}
