@@ -59,7 +59,7 @@ impl CommandSpec {
     /// Adds multiple environment variables.
     ///
     /// Accepts any iterator of key-value pairs that can be converted into strings,
-    /// such as `Vec<(String, String)>`, `[(&str, &str); N]`, or `HashMap<String, String>`.
+    /// such as `Vec<(String, String)>`, `&[(&str, &str)]`, or `HashMap<String, String>`.
     #[must_use]
     pub fn with_envs<I, K, V>(mut self, envs: I) -> Self
     where
@@ -97,8 +97,8 @@ impl ExecutionResult {
 /// Trait for command execution.
 ///
 /// Implementations must be `Send + Sync` to allow the executor to be shared
-/// across threads (e.g., when used with `Arc<dyn CommandExecutor>` in future
-/// async contexts or parallel provisioning).
+/// across threads (e.g., when used with `Arc<dyn CommandExecutor>` for
+/// concurrent output streaming during command execution).
 pub trait CommandExecutor: Send + Sync {
     /// Executes a command with the given specification.
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult>;
