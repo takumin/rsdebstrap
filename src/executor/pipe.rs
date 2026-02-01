@@ -43,7 +43,10 @@ pub(super) fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 /// - `None` pipe logs an error and returns (unexpected if `Stdio::piped()` was set)
 pub(super) fn read_pipe_to_log<R: Read>(pipe: Option<R>, stream_type: StreamType) {
     let Some(pipe) = pipe else {
-        tracing::error!(stream = %stream_type, "pipe was None (unexpected: Stdio::piped() was set), no output will be captured");
+        tracing::error!(
+            stream = %stream_type,
+            "pipe was None (unexpected: Stdio::piped() was set), no output will be captured"
+        );
         return;
     };
 
