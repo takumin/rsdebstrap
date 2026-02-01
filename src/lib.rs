@@ -6,6 +6,7 @@ pub mod isolation;
 pub mod provisioners;
 
 use std::fs;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tracing::info;
@@ -28,7 +29,7 @@ pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
     .context("failed to set global default tracing subscriber")
 }
 
-pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Result<()> {
+pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
     let profile = config::load_profile(opts.file.as_path())
         .with_context(|| format!("failed to load profile from {}", opts.file))?;
     profile.validate().context("profile validation failed")?;
@@ -70,14 +71,37 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Resul
             unreachable!("validation should have caught provisioners with non-directory output")
         };
 
-        let isolation = profile.isolation.as_isolation();
+        // Setup isolation context
+        let provider = profile.isolation.as_provider();
+        let mut context = provider
+            .setup(&rootfs, Arc::clone(&executor), opts.dry_run)
+            .context("failed to setup isolation context")?;
 
-        for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
-            info!("running provisioner {}/{}", index + 1, profile.provisioners.len());
-            let provisioner = provisioner_config.as_provisioner();
-            provisioner
-                .provision(&rootfs, isolation.as_ref(), executor, opts.dry_run)
-                .with_context(|| format!("failed to run provisioner {}", index + 1))?;
+        // Run provisioners, ensuring teardown happens even on error
+        let provision_result = (|| -> anyhow::Result<()> {
+            for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
+                info!("running provisioner {}/{}", index + 1, profile.provisioners.len());
+                let provisioner = provisioner_config.as_provisioner();
+                provisioner
+                    .provision(context.as_ref(), opts.dry_run)
+                    .with_context(|| format!("failed to run provisioner {}", index + 1))?;
+            }
+            Ok(())
+        })();
+
+        // Teardown isolation context (always run, even on provisioner error)
+        let teardown_result = context.teardown();
+
+        // Handle both errors, chaining if both fail
+        match (provision_result, teardown_result) {
+            (Ok(()), Ok(())) => {}
+            (Err(e), Ok(())) => return Err(e),
+            (Ok(()), Err(e)) => return Err(e).context("failed to teardown isolation context"),
+            (Err(prov_err), Err(tear_err)) => {
+                // Provisioning error is primary; log teardown error separately
+                tracing::error!("isolation context teardown also failed: {:#}", tear_err);
+                return Err(prov_err);
+            }
         }
 
         info!("provisioning phase completed successfully");

@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::CommandFactory;
 use clap_complete::generate;
 use std::io;
+use std::sync::Arc;
 
 use rsdebstrap::{cli, executor, init_logging, run_apply, run_validate};
 
@@ -26,11 +27,11 @@ fn main() -> Result<()> {
 
     match &args.command {
         cli::Commands::Apply(opts) => {
-            let executor = executor::RealCommandExecutor {
+            let executor = Arc::new(executor::RealCommandExecutor {
                 dry_run: opts.dry_run,
-            };
+            });
 
-            run_apply(opts, &executor)?;
+            run_apply(opts, executor)?;
         }
         cli::Commands::Validate(opts) => run_validate(opts)?,
         cli::Commands::Completions(_) => {

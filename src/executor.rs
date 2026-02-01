@@ -178,7 +178,7 @@ impl ExecutionResult {
 }
 
 /// Trait for command execution
-pub trait CommandExecutor {
+pub trait CommandExecutor: Send + Sync {
     /// Execute a command with the given specification
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult>;
 }
