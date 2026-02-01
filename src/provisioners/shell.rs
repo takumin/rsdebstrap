@@ -10,20 +10,29 @@ use tracing::{debug, info};
 
 use crate::isolation::IsolationContext;
 
+/// Script source for shell provisioner.
+///
+/// This enum enforces at the type level that exactly one of `script` or `content`
+/// must be specified, eliminating the need for runtime validation of mutual exclusivity.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScriptSource {
+    /// External shell script file path
+    Script(Utf8PathBuf),
+    /// Inline shell script content
+    Content(String),
+}
+
 /// Shell provisioner configuration.
 ///
 /// Executes shell scripts inside the bootstrapped rootfs using chroot.
-/// Either `script` (external file) or `content` (inline script) must be specified,
-/// but not both.
+/// The script source is specified via the `source` field, which must be either
+/// `script` (external file) or `content` (inline script).
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct ShellProvisioner {
-    /// Path to external shell script file (mutually exclusive with `content`)
-    #[serde(default)]
-    pub script: Option<Utf8PathBuf>,
-
-    /// Inline shell script content (mutually exclusive with `script`)
-    #[serde(default)]
-    pub content: Option<String>,
+    /// Script source: either an external file path or inline content
+    #[serde(flatten)]
+    pub source: ScriptSource,
 
     /// Shell interpreter to use (default: /bin/sh)
     #[serde(default = "default_shell")]
@@ -35,10 +44,13 @@ fn default_shell() -> String {
 }
 
 impl ShellProvisioner {
-    /// Validates that exactly one of `script` or `content` is specified.
+    /// Validates the shell provisioner configuration.
+    ///
+    /// For external script files, validates that the file exists and is a regular file.
+    /// For inline content, no additional validation is needed (type system ensures it's present).
     pub fn validate(&self) -> Result<()> {
-        match (&self.script, &self.content) {
-            (Some(script), None) => {
+        match &self.source {
+            ScriptSource::Script(script) => {
                 let metadata = fs::metadata(script).with_context(|| {
                     format!("failed to read shell provisioner script metadata: {}", script)
                 })?;
@@ -47,17 +59,33 @@ impl ShellProvisioner {
                 }
                 Ok(())
             }
-            (None, Some(_)) => Ok(()),
-            (Some(_), Some(_)) => {
-                bail!("shell provisioner cannot specify both 'script' and 'content'")
-            }
-            (None, None) => bail!("shell provisioner must specify either 'script' or 'content'"),
+            ScriptSource::Content(_) => Ok(()),
         }
     }
 
     /// Returns the script source for logging purposes.
     pub fn script_source(&self) -> &str {
-        self.script.as_ref().map_or("<inline>", |p| p.as_str())
+        match &self.source {
+            ScriptSource::Script(path) => path.as_str(),
+            ScriptSource::Content(_) => "<inline>",
+        }
+    }
+
+    /// Returns the script path if this provisioner uses an external script file.
+    pub fn script_path(&self) -> Option<&Utf8PathBuf> {
+        match &self.source {
+            ScriptSource::Script(path) => Some(path),
+            ScriptSource::Content(_) => None,
+        }
+    }
+
+    /// Returns a mutable reference to the script path if this provisioner uses an
+    /// external script file.
+    pub fn script_path_mut(&mut self) -> Option<&mut Utf8PathBuf> {
+        match &mut self.source {
+            ScriptSource::Script(path) => Some(path),
+            ScriptSource::Content(_) => None,
+        }
     }
 
     /// Validates that /tmp exists as a real directory (not a symlink).
@@ -190,25 +218,22 @@ impl Provisioner for ShellProvisioner {
             Self::validate_tmp_directory(rootfs)
                 .context("TOCTOU check: /tmp validation failed before writing script")?;
 
-            // Copy or write script to rootfs
-            match (&self.script, &self.content) {
-                (Some(script_path), None) => {
+            // Copy or write script to rootfs based on source type
+            match &self.source {
+                ScriptSource::Script(script_path) => {
                     // External script: copy to rootfs
                     info!("copying script from {} to rootfs", script_path);
                     fs::copy(script_path, &target_script).with_context(|| {
                         format!("failed to copy script {} to {}", script_path, target_script)
                     })?;
                 }
-                (None, Some(content)) => {
+                ScriptSource::Content(content) => {
                     // Inline script: write to rootfs
                     info!("writing inline script to rootfs");
                     fs::write(&target_script, content).with_context(|| {
                         format!("failed to write inline script to {}", target_script)
                     })?;
                 }
-                _ => unreachable!(
-                    "validate() ensures exactly one of 'script' or 'content' is specified"
-                ),
             }
 
             // Make script executable

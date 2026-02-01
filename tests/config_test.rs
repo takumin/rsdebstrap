@@ -198,9 +198,10 @@ bootstrap:
 }
 
 #[test]
-fn test_profile_validation_rejects_incomplete_shell_provisioner() -> Result<()> {
+fn test_profile_parsing_rejects_incomplete_shell_provisioner() -> Result<()> {
     // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+    // With ScriptSource enum, missing script/content is now a parse error, not validation error
+    let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 bootstrap:
@@ -210,10 +211,17 @@ bootstrap:
 provisioners:
   - type: shell
 "#
-    ))?;
+    ));
     // editorconfig-checker-enable
 
-    assert!(profile.validate().is_err());
+    assert!(result.is_err());
+    // The error message should indicate that neither 'script' nor 'content' was found
+    let err_msg = format!("{:#}", result.unwrap_err());
+    assert!(
+        err_msg.contains("flattened") || err_msg.contains("script") || err_msg.contains("content"),
+        "Expected error about missing script/content, got: {}",
+        err_msg
+    );
 
     Ok(())
 }
@@ -295,7 +303,7 @@ provisioners:
     match profile.provisioners.as_slice() {
         [ProvisionerConfig::Shell(shell)] => {
             assert_eq!(
-                shell.script.as_ref().unwrap(),
+                shell.script_path().unwrap(),
                 &Utf8PathBuf::from_path_buf(script_path).unwrap()
             );
         }
@@ -416,7 +424,7 @@ provisioners:
         Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
     match &profile.provisioners[..] {
         [ProvisionerConfig::Shell(shell)] => {
-            let script = shell.script.as_ref().expect("script should be set");
+            let script = shell.script_path().expect("script should be set");
             assert_eq!(
                 script, &expected_script_path,
                 "Script path should resolve to the expected absolute path"

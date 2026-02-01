@@ -29,17 +29,11 @@ pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
     .context("failed to set global default tracing subscriber")
 }
 
-pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
-    let profile = config::load_profile(opts.file.as_path())
-        .with_context(|| format!("failed to load profile from {}", opts.file))?;
-    profile.validate().context("profile validation failed")?;
-
-    if !opts.dry_run && !profile.dir.exists() {
-        fs::create_dir_all(&profile.dir)
-            .with_context(|| format!("failed to create directory: {}", profile.dir))?;
-    }
-
-    // Bootstrap phase
+/// Executes the bootstrap phase using the configured backend.
+fn run_bootstrap_phase(
+    profile: &config::Profile,
+    executor: &Arc<dyn CommandExecutor>,
+) -> Result<()> {
     let backend = profile.bootstrap.as_backend();
     let command_name = backend.command_name();
 
@@ -61,51 +55,79 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> R
         );
     }
 
-    // Provisioning phase
-    if !profile.provisioners.is_empty() {
-        info!("starting provisioning phase with {} provisioner(s)", profile.provisioners.len());
+    Ok(())
+}
 
-        // Get rootfs directory (validation ensures it's a directory if provisioners exist)
-        let bootstrap::RootfsOutput::Directory(rootfs) = backend.rootfs_output(&profile.dir)?
-        else {
-            unreachable!("validation should have caught provisioners with non-directory output")
-        };
-
-        // Setup isolation context
-        let provider = profile.isolation.as_provider();
-        let mut context = provider
-            .setup(&rootfs, Arc::clone(&executor), opts.dry_run)
-            .context("failed to setup isolation context")?;
-
-        // Run provisioners, ensuring teardown happens even on error
-        let provision_result = (|| -> anyhow::Result<()> {
-            for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
-                info!("running provisioner {}/{}", index + 1, profile.provisioners.len());
-                let provisioner = provisioner_config.as_provisioner();
-                provisioner
-                    .provision(context.as_ref(), opts.dry_run)
-                    .with_context(|| format!("failed to run provisioner {}", index + 1))?;
-            }
-            Ok(())
-        })();
-
-        // Teardown isolation context (always run, even on provisioner error)
-        let teardown_result = context.teardown();
-
-        // Handle both errors, chaining if both fail
-        match (provision_result, teardown_result) {
-            (Ok(()), Ok(())) => {}
-            (Err(e), Ok(())) => return Err(e),
-            (Ok(()), Err(e)) => return Err(e).context("failed to teardown isolation context"),
-            (Err(prov_err), Err(tear_err)) => {
-                // Provisioning error is primary; log teardown error separately
-                tracing::error!("isolation context teardown also failed: {:#}", tear_err);
-                return Err(prov_err);
-            }
-        }
-
-        info!("provisioning phase completed successfully");
+/// Executes the provisioning phase for all configured provisioners.
+fn run_provision_phase(
+    profile: &config::Profile,
+    executor: Arc<dyn CommandExecutor>,
+    dry_run: bool,
+) -> Result<()> {
+    if profile.provisioners.is_empty() {
+        return Ok(());
     }
+
+    info!("starting provisioning phase with {} provisioner(s)", profile.provisioners.len());
+
+    // Get rootfs directory (validation ensures it's a directory if provisioners exist)
+    let backend = profile.bootstrap.as_backend();
+    let bootstrap::RootfsOutput::Directory(rootfs) = backend.rootfs_output(&profile.dir)? else {
+        anyhow::bail!(
+            "provisioners require directory output but got non-directory format. \
+            This should have been caught during validation."
+        );
+    };
+
+    // Setup isolation context
+    let provider = profile.isolation.as_provider();
+    let mut context = provider
+        .setup(&rootfs, executor, dry_run)
+        .context("failed to setup isolation context")?;
+
+    // Run provisioners, ensuring teardown happens even on error
+    let provision_result = (|| -> anyhow::Result<()> {
+        for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
+            info!("running provisioner {}/{}", index + 1, profile.provisioners.len());
+            let provisioner = provisioner_config.as_provisioner();
+            provisioner
+                .provision(context.as_ref(), dry_run)
+                .with_context(|| format!("failed to run provisioner {}", index + 1))?;
+        }
+        Ok(())
+    })();
+
+    // Teardown isolation context (always run, even on provisioner error)
+    let teardown_result = context.teardown();
+
+    // Handle both errors, chaining if both fail
+    match (provision_result, teardown_result) {
+        (Ok(()), Ok(())) => {}
+        (Err(e), Ok(())) => return Err(e),
+        (Ok(()), Err(e)) => return Err(e).context("failed to teardown isolation context"),
+        (Err(prov_err), Err(tear_err)) => {
+            // Provisioning error is primary; log teardown error separately
+            tracing::error!("isolation context teardown also failed: {:#}", tear_err);
+            return Err(prov_err);
+        }
+    }
+
+    info!("provisioning phase completed successfully");
+    Ok(())
+}
+
+pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
+    let profile = config::load_profile(opts.file.as_path())
+        .with_context(|| format!("failed to load profile from {}", opts.file))?;
+    profile.validate().context("profile validation failed")?;
+
+    if !opts.dry_run && !profile.dir.exists() {
+        fs::create_dir_all(&profile.dir)
+            .with_context(|| format!("failed to create directory: {}", profile.dir))?;
+    }
+
+    run_bootstrap_phase(&profile, &executor)?;
+    run_provision_phase(&profile, executor, opts.dry_run)?;
 
     Ok(())
 }

@@ -1,6 +1,7 @@
 //! Shared command argument builder utilities for bootstrap backends.
 
 use std::ffi::OsString;
+use std::fmt::Display;
 
 /// Defines how a flag and its value are rendered in command arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +55,19 @@ impl CommandArgsBuilder {
     pub fn push_flag_values(&mut self, flag: &str, values: &[String], style: FlagValueStyle) {
         for value in values {
             self.push_flag_value(flag, value, style);
+        }
+    }
+
+    /// Append a flag with value if the value differs from its default.
+    ///
+    /// This is useful for enum types that implement `Default`, `PartialEq`, and `Display`,
+    /// where you only want to add the flag when the value is non-default.
+    pub fn push_if_not_default<T>(&mut self, flag: &str, value: &T, style: FlagValueStyle)
+    where
+        T: Default + PartialEq + Display,
+    {
+        if *value != T::default() {
+            self.push_flag_value(flag, &value.to_string(), style);
         }
     }
 
