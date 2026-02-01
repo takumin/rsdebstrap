@@ -509,3 +509,47 @@ provisioners:
 fn test_profile_validation_rejects_provisioners_with_squashfs_output() -> Result<()> {
     test_provisioner_validation_rejects_target("rootfs.squashfs")
 }
+
+#[test]
+fn test_load_profile_with_explicit_chroot_isolation() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+isolation:
+  type: chroot
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    use rsdebstrap::config::IsolationConfig;
+    assert!(matches!(profile.isolation, IsolationConfig::Chroot));
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_isolation_defaults_to_chroot() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    use rsdebstrap::config::IsolationConfig;
+    assert!(matches!(profile.isolation, IsolationConfig::Chroot));
+
+    Ok(())
+}

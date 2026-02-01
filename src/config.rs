@@ -17,22 +17,8 @@ use tracing::debug;
 use crate::bootstrap::{
     BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
+use crate::isolation::{ChrootIsolation, Isolation};
 use crate::provisioners::{Provisioner, shell::ShellProvisioner};
-
-/// Represents a bootstrap profile configuration.
-///
-/// A profile contains the target directory and bootstrap tool configuration
-/// details needed to create a Debian-based system.
-#[derive(Debug, Deserialize)]
-pub struct Profile {
-    /// Target directory path for the bootstrap operation
-    pub dir: Utf8PathBuf,
-    /// Bootstrap tool configuration
-    pub bootstrap: Bootstrap,
-    /// Provisioners to run after bootstrap (optional)
-    #[serde(default)]
-    pub provisioners: Vec<ProvisionerConfig>,
-}
 
 /// Bootstrap backend configuration.
 ///
@@ -58,6 +44,50 @@ impl Bootstrap {
             Bootstrap::Debootstrap(cfg) => cfg,
         }
     }
+}
+
+/// Isolation backend configuration.
+///
+/// This enum represents the different isolation mechanisms that can be used
+/// to execute commands within a rootfs. The `type` field in YAML determines
+/// which variant is used. If not specified, defaults to chroot.
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum IsolationConfig {
+    /// chroot isolation (default)
+    #[default]
+    Chroot,
+    // Future: Bwrap(BwrapConfig), Nspawn(NspawnConfig)
+}
+
+impl IsolationConfig {
+    /// Returns a boxed isolation backend instance.
+    ///
+    /// This allows calling `Isolation` methods without matching
+    /// on each variant explicitly.
+    pub fn as_isolation(&self) -> Box<dyn Isolation> {
+        match self {
+            IsolationConfig::Chroot => Box::new(ChrootIsolation),
+        }
+    }
+}
+
+/// Represents a bootstrap profile configuration.
+///
+/// A profile contains the target directory and bootstrap tool configuration
+/// details needed to create a Debian-based system.
+#[derive(Debug, Deserialize)]
+pub struct Profile {
+    /// Target directory path for the bootstrap operation
+    pub dir: Utf8PathBuf,
+    /// Isolation backend for running commands in rootfs (default: chroot)
+    #[serde(default)]
+    pub isolation: IsolationConfig,
+    /// Bootstrap tool configuration
+    pub bootstrap: Bootstrap,
+    /// Provisioners to run after bootstrap (optional)
+    #[serde(default)]
+    pub provisioners: Vec<ProvisionerConfig>,
 }
 
 impl Profile {

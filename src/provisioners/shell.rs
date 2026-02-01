@@ -9,6 +9,7 @@ use std::fs;
 use tracing::{debug, info};
 
 use crate::executor::CommandExecutor;
+use crate::isolation::Isolation;
 
 /// Shell provisioner configuration.
 ///
@@ -166,6 +167,7 @@ impl Provisioner for ShellProvisioner {
     fn provision(
         &self,
         rootfs: &Utf8Path,
+        isolation: &dyn Isolation,
         executor: &dyn CommandExecutor,
         dry_run: bool,
     ) -> Result<()> {
@@ -174,7 +176,11 @@ impl Provisioner for ShellProvisioner {
                 .context("rootfs validation failed")?;
         }
 
-        info!("running shell provisioner: {}", self.script_source());
+        info!(
+            "running shell provisioner: {} (isolation: {})",
+            self.script_source(),
+            isolation.name()
+        );
         debug!("rootfs: {}, shell: {}, dry_run: {}", rootfs, self.shell, dry_run);
 
         // Generate unique script name in rootfs
@@ -221,24 +227,21 @@ impl Provisioner for ShellProvisioner {
             }
         }
 
-        // Execute script in chroot
+        // Execute script using the configured isolation backend
         let script_path_in_chroot = format!("/tmp/{}", script_name);
-        let args: Vec<OsString> = vec![
-            rootfs.as_str().into(),
-            self.shell.as_str().into(),
-            script_path_in_chroot.into(),
-        ];
+        let command: Vec<OsString> = vec![self.shell.as_str().into(), script_path_in_chroot.into()];
 
-        let spec = crate::executor::CommandSpec::new("chroot", args);
-        let result = executor
-            .execute(&spec)
-            .context("failed to execute provisioning script in chroot")?;
+        let result = isolation
+            .execute(rootfs, &command, executor)
+            .context("failed to execute provisioning script")?;
 
         if !result.success() {
             anyhow::bail!(
-                "provisioning script exited with non-zero status: {}. Spec: {:?}",
-                result.status.expect("status should be present on failure"),
-                spec
+                "provisioning script with command `{:?}` \
+                failed in isolation backend '{}' with status: {}",
+                command,
+                isolation.name(),
+                result.status.expect("status should be present on failure")
             );
         }
 

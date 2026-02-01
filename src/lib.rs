@@ -2,6 +2,7 @@ pub mod bootstrap;
 pub mod cli;
 pub mod config;
 pub mod executor;
+pub mod isolation;
 pub mod provisioners;
 
 use std::fs;
@@ -69,11 +70,13 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: &dyn CommandExecutor) -> Resul
             unreachable!("validation should have caught provisioners with non-directory output")
         };
 
+        let isolation = profile.isolation.as_isolation();
+
         for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
             info!("running provisioner {}/{}", index + 1, profile.provisioners.len());
             let provisioner = provisioner_config.as_provisioner();
             provisioner
-                .provision(&rootfs, executor, opts.dry_run)
+                .provision(&rootfs, isolation.as_ref(), executor, opts.dry_run)
                 .with_context(|| format!("failed to run provisioner {}", index + 1))?;
         }
 
