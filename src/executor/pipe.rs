@@ -41,9 +41,12 @@ pub(super) fn panic_message(err: &(dyn std::any::Any + Send)) -> &str {
 
 /// Reads from a pipe and logs each line in real-time.
 ///
-/// - stdout is logged at INFO level, stderr at WARN level
+/// - stdout is logged at INFO level, stderr at WARN level.
+///   INFO/WARN levels are chosen so users can see mmdebstrap/debootstrap
+///   progress output in real-time during bootstrap operations.
 /// - Binary data uses lossy UTF-8 conversion
 /// - I/O errors stop reading but don't fail command execution
+///   (output streaming is best-effort; command success is determined by exit status)
 /// - `None` pipe logs an error and returns (unexpected if `Stdio::piped()` was set)
 pub(super) fn read_pipe_to_log<R: Read>(pipe: Option<R>, stream_type: StreamType) {
     let Some(pipe) = pipe else {
@@ -76,7 +79,6 @@ pub(super) fn read_pipe_to_log<R: Read>(pipe: Option<R>, stream_type: StreamType
 /// Trailing CR is trimmed to handle CRLF line endings.
 fn log_line(line: &[u8], stream_type: StreamType) {
     let text = String::from_utf8_lossy(line);
-    // Trim trailing CR for cleaner output (handles Windows-style CRLF)
     let trimmed = text.trim_end_matches('\r');
     match stream_type {
         StreamType::Stdout => tracing::info!(stream = %stream_type, "{}", trimmed),
