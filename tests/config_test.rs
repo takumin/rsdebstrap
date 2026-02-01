@@ -331,8 +331,8 @@ provisioners:
     match profile.provisioners.as_slice() {
         [ProvisionerConfig::Shell(shell)] => {
             assert_eq!(
-                shell.script_path().unwrap(),
-                &Utf8PathBuf::from_path_buf(script_path).unwrap()
+                shell.script_path().unwrap().canonicalize_utf8()?,
+                Utf8PathBuf::from_path_buf(script_path.canonicalize()?).unwrap()
             );
         }
         _ => panic!("expected one shell provisioner"),
@@ -347,6 +347,8 @@ fn test_load_profile_resolves_dir_relative_to_profile_dir() -> Result<()> {
     let profile_dir = temp_dir.path().join("profiles");
     std::fs::create_dir_all(&profile_dir)?;
     let profile_path = profile_dir.join("profile.yml");
+    let output_dir = profile_dir.join("output");
+    std::fs::create_dir_all(&output_dir)?;
 
     // editorconfig-checker-disable
     std::fs::write(
@@ -366,7 +368,12 @@ bootstrap:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    assert_eq!(profile.dir, Utf8PathBuf::from_path_buf(profile_dir.join("output")).unwrap());
+    assert_eq!(
+        profile.dir.canonicalize_utf8()?,
+        output_dir
+            .canonicalize()
+            .map(|p| Utf8PathBuf::from_path_buf(p).unwrap())?
+    );
 
     Ok(())
 }
@@ -448,13 +455,14 @@ provisioners:
     // CwdGuard will automatically restore the original directory when dropped
 
     // Verify the script path resolves to the expected absolute path
-    let expected_script_path =
-        Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
+    let expected_script_path = Utf8PathBuf::from_path_buf(script_path.canonicalize()?)
+        .expect("script path should be valid UTF-8");
     match &profile.provisioners[..] {
         [ProvisionerConfig::Shell(shell)] => {
             let script = shell.script_path().expect("script should be set");
             assert_eq!(
-                script, &expected_script_path,
+                script.canonicalize_utf8()?,
+                expected_script_path,
                 "Script path should resolve to the expected absolute path"
             );
         }
