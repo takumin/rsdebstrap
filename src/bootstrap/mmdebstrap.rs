@@ -82,12 +82,15 @@ pub enum Format {
     Tar,
     /// Compressed tarball (xz)
     #[strum(serialize = "tar.xz")]
+    #[serde(rename = "tar.xz")]
     TarXz,
     /// Compressed tarball (gz)
     #[strum(serialize = "tar.gz")]
+    #[serde(rename = "tar.gz")]
     TarGz,
     /// Compressed tarball (zst)
     #[strum(serialize = "tar.zst")]
+    #[serde(rename = "tar.zst")]
     TarZst,
     /// Squashfs filesystem
     Squashfs,

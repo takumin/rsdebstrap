@@ -2,7 +2,7 @@ mod helpers;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use rsdebstrap::bootstrap::mmdebstrap;
+use rsdebstrap::bootstrap::mmdebstrap::{self, Format};
 use rsdebstrap::config::{ProvisionerConfig, load_profile};
 use tempfile::tempdir;
 
@@ -558,6 +558,69 @@ bootstrap:
 
     use rsdebstrap::config::IsolationConfig;
     assert!(matches!(profile.isolation, IsolationConfig::Chroot));
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_format_tar_xz() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.xz
+  format: tar.xz
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let cfg = helpers::get_mmdebstrap_config(&profile);
+    assert_eq!(cfg.format, Format::TarXz);
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_format_tar_gz() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.gz
+  format: tar.gz
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let cfg = helpers::get_mmdebstrap_config(&profile);
+    assert_eq!(cfg.format, Format::TarGz);
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_format_tar_zst() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+  format: tar.zst
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let cfg = helpers::get_mmdebstrap_config(&profile);
+    assert_eq!(cfg.format, Format::TarZst);
 
     Ok(())
 }
