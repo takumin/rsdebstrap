@@ -22,10 +22,13 @@ where
     I: IntoIterator<Item = JoinHandle<()>>,
 {
     if let Err(e) = child.kill() {
-        tracing::error!("failed to kill child process: {}", e);
+        // It's okay if the process is already dead.
+        if e.kind() != std::io::ErrorKind::InvalidInput {
+            tracing::warn!("failed to kill child process: {}", e);
+        }
     }
     if let Err(e) = child.wait() {
-        tracing::error!("failed to wait for child process after kill: {}", e);
+        tracing::warn!("failed to wait for child process after kill: {}", e);
     }
     for handle in handles {
         let _ = handle.join();
@@ -108,19 +111,8 @@ impl CommandExecutor for RealCommandExecutor {
             Ok(s) => s,
             Err(e) => {
                 // If waiting fails, the process might still be running.
-                // Kill it to ensure the reader threads can terminate.
-                if let Err(kill_err) = child.kill() {
-                    // It's okay if the process is already dead.
-                    if kill_err.kind() != std::io::ErrorKind::InvalidInput {
-                        tracing::error!(
-                            "failed to kill child process after wait failed: {}",
-                            kill_err
-                        );
-                    }
-                }
-                // Join both threads to prevent thread leak
-                let _ = stdout_handle.join();
-                let _ = stderr_handle.join();
+                // Kill it and clean up threads to prevent resource leaks.
+                cleanup_child_process(&mut child, [stdout_handle, stderr_handle]);
                 anyhow::bail!(
                     "failed to wait for command `{}` with args {:?}: {}",
                     spec.command,
