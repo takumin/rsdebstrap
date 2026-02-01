@@ -178,10 +178,10 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 /// Formats an IO error with a descriptive message based on the error kind.
 fn io_error_message(err: &io::Error, path: &Utf8Path) -> String {
     match err.kind() {
-        io::ErrorKind::NotFound => format!("{}: not found", path),
-        io::ErrorKind::PermissionDenied => format!("{}: permission denied", path),
-        io::ErrorKind::IsADirectory => format!("{}: is a directory", path),
-        _ => format!("{}: {}", path, err),
+        io::ErrorKind::NotFound => format!("{}: I/O error: file not found", path),
+        io::ErrorKind::PermissionDenied => format!("{}: I/O error: permission denied", path),
+        io::ErrorKind::IsADirectory => format!("{}: I/O error: is a directory", path),
+        _ => format!("{}: I/O error: {}", path, err),
     }
 }
 
@@ -213,6 +213,12 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
     let canonical_path = path
         .canonicalize_utf8()
         .map_err(|e| anyhow::anyhow!(io_error_message(&e, path)))?;
+
+    // Check if the path is a directory before attempting to open it.
+    // On Linux, File::open succeeds on directories but read fails later.
+    if canonical_path.is_dir() {
+        bail!("{}: I/O error: is a directory", canonical_path);
+    }
 
     let file = File::open(&canonical_path)
         .map_err(|e| anyhow::anyhow!(io_error_message(&e, &canonical_path)))?;

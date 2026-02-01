@@ -109,8 +109,13 @@ fn test_load_profile_invalid_file() {
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("not found"),
-        "Expected error message to contain 'not found', got: {}",
+        err_msg.contains("I/O error"),
+        "Expected error message to contain 'I/O error', got: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("file not found"),
+        "Expected error message to contain 'file not found', got: {}",
         err_msg
     );
     assert!(
@@ -679,6 +684,11 @@ bootstrap:
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
+        err_msg.contains("I/O error"),
+        "Expected error message to contain 'I/O error', got: {}",
+        err_msg
+    );
+    assert!(
         err_msg.contains("permission denied"),
         "Expected error message to contain 'permission denied', got: {}",
         err_msg
@@ -720,10 +730,14 @@ fn test_load_profile_is_a_directory() {
     let result = load_profile(path.as_path());
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
-    // Case-insensitive check: Linux returns "Is a directory" from the OS error
     assert!(
-        err_msg.to_lowercase().contains("is a directory"),
-        "Expected error message to contain 'is a directory' (case-insensitive), got: {}",
+        err_msg.contains("I/O error"),
+        "Expected error message to contain 'I/O error', got: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("is a directory"),
+        "Expected error message to contain 'is a directory', got: {}",
         err_msg
     );
     assert!(
