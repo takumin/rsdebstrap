@@ -116,8 +116,8 @@ fn test_load_profile_invalid_file() {
         err_msg
     );
     assert!(
-        err_msg.contains("file not found"),
-        "Expected error message to contain 'file not found', got: {}",
+        err_msg.contains("not found"),
+        "Expected error message to contain 'not found', got: {}",
         err_msg
     );
     assert!(

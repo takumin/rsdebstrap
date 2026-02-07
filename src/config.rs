@@ -124,14 +124,17 @@ impl Profile {
         pipeline.validate()?;
 
         // Validate tasks are compatible with bootstrap output format.
-        // Intentionally mapped to Validation: rootfs_output() errors during validation
-        // indicate the bootstrap configuration cannot produce a usable rootfs for tasks,
-        // which is a configuration validation concern regardless of the underlying cause.
+        // rootfs_output() returns anyhow::Result, so we attempt to downcast to
+        // RsdebstrapError to preserve the original variant. If downcast fails
+        // (e.g., a non-RsdebstrapError from a backend), we fall back to Validation.
         if !pipeline.is_empty() {
             let backend = self.bootstrap.as_backend();
-            let output = backend
-                .rootfs_output(&self.dir)
-                .map_err(|e| RsdebstrapError::Validation(format!("{:#}", e)))?;
+            let output = backend.rootfs_output(&self.dir).map_err(|e| {
+                match e.downcast::<RsdebstrapError>() {
+                    Ok(typed_err) => typed_err,
+                    Err(e) => RsdebstrapError::Validation(format!("{:#}", e)),
+                }
+            })?;
             if let RootfsOutput::NonDirectory { reason } = output {
                 return Err(RsdebstrapError::Validation(format!(
                     "pipeline tasks require directory output but got: {}. \

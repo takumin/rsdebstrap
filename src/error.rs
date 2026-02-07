@@ -13,7 +13,7 @@ use std::io;
 /// Formats an IO error kind into a human-readable message.
 ///
 /// Provides consistent, user-friendly messages for common IO error kinds
-/// (e.g., "I/O error: file not found") instead of the OS-level messages
+/// (e.g., "I/O error: not found") instead of the OS-level messages
 /// (e.g., "No such file or directory (os error 2)"). For unrecognized
 /// error kinds, falls back to including the OS-level error message
 /// directly (e.g., "I/O error: connection refused").
@@ -22,7 +22,7 @@ use std::io;
 /// `RsdebstrapError::Io { context }`.
 pub(crate) fn io_error_kind_message(err: &io::Error) -> String {
     match err.kind() {
-        io::ErrorKind::NotFound => "I/O error: file not found".to_string(),
+        io::ErrorKind::NotFound => "I/O error: not found".to_string(),
         io::ErrorKind::PermissionDenied => "I/O error: permission denied".to_string(),
         io::ErrorKind::IsADirectory => "I/O error: is a directory".to_string(),
         _ => format!("I/O error: {}", err),
@@ -148,10 +148,10 @@ mod tests {
         let source = io::Error::new(io::ErrorKind::NotFound, "entity not found");
         let err = RsdebstrapError::Io {
             context: "/path/to/file.yml".to_string(),
-            message: "I/O error: file not found".to_string(),
+            message: "I/O error: not found".to_string(),
             source,
         };
-        assert_eq!(err.to_string(), "/path/to/file.yml: I/O error: file not found");
+        assert_eq!(err.to_string(), "/path/to/file.yml: I/O error: not found");
     }
 
     #[test]
@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn test_io_error_kind_message_not_found() {
         let err = io::Error::new(io::ErrorKind::NotFound, "not found");
-        assert_eq!(io_error_kind_message(&err), "I/O error: file not found");
+        assert_eq!(io_error_kind_message(&err), "I/O error: not found");
     }
 
     #[test]
