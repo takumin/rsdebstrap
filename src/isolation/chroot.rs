@@ -62,6 +62,10 @@ impl IsolationContext for ChrootContext {
     }
 
     fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+        if self.torn_down {
+            anyhow::bail!("cannot execute command: chroot context has already been torn down");
+        }
+
         let mut args: Vec<OsString> = Vec::with_capacity(command.len() + 1);
         args.push(self.rootfs.as_str().into());
         args.extend(command.iter().cloned());

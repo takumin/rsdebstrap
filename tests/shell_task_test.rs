@@ -698,6 +698,43 @@ fn test_validate_script_path_traversal_rejected() {
 }
 
 #[test]
+fn test_execute_with_custom_shell() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("path should be valid UTF-8");
+
+    // Setup rootfs with /tmp and custom shell /bin/bash
+    std::fs::create_dir(temp_dir.path().join("tmp")).expect("failed to create tmp dir");
+    std::fs::create_dir_all(temp_dir.path().join("bin")).expect("failed to create bin dir");
+    std::fs::write(temp_dir.path().join("bin/bash"), "#!/bin/bash\n")
+        .expect("failed to write /bin/bash");
+
+    let task =
+        ShellTask::with_shell(ScriptSource::Content("echo custom shell".to_string()), "/bin/bash");
+
+    let context = MockContext::new(&rootfs);
+    let result = task.execute(&context);
+
+    assert!(result.is_ok(), "execute with custom shell should succeed, got: {:?}", result);
+
+    // Verify the custom shell was used in the command
+    let commands = context.executed_commands();
+    assert_eq!(commands.len(), 1, "Expected exactly one command executed");
+    assert_eq!(
+        commands[0][0],
+        OsString::from("/bin/bash"),
+        "Expected custom shell /bin/bash, got: {:?}",
+        commands[0][0]
+    );
+    let script_arg = commands[0][1].to_string_lossy();
+    assert!(
+        script_arg.starts_with("/tmp/task-"),
+        "Expected script path in /tmp, got: {}",
+        script_arg
+    );
+}
+
+#[test]
 fn test_execute_with_no_exit_status_succeeds() {
     // When a process returns no exit status (e.g., in dry-run mode),
     // ExecutionResult::success() returns true, so ShellTask treats it as success.

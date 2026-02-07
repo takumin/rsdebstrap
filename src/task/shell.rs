@@ -139,6 +139,9 @@ impl<'de> Deserialize<'de> for ShellTask {
 
 impl ShellTask {
     /// Creates a new ShellTask with the given script source and default shell (/bin/sh).
+    ///
+    /// Note: Call [`validate()`](Self::validate) after construction to check
+    /// that the source is valid (e.g., non-empty content).
     pub fn new(source: ScriptSource) -> Self {
         Self {
             source,
@@ -147,6 +150,9 @@ impl ShellTask {
     }
 
     /// Creates a new ShellTask with the given script source and custom shell.
+    ///
+    /// Note: Call [`validate()`](Self::validate) after construction to check
+    /// that the shell path and source are valid.
     pub fn with_shell(source: ScriptSource, shell: impl Into<String>) -> Self {
         Self {
             source,
@@ -323,6 +329,11 @@ impl ShellTask {
                 command,
                 context.name(),
                 status_display
+            );
+        } else if !dry_run && result.status.is_none() {
+            tracing::warn!(
+                "command returned no exit status in non-dry-run mode; \
+                 this may indicate an executor implementation bug"
             );
         }
 

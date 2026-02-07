@@ -293,6 +293,32 @@ fn test_pipeline_validate_reports_correct_index() {
     );
 }
 
+#[test]
+fn test_pipeline_validate_stops_at_first_failing_phase() {
+    // Both pre_processors and provisioners have invalid tasks,
+    // but validate should stop at the first failing phase (pre-processor)
+    // and not report the provisioner error.
+    let bad_pre = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
+        "../../../etc/shadow".into(),
+    )))];
+    let bad_prov = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
+        "../../../etc/passwd".into(),
+    )))];
+    let pipeline = Pipeline::new(&bad_pre, &bad_prov, &[]);
+    let err = pipeline.validate().unwrap_err();
+    let err_msg = format!("{:#}", err);
+    assert!(
+        err_msg.contains("pre-processor 1 validation failed"),
+        "Expected pre-processor error, got: {}",
+        err_msg
+    );
+    assert!(
+        !err_msg.contains("provisioner"),
+        "Should not contain provisioner error when pre-processor fails, got: {}",
+        err_msg
+    );
+}
+
 // =============================================================================
 // run() tests
 // =============================================================================
