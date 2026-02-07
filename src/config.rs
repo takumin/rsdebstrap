@@ -22,7 +22,8 @@ use crate::bootstrap::{
     BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
 use crate::isolation::{ChrootProvider, IsolationProvider};
-use crate::provisioners::{Provisioner, shell::ShellProvisioner};
+use crate::pipeline::Pipeline;
+use crate::task::TaskDefinition;
 
 /// Static regex for removing duplicate location info from serde_yaml error messages.
 static YAML_LOCATION_RE: LazyLock<Regex> =
@@ -93,29 +94,39 @@ pub struct Profile {
     pub isolation: IsolationConfig,
     /// Bootstrap tool configuration
     pub bootstrap: Bootstrap,
-    /// Provisioners to run after bootstrap (optional)
+    /// Pre-processors to run before provisioning (optional)
     #[serde(default)]
-    pub provisioners: Vec<ProvisionerConfig>,
+    pub pre_processors: Vec<TaskDefinition>,
+    /// Main provisioning tasks (optional)
+    #[serde(default)]
+    pub provisioners: Vec<TaskDefinition>,
+    /// Post-processors to run after provisioning (optional)
+    #[serde(default)]
+    pub post_processors: Vec<TaskDefinition>,
 }
 
 impl Profile {
+    /// Creates a `Pipeline` from this profile's task phases.
+    pub fn pipeline(&self) -> Pipeline<'_> {
+        Pipeline::new(&self.pre_processors, &self.provisioners, &self.post_processors)
+    }
+
     /// Validate configuration semantics beyond basic deserialization.
     pub fn validate(&self) -> Result<()> {
         if self.dir.exists() && !self.dir.is_dir() {
             bail!("dir must be a directory: {}", self.dir);
         }
-        for (index, provisioner) in self.provisioners.iter().enumerate() {
-            provisioner
-                .validate()
-                .with_context(|| format!("provisioner {} validation failed", index + 1))?;
-        }
 
-        // Validate provisioners are compatible with bootstrap output format
-        if !self.provisioners.is_empty() {
+        // Validate all tasks across phases
+        let pipeline = self.pipeline();
+        pipeline.validate()?;
+
+        // Validate tasks are compatible with bootstrap output format
+        if !pipeline.is_empty() {
             let backend = self.bootstrap.as_backend();
             if let RootfsOutput::NonDirectory { reason } = backend.rootfs_output(&self.dir)? {
                 bail!(
-                    "provisioners require directory output but got: {}. \
+                    "pipeline tasks require directory output but got: {}. \
                     Use backend-specific hooks or change format to directory.",
                     reason
                 );
@@ -126,52 +137,18 @@ impl Profile {
     }
 }
 
-/// Provisioner configuration.
-///
-/// This enum represents the different provisioner types that can be used.
-/// The `type` field in YAML determines which variant is used.
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ProvisionerConfig {
-    /// Shell script provisioner
-    Shell(ShellProvisioner),
-}
-
-impl ProvisionerConfig {
-    /// Returns a reference to the underlying provisioner as a trait object.
-    ///
-    /// This allows calling `Provisioner` methods without matching
-    /// on each variant explicitly.
-    pub fn as_provisioner(&self) -> &dyn Provisioner {
-        match self {
-            ProvisionerConfig::Shell(cfg) => cfg,
-        }
-    }
-
-    /// Validate provisioner configuration.
-    pub fn validate(&self) -> Result<()> {
-        match self {
-            ProvisionerConfig::Shell(cfg) => cfg.validate(),
-        }
-    }
-}
-
 fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
     if profile.dir.is_relative() {
         profile.dir = profile_dir.join(&profile.dir);
     }
 
-    for provisioner in &mut profile.provisioners {
-        match provisioner {
-            ProvisionerConfig::Shell(shell) => {
-                if let Some(script) = shell.script_path_mut()
-                    && script.is_relative()
-                {
-                    let resolved = profile_dir.join(script.as_path());
-                    *script = resolved;
-                }
-            }
-        }
+    for task in profile
+        .pre_processors
+        .iter_mut()
+        .chain(profile.provisioners.iter_mut())
+        .chain(profile.post_processors.iter_mut())
+    {
+        task.resolve_paths(profile_dir);
     }
 }
 

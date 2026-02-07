@@ -13,7 +13,7 @@ use std::sync::Arc;
 /// to change the root directory before executing commands.
 ///
 /// Chroot doesn't require any special setup or teardown operations,
-/// making it a lightweight option for provisioning.
+/// making it a lightweight option for pipeline task execution.
 #[derive(Debug, Default, Clone)]
 pub struct ChrootProvider;
 
@@ -44,7 +44,6 @@ impl IsolationProvider for ChrootProvider {
 pub struct ChrootContext {
     rootfs: Utf8PathBuf,
     executor: Arc<dyn CommandExecutor>,
-    #[allow(dead_code)]
     dry_run: bool,
     torn_down: bool,
 }
@@ -58,7 +57,15 @@ impl IsolationContext for ChrootContext {
         &self.rootfs
     }
 
+    fn dry_run(&self) -> bool {
+        self.dry_run
+    }
+
     fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+        if self.torn_down {
+            anyhow::bail!("cannot execute command: chroot context has already been torn down");
+        }
+
         let mut args: Vec<OsString> = Vec::with_capacity(command.len() + 1);
         args.push(self.rootfs.as_str().into());
         args.extend(command.iter().cloned());

@@ -43,7 +43,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
 1. **CLI** (`src/cli.rs`) - Parses arguments using clap, provides `apply`, `validate`, and `completions` subcommands
 2. **Config** (`src/config.rs`) - Loads and validates YAML profiles, resolves relative paths
 3. **Bootstrap** (`src/bootstrap/`) - Executes bootstrap backends to create the rootfs
-4. **Provisioners** (`src/provisioners/`) - Runs post-bootstrap configuration scripts
+4. **Pipeline** (`src/pipeline.rs`) - Orchestrates pre-processors, provisioners, and post-processors in order
 
 ### Key Abstractions
 
@@ -52,8 +52,17 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - `DebootstrapConfig` - debootstrap implementation
   - Each backend builds command arguments and determines output type (directory vs archive)
 
-- **`Provisioner`** trait (`src/provisioners/mod.rs`) - Interface for post-bootstrap steps
-  - `ShellProvisioner` - Runs shell scripts in chroot via `chroot` command
+- **`TaskDefinition`** enum (`src/task/mod.rs`) - Declarative task definition for pipeline steps
+  - `ShellTask` (`src/task/shell.rs`) - Runs shell scripts within an isolation context
+  - Enum-based dispatch with compile-time exhaustive matching
+
+- **`Pipeline`** struct (`src/pipeline.rs`) - Orchestrates task execution in three phases
+  - Manages isolation context lifecycle (setup/teardown)
+  - Executes pre-processors, provisioners, post-processors in order
+  - Guarantees teardown even on phase errors
+
+- **`IsolationProvider`** / **`IsolationContext`** traits (`src/isolation/mod.rs`) - Isolation backends
+  - `ChrootProvider` / `ChrootContext` - chroot-based isolation
 
 - **`CommandExecutor`** trait (`src/executor/mod.rs`) - Abstracts command execution
   - `RealCommandExecutor` - Actual execution with dry-run support
@@ -68,11 +77,17 @@ bootstrap:
   suite: trixie             # Debian suite
   target: rootfs            # Output name (directory or archive)
   # Backend-specific options...
-provisioners:               # Optional post-bootstrap steps
+pre_processors:             # Optional pre-provisioning steps
+  - type: shell
+    content: "..."
+provisioners:               # Optional main provisioning steps
   - type: shell
     content: "..."          # Inline script
     # OR
     script: ./script.sh     # External script path
+post_processors:            # Optional post-provisioning steps
+  - type: shell
+    script: ./cleanup.sh
 ```
 
 ### Testing Pattern

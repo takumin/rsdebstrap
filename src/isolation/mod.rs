@@ -67,6 +67,14 @@ pub trait IsolationContext: Send {
     /// Returns the path to the rootfs directory.
     fn rootfs(&self) -> &Utf8Path;
 
+    /// Returns whether this context is in dry-run mode.
+    ///
+    /// When true, tasks should skip file I/O operations (script copy,
+    /// permission changes, rootfs validation) while still constructing
+    /// and passing commands to the executor, which handles dry-run
+    /// semantics at its own level.
+    fn dry_run(&self) -> bool;
+
     /// Executes a command within the isolated environment.
     ///
     /// # Arguments
@@ -81,7 +89,9 @@ pub trait IsolationContext: Send {
     /// This method is idempotent - calling it multiple times has no effect
     /// after the first successful teardown.
     ///
-    /// Note: This is also called automatically when the context is dropped,
-    /// but calling it explicitly allows for error handling.
+    /// Implementations should also call this in their `Drop` impl for safety,
+    /// but calling it explicitly allows for error handling. Note that `Drop`
+    /// cannot propagate errors, so implementations should log failures as
+    /// warnings in their `Drop` impl.
     fn teardown(&mut self) -> Result<()>;
 }
