@@ -493,7 +493,7 @@ provisioners:
 
     let result = profile.validate();
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("provisioners require directory output"));
+    assert!(err_msg.contains("pipeline tasks require directory output"));
 
     Ok(())
 }
@@ -798,6 +798,260 @@ dir: /tmp/test
         "Expected error message to contain file path, got: {}",
         err_msg
     );
+
+    Ok(())
+}
+
+// =============================================================================
+// pre_processors / post_processors tests
+// =============================================================================
+
+#[test]
+fn test_load_profile_with_pre_processors() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs
+          format: directory
+        pre_processors:
+          - type: shell
+            content: echo "pre-processing"
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert_eq!(profile.pre_processors.len(), 1);
+    assert!(profile.provisioners.is_empty());
+    assert!(profile.post_processors.is_empty());
+
+    match &profile.pre_processors[0] {
+        TaskDefinition::Shell(task) => {
+            assert_eq!(task.name(), "<inline>");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_with_post_processors() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs
+          format: directory
+        post_processors:
+          - type: shell
+            content: echo "post-processing"
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert!(profile.pre_processors.is_empty());
+    assert!(profile.provisioners.is_empty());
+    assert_eq!(profile.post_processors.len(), 1);
+
+    match &profile.post_processors[0] {
+        TaskDefinition::Shell(task) => {
+            assert_eq!(task.name(), "<inline>");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_with_all_three_phases() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs
+          format: directory
+        pre_processors:
+          - type: shell
+            content: echo "pre"
+        provisioners:
+          - type: shell
+            content: echo "main"
+        post_processors:
+          - type: shell
+            content: echo "post"
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert_eq!(profile.pre_processors.len(), 1);
+    assert_eq!(profile.provisioners.len(), 1);
+    assert_eq!(profile.post_processors.len(), 1);
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_phases_default_to_empty() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs.tar.zst
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert!(profile.pre_processors.is_empty());
+    assert!(profile.provisioners.is_empty());
+    assert!(profile.post_processors.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_pre_processors_with_tar_output() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs.tar.zst
+        pre_processors:
+          - type: shell
+            content: echo "pre"
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    let result = profile.validate();
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("pipeline tasks require directory output"));
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_post_processors_with_tar_output() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs.tar.zst
+        post_processors:
+          - type: shell
+            content: echo "post"
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    let result = profile.validate();
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("pipeline tasks require directory output"));
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_resolves_pre_processor_script_path() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let scripts_dir = temp_dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir)?;
+    let script_path = scripts_dir.join("pre.sh");
+    std::fs::write(&script_path, "#!/bin/sh\necho pre\n")?;
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+            dir: /tmp/test
+            bootstrap:
+              type: mmdebstrap
+              suite: bookworm
+              target: rootfs
+              format: directory
+            pre_processors:
+              - type: shell
+                script: scripts/pre.sh
+            "#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match profile.pre_processors.as_slice() {
+        [TaskDefinition::Shell(shell)] => {
+            assert_eq!(
+                shell.script_path().unwrap().canonicalize_utf8()?,
+                Utf8PathBuf::from_path_buf(script_path.canonicalize()?).unwrap()
+            );
+        }
+        _ => panic!("expected one shell pre_processor"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_resolves_post_processor_script_path() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let scripts_dir = temp_dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir)?;
+    let script_path = scripts_dir.join("post.sh");
+    std::fs::write(&script_path, "#!/bin/sh\necho post\n")?;
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+            dir: /tmp/test
+            bootstrap:
+              type: mmdebstrap
+              suite: bookworm
+              target: rootfs
+              format: directory
+            post_processors:
+              - type: shell
+                script: scripts/post.sh
+            "#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match profile.post_processors.as_slice() {
+        [TaskDefinition::Shell(shell)] => {
+            assert_eq!(
+                shell.script_path().unwrap().canonicalize_utf8()?,
+                Utf8PathBuf::from_path_buf(script_path.canonicalize()?).unwrap()
+            );
+        }
+        _ => panic!("expected one shell post_processor"),
+    }
 
     Ok(())
 }

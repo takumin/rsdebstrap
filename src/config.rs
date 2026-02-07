@@ -22,6 +22,7 @@ use crate::bootstrap::{
     BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
 use crate::isolation::{ChrootProvider, IsolationProvider};
+use crate::pipeline::Pipeline;
 use crate::task::TaskDefinition;
 
 /// Static regex for removing duplicate location info from serde_yaml error messages.
@@ -112,7 +113,6 @@ impl Profile {
         }
 
         // Validate all tasks across phases
-        use crate::pipeline::Pipeline;
         let pipeline =
             Pipeline::new(&self.pre_processors, &self.provisioners, &self.post_processors);
         pipeline.validate()?;
@@ -122,7 +122,7 @@ impl Profile {
             let backend = self.bootstrap.as_backend();
             if let RootfsOutput::NonDirectory { reason } = backend.rootfs_output(&self.dir)? {
                 bail!(
-                    "provisioners require directory output but got: {}. \
+                    "pipeline tasks require directory output but got: {}. \
                     Use backend-specific hooks or change format to directory.",
                     reason
                 );
