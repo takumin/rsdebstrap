@@ -103,12 +103,13 @@ impl RsdebstrapError {
         let command = if spec.args.is_empty() {
             spec.command.clone()
         } else {
-            let args: Vec<String> = spec
+            let args = spec
                 .args
                 .iter()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect();
-            format!("{} {}", spec.command, args.join(" "))
+                .map(|a| format!("{:?}", a.to_string_lossy()))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("{} {}", spec.command, args)
         };
         Self::Execution {
             command,
@@ -126,10 +127,10 @@ impl RsdebstrapError {
         isolation_name: &str,
         status: impl Into<String>,
     ) -> Self {
-        let cmd_str: Vec<String> = command
+        let cmd_str = command
             .iter()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
+            .map(|a| format!("{:?}", a.to_string_lossy()))
+            .collect::<Vec<_>>();
         Self::Execution {
             command: format!("{} (isolation: {})", cmd_str.join(" "), isolation_name),
             status: status.into(),
@@ -175,7 +176,7 @@ mod tests {
         let err = RsdebstrapError::execution(&spec, "exit status: 1");
         assert_eq!(
             err.to_string(),
-            "command execution failed: mmdebstrap --variant=debootstrap: exit status: 1"
+            "command execution failed: mmdebstrap \"--variant=debootstrap\": exit status: 1"
         );
     }
 
@@ -276,7 +277,7 @@ mod tests {
         let err = RsdebstrapError::execution_in_isolation(&command, "chroot", "exit status: 1");
         assert_eq!(
             err.to_string(),
-            "command execution failed: /bin/sh /tmp/task-abc.sh (isolation: chroot): exit status: 1"
+            "command execution failed: \"/bin/sh\" \"/tmp/task-abc.sh\" (isolation: chroot): exit status: 1"
         );
     }
 
