@@ -345,14 +345,11 @@ impl ShellTask {
                 .status
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "unknown (no status available)".to_string());
-            let cmd_str: Vec<String> = command
-                .iter()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect();
-            return Err(RsdebstrapError::Execution {
-                command: format!("{} (isolation: {})", cmd_str.join(" "), context.name()),
-                status: status_display,
-            }
+            return Err(RsdebstrapError::execution_in_isolation(
+                &command,
+                context.name(),
+                status_display,
+            )
             .into());
         } else if !dry_run && result.status.is_none() {
             tracing::warn!(

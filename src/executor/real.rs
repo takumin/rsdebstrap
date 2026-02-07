@@ -71,9 +71,16 @@ impl CommandExecutor for RealCommandExecutor {
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
 
-        let mut child = command.spawn().with_context(|| {
-            format!("failed to spawn command `{}` with args {:?}", spec.command, spec.args)
-        })?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                return Err(crate::error::RsdebstrapError::execution(
+                    spec,
+                    format!("failed to spawn command: {}", e),
+                )
+                .into());
+            }
+        };
 
         tracing::trace!("spawned command: {}: pid={}", spec.command, child.id());
 

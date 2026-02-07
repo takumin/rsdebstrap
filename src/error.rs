@@ -115,6 +115,26 @@ impl RsdebstrapError {
             status: status.into(),
         }
     }
+
+    /// Creates an `Execution` variant from a command slice and isolation context name.
+    ///
+    /// This is the preferred way to construct `Execution` errors for commands
+    /// executed through an isolation context, formatting the command consistently
+    /// as `"arg1 arg2 ... (isolation: context_name)"`.
+    pub(crate) fn execution_in_isolation(
+        command: &[std::ffi::OsString],
+        isolation_name: &str,
+        status: impl Into<String>,
+    ) -> Self {
+        let cmd_str: Vec<String> = command
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        Self::Execution {
+            command: format!("{} (isolation: {})", cmd_str.join(" "), isolation_name),
+            status: status.into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -250,11 +270,83 @@ mod tests {
     }
 
     #[test]
-    fn test_into_anyhow_error() {
+    fn test_execution_in_isolation_constructor() {
+        use std::ffi::OsString;
+        let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/task-abc.sh".into()];
+        let err = RsdebstrapError::execution_in_isolation(&command, "chroot", "exit status: 1");
+        assert_eq!(
+            err.to_string(),
+            "command execution failed: /bin/sh /tmp/task-abc.sh (isolation: chroot): exit status: 1"
+        );
+    }
+
+    #[test]
+    fn test_execution_in_isolation_constructor_empty_command() {
+        use std::ffi::OsString;
+        let command: Vec<OsString> = vec![];
+        let err = RsdebstrapError::execution_in_isolation(&command, "mock", "exit status: 2");
+        assert_eq!(err.to_string(), "command execution failed:  (isolation: mock): exit status: 2");
+    }
+
+    #[test]
+    fn test_into_anyhow_error_validation() {
         let err = RsdebstrapError::Validation("test".to_string());
         let anyhow_err: anyhow::Error = err.into();
         let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
         assert!(downcast.is_some());
         assert!(matches!(downcast.unwrap(), RsdebstrapError::Validation(_)));
+    }
+
+    #[test]
+    fn test_into_anyhow_error_execution() {
+        let err = RsdebstrapError::Execution {
+            command: "test".to_string(),
+            status: "failed".to_string(),
+        };
+        let anyhow_err: anyhow::Error = err.into();
+        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
+        assert!(downcast.is_some());
+        assert!(matches!(downcast.unwrap(), RsdebstrapError::Execution { .. }));
+    }
+
+    #[test]
+    fn test_into_anyhow_error_isolation() {
+        let err = RsdebstrapError::Isolation("test".to_string());
+        let anyhow_err: anyhow::Error = err.into();
+        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
+        assert!(downcast.is_some());
+        assert!(matches!(downcast.unwrap(), RsdebstrapError::Isolation(_)));
+    }
+
+    #[test]
+    fn test_into_anyhow_error_config() {
+        let err = RsdebstrapError::Config("test".to_string());
+        let anyhow_err: anyhow::Error = err.into();
+        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
+        assert!(downcast.is_some());
+        assert!(matches!(downcast.unwrap(), RsdebstrapError::Config(_)));
+    }
+
+    #[test]
+    fn test_into_anyhow_error_io() {
+        let err = RsdebstrapError::io("/path", io::Error::new(io::ErrorKind::NotFound, "test"));
+        let anyhow_err: anyhow::Error = err.into();
+        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
+        assert!(downcast.is_some());
+        assert!(matches!(downcast.unwrap(), RsdebstrapError::Io { .. }));
+    }
+
+    #[test]
+    fn test_io_display_permission_denied() {
+        let source = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
+        let err = RsdebstrapError::io("/etc/shadow", source);
+        assert_eq!(err.to_string(), "/etc/shadow: I/O error: permission denied");
+    }
+
+    #[test]
+    fn test_io_display_is_a_directory() {
+        let source = io::Error::new(io::ErrorKind::IsADirectory, "is a directory");
+        let err = RsdebstrapError::io("/path/to/dir", source);
+        assert_eq!(err.to_string(), "/path/to/dir: I/O error: is a directory");
     }
 }

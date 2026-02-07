@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::sync::{Arc, Mutex};
 
+use rsdebstrap::RsdebstrapError;
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use rsdebstrap::isolation::{ChrootProvider, IsolationProvider};
 
@@ -140,4 +141,24 @@ fn test_chroot_context_multiple_executions() {
     assert_eq!(calls[1].0, "chroot");
     assert_eq!(calls[1].1[0], "/tmp/rootfs");
     assert_eq!(calls[1].1[1], "/bin/ls");
+}
+
+#[test]
+fn test_chroot_context_execute_after_teardown_returns_isolation_error() {
+    let provider = ChrootProvider;
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
+    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
+
+    let mut context = provider.setup(rootfs, executor, false).unwrap();
+    context.teardown().unwrap();
+
+    let command: Vec<OsString> = vec!["/bin/sh".into()];
+    let err = context.execute(&command).unwrap_err();
+    let downcast = err.downcast_ref::<RsdebstrapError>();
+    assert!(downcast.is_some(), "Expected RsdebstrapError in error chain, got: {:#}", err,);
+    assert!(
+        matches!(downcast.unwrap(), RsdebstrapError::Isolation(_)),
+        "Expected RsdebstrapError::Isolation, got: {:?}",
+        downcast.unwrap(),
+    );
 }
