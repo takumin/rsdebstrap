@@ -3,8 +3,8 @@ pub mod cli;
 pub mod config;
 pub mod executor;
 pub mod isolation;
-pub mod provisioners;
-pub mod runner;
+pub mod pipeline;
+pub mod task;
 
 use std::fs;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use tracing::info;
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
 use crate::executor::CommandExecutor;
+use crate::pipeline::Pipeline;
 
 pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
     let filter = match log_level {
@@ -59,62 +60,30 @@ fn run_bootstrap_phase(
     Ok(())
 }
 
-/// Executes the provisioning phase for all configured provisioners.
-fn run_provision_phase(
+/// Executes the pipeline phase (pre-processors, provisioners, post-processors).
+fn run_pipeline_phase(
     profile: &config::Profile,
     executor: Arc<dyn CommandExecutor>,
     dry_run: bool,
 ) -> Result<()> {
-    if profile.provisioners.is_empty() {
+    let pipeline =
+        Pipeline::new(&profile.pre_processors, &profile.provisioners, &profile.post_processors);
+
+    if pipeline.is_empty() {
         return Ok(());
     }
 
-    info!("starting provisioning phase with {} provisioner(s)", profile.provisioners.len());
-
-    // Get rootfs directory (validation ensures it's a directory if provisioners exist)
+    // Get rootfs directory (validation ensures it's a directory if tasks exist)
     let backend = profile.bootstrap.as_backend();
     let bootstrap::RootfsOutput::Directory(rootfs) = backend.rootfs_output(&profile.dir)? else {
         anyhow::bail!(
-            "provisioners require directory output but got non-directory format. \
+            "pipeline tasks require directory output but got non-directory format. \
             This should have been caught during validation."
         );
     };
 
-    // Setup isolation context
     let provider = profile.isolation.as_provider();
-    let mut context = provider
-        .setup(&rootfs, executor, dry_run)
-        .context("failed to setup isolation context")?;
-
-    // Run provisioners, ensuring teardown happens even on error
-    let provision_result = (|| -> anyhow::Result<()> {
-        for (index, provisioner_config) in profile.provisioners.iter().enumerate() {
-            info!("running provisioner {}/{}", index + 1, profile.provisioners.len());
-            let provisioner = provisioner_config.as_provisioner();
-            provisioner
-                .provision(context.as_ref(), dry_run)
-                .with_context(|| format!("failed to run provisioner {}", index + 1))?;
-        }
-        Ok(())
-    })();
-
-    // Teardown isolation context (always run, even on provisioner error)
-    let teardown_result = context.teardown();
-
-    // Handle both errors, chaining if both fail
-    match (provision_result, teardown_result) {
-        (Ok(()), Ok(())) => {}
-        (Err(e), Ok(())) => return Err(e),
-        (Ok(()), Err(e)) => return Err(e).context("failed to teardown isolation context"),
-        (Err(prov_err), Err(tear_err)) => {
-            // Provisioning error is primary; log teardown error separately
-            tracing::error!("isolation context teardown also failed: {:#}", tear_err);
-            return Err(prov_err);
-        }
-    }
-
-    info!("provisioning phase completed successfully");
-    Ok(())
+    pipeline.run(&rootfs, provider.as_ref(), executor, dry_run)
 }
 
 pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
@@ -128,7 +97,7 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> R
     }
 
     run_bootstrap_phase(&profile, &executor)?;
-    run_provision_phase(&profile, executor, opts.dry_run)?;
+    run_pipeline_phase(&profile, executor, opts.dry_run)?;
 
     Ok(())
 }

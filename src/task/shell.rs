@@ -1,7 +1,10 @@
-//! Shell runner implementation.
+//! Shell task implementation.
 //!
-//! This module provides the core shell script execution logic that can be
-//! shared between provisioners and future pre/post processors.
+//! This module provides the `ShellTask` data structure and execution logic
+//! for running shell scripts within an isolation context. It handles:
+//! - Script source management (external files or inline content)
+//! - Security validation (path traversal, symlink attacks, TOCTOU mitigation)
+//! - Script lifecycle (copy/write to rootfs, execute, cleanup via RAII guard)
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -25,13 +28,13 @@ pub enum ScriptSource {
     Content(String),
 }
 
-/// Shell runner for executing scripts in isolation contexts.
+/// Shell task data and execution logic.
 ///
-/// This struct encapsulates the common logic for running shell scripts
-/// inside a rootfs using isolation mechanisms (e.g., chroot).
-/// It is designed to be reused by provisioners and future processors.
+/// Represents a shell script to be executed within an isolation context.
+/// This is a pure data structure with methods for validation and execution,
+/// following Rust's idiomatic enum-based dispatch pattern.
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
-pub struct ShellRunner {
+pub struct ShellTask {
     /// Script source: either an external file path or inline content
     #[serde(flatten)]
     source: ScriptSource,
@@ -45,8 +48,8 @@ fn default_shell() -> String {
     "/bin/sh".to_string()
 }
 
-impl ShellRunner {
-    /// Creates a new ShellRunner with the given script source and default shell (/bin/sh).
+impl ShellTask {
+    /// Creates a new ShellTask with the given script source and default shell (/bin/sh).
     pub fn new(source: ScriptSource) -> Self {
         Self {
             source,
@@ -54,7 +57,7 @@ impl ShellRunner {
         }
     }
 
-    /// Creates a new ShellRunner with the given script source and custom shell.
+    /// Creates a new ShellTask with the given script source and custom shell.
     pub fn with_shell(source: ScriptSource, shell: impl Into<String>) -> Self {
         Self {
             source,
@@ -72,7 +75,32 @@ impl ShellRunner {
         &self.shell
     }
 
-    /// Validates the shell runner configuration.
+    /// Returns a human-readable name for this task.
+    pub fn name(&self) -> &str {
+        match &self.source {
+            ScriptSource::Script(path) => path.as_str(),
+            ScriptSource::Content(_) => "<inline>",
+        }
+    }
+
+    /// Returns the script path if this task uses an external script file.
+    pub fn script_path(&self) -> Option<&Utf8PathBuf> {
+        match &self.source {
+            ScriptSource::Script(path) => Some(path),
+            ScriptSource::Content(_) => None,
+        }
+    }
+
+    /// Resolves relative paths in this task relative to the given base directory.
+    pub(crate) fn resolve_paths(&mut self, base_dir: &Utf8Path) {
+        if let ScriptSource::Script(path) = &mut self.source
+            && path.is_relative()
+        {
+            *path = base_dir.join(path.as_path());
+        }
+    }
+
+    /// Validates the task configuration.
     ///
     /// For external script files, validates that the file exists and is a regular file.
     /// For inline content, no additional validation is needed (type system ensures it's present).
@@ -102,29 +130,95 @@ impl ShellRunner {
         }
     }
 
-    /// Returns the script source for logging purposes.
-    pub fn script_source(&self) -> &str {
-        match &self.source {
-            ScriptSource::Script(path) => path.as_str(),
-            ScriptSource::Content(_) => "<inline>",
-        }
-    }
+    /// Executes the shell script using the provided isolation context.
+    ///
+    /// This method:
+    /// 1. Validates the rootfs (unless dry_run)
+    /// 2. Copies or writes the script to rootfs /tmp
+    /// 3. Executes the script via the isolation context
+    /// 4. Cleans up the script file (via RAII guard)
+    pub fn execute(&self, context: &dyn IsolationContext) -> Result<()> {
+        let rootfs = context.rootfs();
+        let dry_run = context.dry_run();
 
-    /// Returns the script path if this runner uses an external script file.
-    pub fn script_path(&self) -> Option<&Utf8PathBuf> {
-        match &self.source {
-            ScriptSource::Script(path) => Some(path),
-            ScriptSource::Content(_) => None,
+        if !dry_run {
+            self.validate_rootfs(rootfs)
+                .context("rootfs validation failed")?;
         }
-    }
 
-    /// Returns a mutable reference to the script path if this runner uses an
-    /// external script file.
-    pub(crate) fn script_path_mut(&mut self) -> Option<&mut Utf8PathBuf> {
-        match &mut self.source {
-            ScriptSource::Script(path) => Some(path),
-            ScriptSource::Content(_) => None,
+        info!("running shell script: {} (isolation: {})", self.name(), context.name());
+        debug!("rootfs: {}, shell: {}, dry_run: {}", rootfs, self.shell, dry_run);
+
+        // Generate unique script name in rootfs
+        let script_name = format!("provision-{}.sh", uuid::Uuid::new_v4());
+        let target_script = rootfs.join("tmp").join(&script_name);
+
+        // RAII guard ensures cleanup even on error
+        let _guard = ScriptGuard::new(target_script.clone(), dry_run);
+
+        if !dry_run {
+            // Re-validate /tmp immediately before use to mitigate TOCTOU race conditions
+            Self::validate_tmp_directory(rootfs)
+                .context("TOCTOU check: /tmp validation failed before writing script")?;
+
+            // Copy or write script to rootfs based on source type
+            match &self.source {
+                ScriptSource::Script(script_path) => {
+                    // External script: copy to rootfs
+                    info!("copying script from {} to rootfs", script_path);
+                    fs::copy(script_path, &target_script).with_context(|| {
+                        format!("failed to copy script {} to {}", script_path, target_script)
+                    })?;
+                }
+                ScriptSource::Content(content) => {
+                    // Inline script: write to rootfs
+                    info!("writing inline script to rootfs");
+                    fs::write(&target_script, content).with_context(|| {
+                        format!("failed to write inline script to {}", target_script)
+                    })?;
+                }
+            }
+
+            // Make script executable
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = fs::metadata(&target_script)
+                    .with_context(|| {
+                        format!("failed to read metadata for script {}", target_script)
+                    })?
+                    .permissions();
+                perms.set_mode(0o700);
+                fs::set_permissions(&target_script, perms).with_context(|| {
+                    format!("failed to set execute permission on script {}", target_script)
+                })?;
+            }
         }
+
+        // Execute script using the configured isolation backend
+        let script_path_in_chroot = format!("/tmp/{}", script_name);
+        let command: Vec<OsString> = vec![self.shell.as_str().into(), script_path_in_chroot.into()];
+
+        let result = context
+            .execute(&command)
+            .context("failed to execute script")?;
+
+        if !result.success() {
+            let status_display = result
+                .status
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "unknown (no status available)".to_string());
+            anyhow::bail!(
+                "script with command `{:?}` \
+                failed in isolation backend '{}' with status: {}",
+                command,
+                context.name(),
+                status_display
+            );
+        }
+
+        info!("shell script completed successfully");
+        Ok(())
     }
 
     /// Validates that /tmp exists as a real directory (not a symlink).
@@ -213,96 +307,6 @@ impl ShellRunner {
             bail!("shell '{}' is not a regular file in rootfs at {}", self.shell, shell_in_rootfs);
         }
 
-        Ok(())
-    }
-
-    /// Runs the shell script using the provided isolation context.
-    ///
-    /// This method:
-    /// 1. Validates the rootfs (unless dry_run)
-    /// 2. Copies or writes the script to rootfs /tmp
-    /// 3. Executes the script via the isolation context
-    /// 4. Cleans up the script file (via RAII guard)
-    pub fn run(&self, context: &dyn IsolationContext, dry_run: bool) -> Result<()> {
-        let rootfs = context.rootfs();
-
-        if !dry_run {
-            self.validate_rootfs(rootfs)
-                .context("rootfs validation failed")?;
-        }
-
-        info!("running shell script: {} (isolation: {})", self.script_source(), context.name());
-        debug!("rootfs: {}, shell: {}, dry_run: {}", rootfs, self.shell, dry_run);
-
-        // Generate unique script name in rootfs
-        let script_name = format!("provision-{}.sh", uuid::Uuid::new_v4());
-        let target_script = rootfs.join("tmp").join(&script_name);
-
-        // RAII guard ensures cleanup even on error
-        let _guard = ScriptGuard::new(target_script.clone(), dry_run);
-
-        if !dry_run {
-            // Re-validate /tmp immediately before use to mitigate TOCTOU race conditions
-            Self::validate_tmp_directory(rootfs)
-                .context("TOCTOU check: /tmp validation failed before writing script")?;
-
-            // Copy or write script to rootfs based on source type
-            match &self.source {
-                ScriptSource::Script(script_path) => {
-                    // External script: copy to rootfs
-                    info!("copying script from {} to rootfs", script_path);
-                    fs::copy(script_path, &target_script).with_context(|| {
-                        format!("failed to copy script {} to {}", script_path, target_script)
-                    })?;
-                }
-                ScriptSource::Content(content) => {
-                    // Inline script: write to rootfs
-                    info!("writing inline script to rootfs");
-                    fs::write(&target_script, content).with_context(|| {
-                        format!("failed to write inline script to {}", target_script)
-                    })?;
-                }
-            }
-
-            // Make script executable
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = fs::metadata(&target_script)
-                    .with_context(|| {
-                        format!("failed to read metadata for script {}", target_script)
-                    })?
-                    .permissions();
-                perms.set_mode(0o700);
-                fs::set_permissions(&target_script, perms).with_context(|| {
-                    format!("failed to set execute permission on script {}", target_script)
-                })?;
-            }
-        }
-
-        // Execute script using the configured isolation backend
-        let script_path_in_chroot = format!("/tmp/{}", script_name);
-        let command: Vec<OsString> = vec![self.shell.as_str().into(), script_path_in_chroot.into()];
-
-        let result = context
-            .execute(&command)
-            .context("failed to execute script")?;
-
-        if !result.success() {
-            let status_display = result
-                .status
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "unknown (no status available)".to_string());
-            anyhow::bail!(
-                "script with command `{:?}` \
-                failed in isolation backend '{}' with status: {}",
-                command,
-                context.name(),
-                status_display
-            );
-        }
-
-        info!("shell script completed successfully");
         Ok(())
     }
 }

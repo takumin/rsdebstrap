@@ -3,7 +3,8 @@ mod helpers;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::bootstrap::mmdebstrap::{self, Format};
-use rsdebstrap::config::{ProvisionerConfig, load_profile};
+use rsdebstrap::config::load_profile;
+use rsdebstrap::task::TaskDefinition;
 use tempfile::tempdir;
 
 #[test]
@@ -329,7 +330,7 @@ provisioners:
     let profile = load_profile(path)?;
 
     match profile.provisioners.as_slice() {
-        [ProvisionerConfig::Shell(shell)] => {
+        [TaskDefinition::Shell(shell)] => {
             assert_eq!(
                 shell.script_path().unwrap().canonicalize_utf8()?,
                 Utf8PathBuf::from_path_buf(script_path.canonicalize()?).unwrap()
@@ -458,7 +459,7 @@ provisioners:
     let expected_script_path = Utf8PathBuf::from_path_buf(script_path.canonicalize()?)
         .expect("script path should be valid UTF-8");
     match &profile.provisioners[..] {
-        [ProvisionerConfig::Shell(shell)] => {
+        [TaskDefinition::Shell(shell)] => {
             let script = shell.script_path().expect("script should be set");
             assert_eq!(
                 script.canonicalize_utf8()?,

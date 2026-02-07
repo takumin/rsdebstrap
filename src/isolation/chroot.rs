@@ -44,7 +44,6 @@ impl IsolationProvider for ChrootProvider {
 pub struct ChrootContext {
     rootfs: Utf8PathBuf,
     executor: Arc<dyn CommandExecutor>,
-    #[allow(dead_code)]
     dry_run: bool,
     torn_down: bool,
 }
@@ -56,6 +55,10 @@ impl IsolationContext for ChrootContext {
 
     fn rootfs(&self) -> &Utf8Path {
         &self.rootfs
+    }
+
+    fn dry_run(&self) -> bool {
+        self.dry_run
     }
 
     fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {

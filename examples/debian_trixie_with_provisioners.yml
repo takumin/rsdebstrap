@@ -1,6 +1,7 @@
 ---
-# Example profile for Debian Trixie with provisioners
-# This demonstrates how to use provisioners to configure the system after bootstrap
+# Example profile for Debian Trixie with pipeline tasks
+# This demonstrates how to use pre-processors, provisioners, and post-processors
+# to configure the system after bootstrap
 
 dir: /tmp/debian-trixie-provisioned
 
@@ -13,7 +14,7 @@ isolation:
 bootstrap:
   type: mmdebstrap
   suite: trixie
-  target: rootfs # Must be a directory for provisioners to work
+  target: rootfs # Must be a directory for pipeline tasks to work
   mirrors:
   - https://deb.debian.org/debian
   variant: apt
@@ -22,6 +23,13 @@ bootstrap:
   - contrib
   architectures:
   - amd64
+
+# Pre-processors run before provisioners (optional)
+# pre_processors:
+# - type: shell
+#   content: |-
+#     #!/bin/sh
+#     echo "Running pre-processor..."
 
 provisioners:
 # Example 1: Inline shell script
@@ -38,3 +46,10 @@ provisioners:
   # - type: shell
   #   script: ./examples/scripts/configure-network.sh
   #   shell: /bin/bash
+
+# Post-processors run after provisioners (optional)
+# post_processors:
+# - type: shell
+#   content: |-
+#     #!/bin/sh
+#     echo "Running post-processor cleanup..."

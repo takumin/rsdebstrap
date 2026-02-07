@@ -67,6 +67,13 @@ pub trait IsolationContext: Send {
     /// Returns the path to the rootfs directory.
     fn rootfs(&self) -> &Utf8Path;
 
+    /// Returns whether this context is in dry-run mode.
+    ///
+    /// When true, tasks should skip file I/O operations (script copy,
+    /// permission changes, rootfs validation) while still logging and
+    /// executing commands through the context.
+    fn dry_run(&self) -> bool;
+
     /// Executes a command within the isolated environment.
     ///
     /// # Arguments
