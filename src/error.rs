@@ -277,7 +277,8 @@ mod tests {
         let err = RsdebstrapError::execution_in_isolation(&command, "chroot", "exit status: 1");
         assert_eq!(
             err.to_string(),
-            "command execution failed: \"/bin/sh\" \"/tmp/task-abc.sh\" (isolation: chroot): exit status: 1"
+            "command execution failed: \"/bin/sh\" \"/tmp/task-abc.sh\" \
+            (isolation: chroot): exit status: 1"
         );
     }
 
