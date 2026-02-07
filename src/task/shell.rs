@@ -6,7 +6,7 @@
 //! - Security validation (path traversal, symlink attacks, TOCTOU risk reduction)
 //! - Script lifecycle (copy/write to rootfs, execute, cleanup via RAII guard)
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 use serde::de::{self, MapAccess, Visitor};
@@ -15,6 +15,7 @@ use std::fmt;
 use std::fs;
 use tracing::{debug, info};
 
+use crate::error::RsdebstrapError;
 use crate::isolation::IsolationContext;
 
 /// Script source for shell execution.
@@ -197,14 +198,26 @@ impl ShellTask {
 
     /// Validates the task configuration.
     ///
-    /// For external script files, validates that the file exists and is a regular file.
-    /// For inline content, validates that the content is not empty.
-    pub fn validate(&self) -> Result<()> {
+    /// Checks that the shell path is non-empty and absolute, then validates
+    /// the script source:
+    /// - For external script files: rejects path traversal (`..` components),
+    ///   validates that the file exists and is a regular file.
+    /// - For inline content: validates that the content is not empty or whitespace-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` for constraint violations (empty shell,
+    /// relative shell path, path traversal, non-file script, empty or whitespace-only
+    /// content) or `RsdebstrapError::Io` if the script file cannot be accessed.
+    pub fn validate(&self) -> Result<(), RsdebstrapError> {
         if self.shell.is_empty() {
-            bail!("shell path must not be empty");
+            return Err(RsdebstrapError::Validation("shell path must not be empty".to_string()));
         }
         if !self.shell.starts_with('/') {
-            bail!("shell path must be absolute (start with '/'): {}", self.shell);
+            return Err(RsdebstrapError::Validation(format!(
+                "shell path must be absolute (start with '/'): {}",
+                self.shell
+            )));
         }
 
         match &self.source {
@@ -214,23 +227,32 @@ impl ShellTask {
                     .components()
                     .any(|c| c == camino::Utf8Component::ParentDir)
                 {
-                    bail!(
+                    return Err(RsdebstrapError::Validation(format!(
                         "script path '{}' contains '..' components, \
                         which is not allowed for security reasons",
                         script
-                    );
+                    )));
                 }
 
-                let metadata = fs::metadata(script)
-                    .with_context(|| format!("failed to read shell script metadata: {}", script))?;
+                let metadata = fs::metadata(script).map_err(|e| {
+                    RsdebstrapError::io(
+                        format!("failed to read shell script metadata: {}", script),
+                        e,
+                    )
+                })?;
                 if !metadata.is_file() {
-                    bail!("shell script is not a file: {}", script);
+                    return Err(RsdebstrapError::Validation(format!(
+                        "shell script is not a file: {}",
+                        script
+                    )));
                 }
                 Ok(())
             }
             ScriptSource::Content(content) => {
                 if content.trim().is_empty() {
-                    bail!("inline script content must not be empty");
+                    return Err(RsdebstrapError::Validation(
+                        "inline script content must not be empty".to_string(),
+                    ));
                 }
                 Ok(())
             }
@@ -323,13 +345,12 @@ impl ShellTask {
                 .status
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "unknown (no status available)".to_string());
-            anyhow::bail!(
-                "script with command `{:?}` \
-                failed in isolation backend '{}' with status: {}",
-                command,
+            return Err(RsdebstrapError::execution_in_isolation(
+                &command,
                 context.name(),
-                status_display
-            );
+                status_display,
+            )
+            .into());
         } else if !dry_run && result.status.is_none() {
             tracing::warn!(
                 "command returned no exit status in non-dry-run mode; \
@@ -350,31 +371,38 @@ impl ShellTask {
         let metadata = match std::fs::symlink_metadata(&tmp_dir) {
             Ok(metadata) => metadata,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                bail!(
+                return Err(RsdebstrapError::Validation(format!(
                     "/tmp directory not found in rootfs at {}. \
                     The rootfs may not be properly bootstrapped.",
                     tmp_dir
-                );
+                ))
+                .into());
             }
             Err(e) => {
-                return Err(e)
-                    .with_context(|| format!("failed to read /tmp metadata at {}", tmp_dir));
+                return Err(RsdebstrapError::io(
+                    format!("failed to read /tmp metadata at {}", tmp_dir),
+                    e,
+                )
+                .into());
             }
         };
 
         if metadata.file_type().is_symlink() {
-            bail!(
+            return Err(RsdebstrapError::Validation(
                 "/tmp in rootfs is a symlink, which is not allowed for security reasons. \
                 An attacker could use this to write files outside the chroot."
-            );
+                    .to_string(),
+            )
+            .into());
         }
 
         if !metadata.file_type().is_dir() {
-            bail!(
+            return Err(RsdebstrapError::Validation(format!(
                 "/tmp in rootfs is not a directory: {}. \
                 The rootfs may not be properly bootstrapped.",
                 tmp_dir
-            );
+            ))
+            .into());
         }
 
         Ok(())
@@ -391,11 +419,12 @@ impl ShellTask {
             .components()
             .any(|c| c == camino::Utf8Component::ParentDir)
         {
-            bail!(
+            return Err(RsdebstrapError::Validation(format!(
                 "shell path '{}' contains '..' components, \
                 which is not allowed for security reasons",
                 self.shell
-            );
+            ))
+            .into());
         }
 
         // Check if the specified shell exists and is a file in rootfs
@@ -403,28 +432,38 @@ impl ShellTask {
         let metadata = match fs::metadata(&shell_in_rootfs) {
             Ok(metadata) => metadata,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                bail!("shell '{}' does not exist in rootfs at {}", self.shell, shell_in_rootfs);
+                return Err(RsdebstrapError::Validation(format!(
+                    "shell '{}' does not exist in rootfs at {}",
+                    self.shell, shell_in_rootfs
+                ))
+                .into());
             }
             Err(e) => {
-                return Err(e).with_context(|| {
+                return Err(RsdebstrapError::io(
                     format!(
                         "failed to read shell metadata for '{}' at {}",
                         self.shell, shell_in_rootfs
-                    )
-                });
+                    ),
+                    e,
+                )
+                .into());
             }
         };
 
         if metadata.is_dir() {
-            bail!(
+            return Err(RsdebstrapError::Validation(format!(
                 "shell path '{}' points to a directory, not a file: {}",
-                self.shell,
-                shell_in_rootfs
-            );
+                self.shell, shell_in_rootfs
+            ))
+            .into());
         }
 
         if !metadata.is_file() {
-            bail!("shell '{}' is not a regular file in rootfs at {}", self.shell, shell_in_rootfs);
+            return Err(RsdebstrapError::Validation(format!(
+                "shell '{}' is not a regular file in rootfs at {}",
+                self.shell, shell_in_rootfs
+            ))
+            .into());
         }
 
         Ok(())

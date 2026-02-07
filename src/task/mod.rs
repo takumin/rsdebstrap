@@ -20,6 +20,7 @@ use serde::Deserialize;
 
 pub use shell::{ScriptSource, ShellTask};
 
+use crate::error::RsdebstrapError;
 use crate::isolation::IsolationContext;
 
 /// Declarative task definition for pipeline steps.
@@ -44,7 +45,7 @@ impl TaskDefinition {
     }
 
     /// Validates the task configuration.
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<(), RsdebstrapError> {
         match self {
             Self::Shell(task) => task.validate(),
         }

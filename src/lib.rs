@@ -1,10 +1,13 @@
 pub mod bootstrap;
 pub mod cli;
 pub mod config;
+pub mod error;
 pub mod executor;
 pub mod isolation;
 pub mod pipeline;
 pub mod task;
+
+pub use error::RsdebstrapError;
 
 use std::fs;
 use std::sync::Arc;
@@ -52,12 +55,7 @@ fn run_bootstrap_phase(
             .status
             .map(|s| s.to_string())
             .unwrap_or_else(|| "unknown (no status available)".to_string());
-        anyhow::bail!(
-            "{} exited with non-zero status: {}. Spec: {:?}",
-            command_name,
-            status_display,
-            spec
-        );
+        return Err(RsdebstrapError::execution(&spec, status_display).into());
     }
 
     Ok(())
@@ -78,11 +76,13 @@ fn run_pipeline_phase(
     // Get rootfs directory (validation ensures it's a directory if tasks exist)
     let backend = profile.bootstrap.as_backend();
     let bootstrap::RootfsOutput::Directory(rootfs) = backend.rootfs_output(&profile.dir)? else {
-        anyhow::bail!(
+        return Err(RsdebstrapError::Validation(
             "pipeline tasks require directory output but bootstrap is configured for \
             non-directory format. Please set bootstrap format to 'directory' or remove \
             pipeline tasks."
-        );
+                .to_string(),
+        )
+        .into());
     };
 
     let provider = profile.isolation.as_provider();
@@ -106,7 +106,8 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> R
 }
 
 pub fn run_validate(opts: &cli::ValidateArgs) -> Result<()> {
-    let profile = config::load_profile(opts.file.as_path())?;
+    let profile = config::load_profile(opts.file.as_path())
+        .with_context(|| format!("failed to load profile from {}", opts.file))?;
     profile.validate().context("profile validation failed")?;
     info!("validation successful:\n{:#?}", profile);
     Ok(())
