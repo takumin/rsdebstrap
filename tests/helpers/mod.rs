@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use rsdebstrap::RsdebstrapError;
 use rsdebstrap::bootstrap::debootstrap::DebootstrapConfig;
 use rsdebstrap::bootstrap::mmdebstrap::MmdebstrapConfig;
 use rsdebstrap::config::{Bootstrap, Profile, load_profile};
@@ -174,6 +175,22 @@ pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
     file.write_all(yaml.as_bytes())?;
     if !yaml.ends_with('\n') {
         writeln!(file)?;
+    }
+    let path = Utf8Path::from_path(file.path()).expect("temp file path should be valid");
+    Ok(load_profile(path)?)
+}
+
+/// Loads a Profile from YAML content, returning typed `RsdebstrapError`.
+#[allow(dead_code)]
+pub fn load_profile_from_yaml_typed(
+    yaml: impl AsRef<str>,
+) -> std::result::Result<Profile, RsdebstrapError> {
+    let yaml = yaml.as_ref();
+    let mut file = NamedTempFile::new().expect("failed to create temp file");
+    file.write_all(yaml.as_bytes())
+        .expect("failed to write yaml");
+    if !yaml.ends_with('\n') {
+        writeln!(file).expect("failed to write trailing newline");
     }
     let path = Utf8Path::from_path(file.path()).expect("temp file path should be valid");
     load_profile(path)

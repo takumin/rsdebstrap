@@ -88,7 +88,11 @@ impl CommandExecutor for RealCommandExecutor {
             Ok(handle) => handle,
             Err(e) => {
                 cleanup_child_process(&mut child, []);
-                anyhow::bail!("failed to spawn stdout reader thread: {}", e);
+                return Err(crate::error::RsdebstrapError::Execution {
+                    command: format!("{} {:?}", spec.command, spec.args),
+                    status: format!("failed to spawn stdout reader thread: {}", e),
+                }
+                .into());
             }
         };
 
@@ -100,7 +104,11 @@ impl CommandExecutor for RealCommandExecutor {
             Err(e) => {
                 // Clean up by killing the child process and joining the stdout thread
                 cleanup_child_process(&mut child, [stdout_handle]);
-                anyhow::bail!("failed to spawn stderr reader thread: {}", e);
+                return Err(crate::error::RsdebstrapError::Execution {
+                    command: format!("{} {:?}", spec.command, spec.args),
+                    status: format!("failed to spawn stderr reader thread: {}", e),
+                }
+                .into());
             }
         };
 
@@ -111,12 +119,11 @@ impl CommandExecutor for RealCommandExecutor {
                 // If waiting fails, the process might still be running.
                 // Kill it and clean up threads to prevent resource leaks.
                 cleanup_child_process(&mut child, [stdout_handle, stderr_handle]);
-                anyhow::bail!(
-                    "failed to wait for command `{}` with args {:?}: {}",
-                    spec.command,
-                    spec.args,
-                    e
-                );
+                return Err(crate::error::RsdebstrapError::Execution {
+                    command: format!("{} {:?}", spec.command, spec.args),
+                    status: format!("failed to wait for command: {}", e),
+                }
+                .into());
             }
         };
 
@@ -132,10 +139,14 @@ impl CommandExecutor for RealCommandExecutor {
         }
 
         if !panicked_streams.is_empty() {
-            anyhow::bail!(
-                "reader thread(s) panicked during command execution: {}",
-                panicked_streams.join(", ")
-            );
+            return Err(crate::error::RsdebstrapError::Execution {
+                command: format!("{} {:?}", spec.command, spec.args),
+                status: format!(
+                    "reader thread(s) panicked during command execution: {}",
+                    panicked_streams.join(", ")
+                ),
+            }
+            .into());
         }
 
         tracing::trace!("executed command: {}: success={}", spec.command, status.success());

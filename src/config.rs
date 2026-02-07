@@ -8,11 +8,9 @@
 //! `load_profile` function.
 
 use std::fs::File;
-use std::io;
 use std::io::BufReader;
 use std::sync::LazyLock;
 
-use anyhow::{Context, Ok, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use regex::Regex;
 use serde::Deserialize;
@@ -21,6 +19,7 @@ use tracing::debug;
 use crate::bootstrap::{
     BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
+use crate::error::RsdebstrapError;
 use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::pipeline::Pipeline;
 use crate::task::TaskDefinition;
@@ -112,24 +111,33 @@ impl Profile {
     }
 
     /// Validate configuration semantics beyond basic deserialization.
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<(), RsdebstrapError> {
         if self.dir.exists() && !self.dir.is_dir() {
-            bail!("dir must be a directory: {}", self.dir);
+            return Err(RsdebstrapError::Validation(format!(
+                "dir must be a directory: {}",
+                self.dir
+            )));
         }
 
         // Validate all tasks across phases
         let pipeline = self.pipeline();
         pipeline.validate()?;
 
-        // Validate tasks are compatible with bootstrap output format
+        // Validate tasks are compatible with bootstrap output format.
+        // Intentionally mapped to Validation: rootfs_output() errors during validation
+        // indicate the bootstrap configuration cannot produce a usable rootfs for tasks,
+        // which is a configuration validation concern regardless of the underlying cause.
         if !pipeline.is_empty() {
             let backend = self.bootstrap.as_backend();
-            if let RootfsOutput::NonDirectory { reason } = backend.rootfs_output(&self.dir)? {
-                bail!(
+            let output = backend
+                .rootfs_output(&self.dir)
+                .map_err(|e| RsdebstrapError::Validation(format!("{:#}", e)))?;
+            if let RootfsOutput::NonDirectory { reason } = output {
+                return Err(RsdebstrapError::Validation(format!(
                     "pipeline tasks require directory output but got: {}. \
                     Use backend-specific hooks or change format to directory.",
                     reason
-                );
+                )));
             }
         }
 
@@ -152,25 +160,17 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
     }
 }
 
-/// Formats an IO error with a descriptive message based on the error kind.
-fn io_error_message(err: &io::Error, path: &Utf8Path) -> String {
-    match err.kind() {
-        io::ErrorKind::NotFound => format!("{}: I/O error: file not found", path),
-        io::ErrorKind::PermissionDenied => format!("{}: I/O error: permission denied", path),
-        io::ErrorKind::IsADirectory => format!("{}: I/O error: is a directory", path),
-        _ => format!("{}: I/O error: {}", path, err),
-    }
-}
-
 /// Loads a bootstrap profile from a YAML file.
 ///
 /// # Arguments
 ///
 /// * `path` - Path to the YAML profile file
 ///
-/// # Returns
+/// # Errors
 ///
-/// * `Result<Profile>` - The loaded profile configuration or an error
+/// Returns `RsdebstrapError::Io` if the file cannot be read,
+/// `RsdebstrapError::Validation` if the path is a directory,
+/// or `RsdebstrapError::Config` if the YAML is invalid or missing required fields.
 ///
 /// # Examples
 ///
@@ -183,22 +183,25 @@ fn io_error_message(err: &io::Error, path: &Utf8Path) -> String {
 /// println!("Profile directory: {}", profile.dir);
 /// ```
 #[tracing::instrument]
-pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
+pub fn load_profile(path: &Utf8Path) -> Result<Profile, RsdebstrapError> {
     // Canonicalize the entire path first to resolve all symlinks and get the true absolute path.
     // This ensures relative paths in the profile are resolved relative to the actual file location,
     // not the symlink location.
     let canonical_path = path
         .canonicalize_utf8()
-        .map_err(|e| anyhow::anyhow!(io_error_message(&e, path)))?;
+        .map_err(|e| RsdebstrapError::io(path.to_string(), e))?;
 
     // Check if the path is a directory before attempting to open it.
     // On Linux, File::open succeeds on directories but read fails later.
     if canonical_path.is_dir() {
-        bail!("{}: I/O error: is a directory", canonical_path);
+        return Err(RsdebstrapError::Validation(format!(
+            "expected a file, not a directory: {}",
+            canonical_path
+        )));
     }
 
     let file = File::open(&canonical_path)
-        .map_err(|e| anyhow::anyhow!(io_error_message(&e, &canonical_path)))?;
+        .map_err(|e| RsdebstrapError::io(canonical_path.to_string(), e))?;
     let reader = BufReader::new(file);
     let mut profile: Profile = serde_yaml::from_reader(reader).map_err(|e| {
         let location = e
@@ -207,18 +210,21 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile> {
         // Remove duplicate "at line X column Y" from serde_yaml's error message
         let msg = e.to_string();
         let clean_msg = YAML_LOCATION_RE.replace(&msg, "").to_string();
-        anyhow::anyhow!(
+        RsdebstrapError::Config(format!(
             "{}: YAML parse error{}: {}",
             canonical_path,
             location.unwrap_or_default(),
             clean_msg
-        )
+        ))
     })?;
 
     // While parent() should always return Some for canonical file paths,
     // we handle None for defensive programming
-    let profile_dir = canonical_path.parent().with_context(|| {
-        format!("could not determine parent directory of profile path: {}", canonical_path)
+    let profile_dir = canonical_path.parent().ok_or_else(|| {
+        RsdebstrapError::Config(format!(
+            "could not determine parent directory of profile path: {}",
+            canonical_path
+        ))
     })?;
     resolve_profile_paths(&mut profile, profile_dir);
     debug!("loaded profile:\n{:#?}", profile);

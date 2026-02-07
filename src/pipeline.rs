@@ -14,6 +14,7 @@ use camino::Utf8Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
 use crate::isolation::{IsolationContext, IsolationProvider};
 use crate::task::TaskDefinition;
@@ -63,7 +64,7 @@ impl<'a> Pipeline<'a> {
     }
 
     /// Validates all tasks in the pipeline.
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<(), RsdebstrapError> {
         self.validate_phase(PHASE_PRE_PROCESSOR, self.pre_processors)?;
         self.validate_phase(PHASE_PROVISIONER, self.provisioners)?;
         self.validate_phase(PHASE_POST_PROCESSOR, self.post_processors)?;
@@ -143,10 +144,36 @@ impl<'a> Pipeline<'a> {
         Ok(())
     }
 
-    fn validate_phase(&self, phase_name: &str, tasks: &[TaskDefinition]) -> Result<()> {
+    /// Validates all tasks in a single phase, enriching errors with phase context.
+    ///
+    /// For `Validation` errors, prepends the phase name and task index to the message.
+    /// For `Io` errors, prepends the phase context to the `context` field while
+    /// preserving the `message` and `source` for programmatic inspection.
+    /// Other error variants are passed through unchanged.
+    fn validate_phase(
+        &self,
+        phase_name: &str,
+        tasks: &[TaskDefinition],
+    ) -> Result<(), RsdebstrapError> {
         for (index, task) in tasks.iter().enumerate() {
-            task.validate()
-                .with_context(|| format!("{} {} validation failed", phase_name, index + 1))?;
+            task.validate().map_err(|e| match e {
+                RsdebstrapError::Validation(msg) => RsdebstrapError::Validation(format!(
+                    "{} {} validation failed: {}",
+                    phase_name,
+                    index + 1,
+                    msg
+                )),
+                RsdebstrapError::Io {
+                    context,
+                    message,
+                    source,
+                } => RsdebstrapError::Io {
+                    context: format!("{} {} validation failed: {}", phase_name, index + 1, context),
+                    message,
+                    source,
+                },
+                other => other,
+            })?;
         }
         Ok(())
     }

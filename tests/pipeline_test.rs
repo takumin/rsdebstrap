@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use camino::Utf8Path;
+use rsdebstrap::RsdebstrapError;
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use rsdebstrap::isolation::{IsolationContext, IsolationProvider};
 use rsdebstrap::pipeline::Pipeline;
@@ -596,4 +597,62 @@ fn test_pipeline_run_provisioner_failure_skips_post_processors() {
     // pre-processor (call 0) succeeded, provisioner (call 1) failed,
     // post-processor should NOT have been executed
     assert_eq!(mock_executor.call_count(), 2);
+}
+
+// =============================================================================
+// validate() variant preservation tests
+// =============================================================================
+
+#[test]
+fn test_pipeline_validate_preserves_validation_variant() {
+    // Path traversal triggers Validation error; validate_phase should preserve
+    // the variant while adding phase context.
+    let bad_task = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
+        "../../../etc/passwd".into(),
+    )))];
+    let pipeline = Pipeline::new(&bad_task, &[], &[]);
+    let err = pipeline.validate().unwrap_err();
+    assert!(
+        matches!(
+            err,
+            RsdebstrapError::Validation(ref msg)
+                if msg.contains("pre-processor 1 validation failed")
+        ),
+        "Expected RsdebstrapError::Validation with phase context, got: {:?}",
+        err,
+    );
+}
+
+#[test]
+fn test_pipeline_validate_preserves_io_variant() {
+    // Non-existent script triggers Io error; validate_phase should preserve
+    // the Io variant (not convert to Validation) while adding phase context.
+    let nonexistent_task = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
+        "/nonexistent/path/to/script.sh".into(),
+    )))];
+    let pipeline = Pipeline::new(&[], &nonexistent_task, &[]);
+    let err = pipeline.validate().unwrap_err();
+    match err {
+        RsdebstrapError::Io {
+            ref context,
+            source: ref src,
+            ..
+        } => {
+            assert!(
+                context.contains("provisioner 1 validation failed"),
+                "Expected phase context in Io.context, got: {}",
+                context,
+            );
+            assert_eq!(
+                src.kind(),
+                std::io::ErrorKind::NotFound,
+                "Expected NotFound, got: {:?}",
+                src.kind(),
+            );
+        }
+        other => panic!(
+            "Expected RsdebstrapError::Io (preserved through validate_phase), got: {:?}",
+            other,
+        ),
+    }
 }

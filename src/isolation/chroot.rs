@@ -63,7 +63,10 @@ impl IsolationContext for ChrootContext {
 
     fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
         if self.torn_down {
-            anyhow::bail!("cannot execute command: chroot context has already been torn down");
+            return Err(crate::error::RsdebstrapError::Isolation(
+                "cannot execute command: chroot context has already been torn down".to_string(),
+            )
+            .into());
         }
 
         let mut args: Vec<OsString> = Vec::with_capacity(command.len() + 1);

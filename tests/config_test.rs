@@ -2,6 +2,7 @@ mod helpers;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
+use rsdebstrap::RsdebstrapError;
 use rsdebstrap::bootstrap::mmdebstrap::{self, Format};
 use rsdebstrap::config::load_profile;
 use rsdebstrap::task::TaskDefinition;
@@ -746,18 +747,13 @@ fn test_load_profile_is_a_directory() {
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("I/O error"),
-        "Expected error message to contain 'I/O error', got: {}",
+        err_msg.contains("not a directory"),
+        "Expected error message to contain 'not a directory', got: {}",
         err_msg
     );
     assert!(
-        err_msg.contains("is a directory"),
-        "Expected error message to contain 'is a directory', got: {}",
-        err_msg
-    );
-    assert!(
-        err_msg.contains("/tmp"),
-        "Expected error message to contain path '/tmp', got: {}",
+        err_msg.contains("/tmp") || err_msg.contains("/private/tmp"),
+        "Expected error message to contain path '/tmp' or '/private/tmp', got: {}",
         err_msg
     );
 }
@@ -1057,6 +1053,159 @@ fn test_load_profile_resolves_post_processor_script_path() -> Result<()> {
             );
         }
         _ => panic!("expected one shell post_processor"),
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Type-based error tests (RsdebstrapError variant matching)
+// =============================================================================
+
+#[test]
+fn test_load_profile_invalid_file_returns_io_error() {
+    let path = "/non/existent/file.yml";
+    let result = load_profile(Utf8Path::new(path));
+    let err = result.unwrap_err();
+    match &err {
+        RsdebstrapError::Io {
+            context, source, ..
+        } => {
+            assert_eq!(
+                source.kind(),
+                std::io::ErrorKind::NotFound,
+                "Expected NotFound IO error kind, got: {:?}",
+                source.kind()
+            );
+            assert!(
+                context.contains(path),
+                "Expected context to contain path '{}', got: {}",
+                path,
+                context
+            );
+        }
+        other => panic!("Expected RsdebstrapError::Io, got: {:?}", other),
+    }
+}
+
+#[test]
+fn test_load_profile_directory_returns_validation_error() {
+    let result = load_profile(Utf8Path::new("/tmp"));
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+}
+
+#[test]
+fn test_load_profile_invalid_yaml_returns_config_error() -> Result<()> {
+    // editorconfig-checker-disable
+    let result = helpers::load_profile_from_yaml_typed(crate::yaml!(
+        r#"---
+invalid: yaml
+  no_proper_structure
+"#
+    ));
+    // editorconfig-checker-enable
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Config(_)),
+        "Expected RsdebstrapError::Config, got: {:?}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_dir_is_file_returns_validation_error() -> Result<()> {
+    let dir_file = tempfile::NamedTempFile::new()?;
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(format!(
+        r#"---
+dir: {}
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+"#,
+        dir_file.path().display()
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_tar_output_with_tasks_returns_validation_error() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs.tar.zst
+provisioners:
+  - type: shell
+    content: echo "hello"
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_missing_script_preserves_io_error() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    script: /nonexistent/script.sh
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    // Pipeline validation should preserve the Io error variant (not flatten to Validation)
+    let err = profile.validate().unwrap_err();
+    match &err {
+        RsdebstrapError::Io {
+            context, source, ..
+        } => {
+            assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+            assert!(
+                context.contains("/nonexistent/script.sh"),
+                "Expected context to contain script path, got: {}",
+                context
+            );
+        }
+        other => {
+            panic!("Expected RsdebstrapError::Io (preserved through pipeline), got: {:?}", other)
+        }
     }
 
     Ok(())
