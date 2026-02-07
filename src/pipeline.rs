@@ -148,9 +148,9 @@ impl<'a> Pipeline<'a> {
     ///
     /// For `Validation` errors, prepends the phase name and task index to the message.
     /// For `Io` errors, prepends the phase context to the `context` field while
-    /// preserving the `message` and `source` for programmatic inspection.
-    /// Other error variants are wrapped in `Validation` with phase context to ensure
-    /// no future variant loses phase information.
+    /// preserving the `source` for programmatic inspection.
+    /// Other error variants are wrapped in `Validation` with phase context for
+    /// forward-compatibility, ensuring no future variant loses phase information.
     fn validate_phase(
         &self,
         phase_name: &str,
@@ -164,13 +164,8 @@ impl<'a> Pipeline<'a> {
                     index + 1,
                     msg
                 )),
-                RsdebstrapError::Io {
-                    context,
-                    message,
-                    source,
-                } => RsdebstrapError::Io {
+                RsdebstrapError::Io { context, source } => RsdebstrapError::Io {
                     context: format!("{} {} validation failed: {}", phase_name, index + 1, context),
-                    message,
                     source,
                 },
                 other => RsdebstrapError::Validation(format!(

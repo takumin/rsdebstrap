@@ -313,11 +313,7 @@ fn test_validate_nonexistent_script_returns_io_error() {
     let task = ShellTask::new(ScriptSource::Script(script_path.into()));
     let err = task.validate().unwrap_err();
     match &err {
-        RsdebstrapError::Io {
-            context,
-            message,
-            source,
-        } => {
+        RsdebstrapError::Io { context, source } => {
             assert_eq!(
                 source.kind(),
                 std::io::ErrorKind::NotFound,
@@ -330,10 +326,12 @@ fn test_validate_nonexistent_script_returns_io_error() {
                 script_path,
                 context
             );
+            // Display format includes io_error_kind_message
+            let display = err.to_string();
             assert!(
-                message.contains("I/O error"),
-                "Expected message to contain 'I/O error', got: {}",
-                message
+                display.contains("I/O error"),
+                "Expected display to contain 'I/O error', got: {}",
+                display
             );
         }
         other => panic!("Expected RsdebstrapError::Io, got: {:?}", other),

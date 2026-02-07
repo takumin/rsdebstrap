@@ -202,13 +202,13 @@ impl ShellTask {
     /// the script source:
     /// - For external script files: rejects path traversal (`..` components),
     ///   validates that the file exists and is a regular file.
-    /// - For inline content: validates that the content is not empty.
+    /// - For inline content: validates that the content is not empty or whitespace-only.
     ///
     /// # Errors
     ///
     /// Returns `RsdebstrapError::Validation` for constraint violations (empty shell,
-    /// relative shell path, path traversal, non-file script, empty content) or
-    /// `RsdebstrapError::Io` if the script file cannot be accessed.
+    /// relative shell path, path traversal, non-file script, empty or whitespace-only
+    /// content) or `RsdebstrapError::Io` if the script file cannot be accessed.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
         if self.shell.is_empty() {
             return Err(RsdebstrapError::Validation("shell path must not be empty".to_string()));
@@ -345,12 +345,12 @@ impl ShellTask {
                 .status
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "unknown (no status available)".to_string());
+            let cmd_str: Vec<String> = command
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
             return Err(RsdebstrapError::Execution {
-                command: format!(
-                    "script with command `{:?}` in isolation backend '{}'",
-                    command,
-                    context.name()
-                ),
+                command: format!("{} (isolation: {})", cmd_str.join(" "), context.name()),
                 status: status_display,
             }
             .into());

@@ -7,6 +7,7 @@ use std::process::ExitStatus;
 
 use anyhow::Result;
 use camino::Utf8Path;
+use rsdebstrap::RsdebstrapError;
 use rsdebstrap::executor::ExecutionResult;
 use rsdebstrap::isolation::IsolationContext;
 use rsdebstrap::task::{ScriptSource, ShellTask};
@@ -753,4 +754,49 @@ fn test_execute_with_no_exit_status_succeeds() {
 
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
+}
+
+// =============================================================================
+// Type-based error tests (RsdebstrapError variant matching)
+// =============================================================================
+
+#[test]
+fn test_execute_nonzero_exit_returns_execution_error() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("path should be valid UTF-8");
+
+    setup_valid_rootfs(&temp_dir);
+
+    let task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
+    let context = MockContext::with_failure(&rootfs, 1);
+    let result = task.execute(&context);
+
+    assert!(result.is_err());
+    // The error is wrapped in anyhow, so we need to downcast
+    let anyhow_err = result.unwrap_err();
+    let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
+    assert!(
+        downcast.is_some(),
+        "Expected RsdebstrapError in error chain, got: {:#}",
+        anyhow_err,
+    );
+    assert!(
+        matches!(downcast.unwrap(), RsdebstrapError::Execution { .. }),
+        "Expected RsdebstrapError::Execution, got: {:?}",
+        downcast.unwrap(),
+    );
+    // Verify the command field contains isolation backend info
+    if let RsdebstrapError::Execution { command, status } = downcast.unwrap() {
+        assert!(
+            command.contains("isolation: mock"),
+            "Expected command to contain isolation backend name, got: {}",
+            command,
+        );
+        assert!(
+            status.contains("status: 1"),
+            "Expected status to contain exit code, got: {}",
+            status,
+        );
+    }
 }

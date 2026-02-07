@@ -5,8 +5,9 @@
 //! functions return `Result<T, RsdebstrapError>` for programmatic error
 //! handling, while trait boundaries continue to use `anyhow::Result`.
 //!
-//! `RsdebstrapError` implements `Into<anyhow::Error>`, so the `?` operator
-//! converts it automatically at trait boundaries that return `anyhow::Result`.
+//! `RsdebstrapError` implements `std::error::Error` (via `thiserror`), which
+//! allows automatic conversion into `anyhow::Error` via the `?` operator
+//! at trait boundaries that return `anyhow::Result`.
 
 use std::io;
 
@@ -60,19 +61,18 @@ pub enum RsdebstrapError {
     Config(String),
 
     /// An I/O operation failed with contextual information.
-    #[error("{context}: {message}")]
+    ///
+    /// The `Display` implementation formats as `"{context}: {io_error_kind_message}"`,
+    /// deriving the human-readable message from the `source` error kind at display time.
+    #[error("{context}: {}", io_error_kind_message(source))]
     Io {
         /// What was being done when the error occurred.
         ///
         /// This is either a file path (e.g., `"/etc/config.yml"`) or an operation
         /// description with a path (e.g., `"failed to read metadata: /path/to/file"`).
-        /// When propagated through pipeline validation, the context may be prefixed
-        /// with phase information (e.g., `"provisioner 1 validation failed: ..."`).
-        /// Combined with `message` in the Display format: `"{context}: {message}"`.
+        /// Callers may prepend additional context (e.g., phase information) when
+        /// propagating this error.
         context: String,
-        /// Human-readable description of the I/O failure, derived from
-        /// [`io_error_kind_message`] for consistent formatting across the codebase.
-        message: String,
         /// The underlying I/O error, preserved for programmatic inspection
         /// (e.g., `source.kind() == ErrorKind::NotFound`).
         #[source]
@@ -81,16 +81,38 @@ pub enum RsdebstrapError {
 }
 
 impl RsdebstrapError {
-    /// Creates an `Io` variant with the `message` field automatically derived
-    /// from the `source` via [`io_error_kind_message`].
+    /// Creates an `Io` variant from a context string and an I/O error.
     ///
-    /// This is the preferred way to construct `Io` errors, ensuring that
-    /// the `message` field is always consistent with the `source`.
+    /// This is the preferred way to construct `Io` errors.
     pub(crate) fn io(context: impl Into<String>, source: std::io::Error) -> Self {
         Self::Io {
             context: context.into(),
-            message: io_error_kind_message(&source),
             source,
+        }
+    }
+
+    /// Creates an `Execution` variant from a `CommandSpec` and a status description.
+    ///
+    /// Formats the command consistently as `"command_name arg1 arg2 ..."`.
+    /// This is the preferred way to construct `Execution` errors, ensuring
+    /// consistent `command` field formatting across the codebase.
+    pub(crate) fn execution(
+        spec: &crate::executor::CommandSpec,
+        status: impl Into<String>,
+    ) -> Self {
+        let command = if spec.args.is_empty() {
+            spec.command.clone()
+        } else {
+            let args: Vec<String> = spec
+                .args
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            format!("{} {}", spec.command, args.join(" "))
+        };
+        Self::Execution {
+            command,
+            status: status.into(),
         }
     }
 }
@@ -117,13 +139,32 @@ mod tests {
     #[test]
     fn test_execution_display_thread_spawn_failure() {
         let err = RsdebstrapError::Execution {
-            command: "mmdebstrap [\"--variant=debootstrap\"]".to_string(),
+            command: "mmdebstrap --variant=debootstrap".to_string(),
             status: "failed to spawn stdout reader thread: resource exhausted".to_string(),
         };
         let display = err.to_string();
         assert!(display.contains("command execution failed:"));
         assert!(display.contains("mmdebstrap"));
         assert!(display.contains("failed to spawn stdout reader thread"));
+    }
+
+    #[test]
+    fn test_execution_constructor_with_args() {
+        use crate::executor::CommandSpec;
+        let spec = CommandSpec::new("mmdebstrap", vec!["--variant=debootstrap".into()]);
+        let err = RsdebstrapError::execution(&spec, "exit status: 1");
+        assert_eq!(
+            err.to_string(),
+            "command execution failed: mmdebstrap --variant=debootstrap: exit status: 1"
+        );
+    }
+
+    #[test]
+    fn test_execution_constructor_without_args() {
+        use crate::executor::CommandSpec;
+        let spec = CommandSpec::new("mmdebstrap", vec![]);
+        let err = RsdebstrapError::execution(&spec, "exit status: 1");
+        assert_eq!(err.to_string(), "command execution failed: mmdebstrap: exit status: 1");
     }
 
     #[test]
@@ -148,7 +189,6 @@ mod tests {
         let source = io::Error::new(io::ErrorKind::NotFound, "entity not found");
         let err = RsdebstrapError::Io {
             context: "/path/to/file.yml".to_string(),
-            message: "I/O error: not found".to_string(),
             source,
         };
         assert_eq!(err.to_string(), "/path/to/file.yml: I/O error: not found");
@@ -159,12 +199,26 @@ mod tests {
         let source = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
         let err = RsdebstrapError::Io {
             context: "/etc/shadow".to_string(),
-            message: "I/O error: permission denied".to_string(),
             source,
         };
         match &err {
             RsdebstrapError::Io { source, .. } => {
                 assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_io_constructor_consistency() {
+        let source = io::Error::new(io::ErrorKind::NotFound, "not found");
+        let err = RsdebstrapError::io("/path/to/file", source);
+        // Verify display uses io_error_kind_message
+        assert_eq!(err.to_string(), "/path/to/file: I/O error: not found");
+        match &err {
+            RsdebstrapError::Io { context, source } => {
+                assert_eq!(context, "/path/to/file");
+                assert_eq!(source.kind(), io::ErrorKind::NotFound);
             }
             _ => unreachable!(),
         }

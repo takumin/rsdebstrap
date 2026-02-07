@@ -55,11 +55,7 @@ fn run_bootstrap_phase(
             .status
             .map(|s| s.to_string())
             .unwrap_or_else(|| "unknown (no status available)".to_string());
-        return Err(RsdebstrapError::Execution {
-            command: command_name.to_string(),
-            status: status_display,
-        }
-        .into());
+        return Err(RsdebstrapError::execution(&spec, status_display).into());
     }
 
     Ok(())
