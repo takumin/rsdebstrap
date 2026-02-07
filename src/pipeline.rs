@@ -67,8 +67,10 @@ impl<'a> Pipeline<'a> {
 
     /// Executes all phases of the pipeline within an isolation context.
     ///
-    /// Sets up the isolation context, runs all three phases in order,
-    /// and ensures teardown happens even if a phase fails.
+    /// If the pipeline has no tasks, returns immediately without setting up
+    /// the isolation context. Otherwise, sets up the isolation context, runs
+    /// all three phases in order, and ensures teardown happens even if a
+    /// phase fails.
     pub fn run(
         &self,
         rootfs: &Utf8Path,

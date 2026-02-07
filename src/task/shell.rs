@@ -20,9 +20,6 @@ use crate::isolation::IsolationContext;
 /// Script source for shell execution.
 ///
 /// Represents exactly one of `script` (external file) or `content` (inline).
-/// When deserialized via `ShellTask`'s custom `Deserialize` impl, mutual
-/// exclusivity is validated at parse time — specifying both or neither
-/// produces a descriptive error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptSource {
     /// External shell script file path
@@ -356,7 +353,7 @@ impl ShellTask {
         Ok(())
     }
 
-    /// Validates that the rootfs is ready for chroot operations.
+    /// Validates that the rootfs is ready for isolated command execution.
     fn validate_rootfs(&self, rootfs: &Utf8Path) -> Result<()> {
         // Check if /tmp directory exists and is a real directory (not a symlink)
         Self::validate_tmp_directory(rootfs)?;

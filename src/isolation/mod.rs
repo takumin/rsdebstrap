@@ -70,8 +70,9 @@ pub trait IsolationContext: Send {
     /// Returns whether this context is in dry-run mode.
     ///
     /// When true, tasks should skip file I/O operations (script copy,
-    /// permission changes, rootfs validation) while still logging and
-    /// executing commands through the context.
+    /// permission changes, rootfs validation) while still constructing
+    /// and passing commands to the executor, which handles dry-run
+    /// semantics at its own level.
     fn dry_run(&self) -> bool;
 
     /// Executes a command within the isolated environment.

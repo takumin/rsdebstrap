@@ -164,7 +164,69 @@ fn test_resolve_paths_does_not_modify_content_source() {
 }
 
 // =============================================================================
-// T2: TaskDefinition YAML deserialization tests
+// T2: ShellTask direct deserialization tests
+// =============================================================================
+
+#[test]
+fn test_shell_task_deserialize_script_only() {
+    let yaml = r#"script: /path/to/test.sh
+"#;
+    let task: ShellTask = serde_yaml::from_str(yaml).expect("should parse script-only ShellTask");
+    assert_eq!(task.source(), &ScriptSource::Script("/path/to/test.sh".into()));
+    assert_eq!(task.shell(), "/bin/sh");
+}
+
+#[test]
+fn test_shell_task_deserialize_content_only() {
+    let yaml = r#"content: echo hello
+"#;
+    let task: ShellTask = serde_yaml::from_str(yaml).expect("should parse content-only ShellTask");
+    assert_eq!(task.source(), &ScriptSource::Content("echo hello".to_string()));
+    assert_eq!(task.shell(), "/bin/sh");
+}
+
+#[test]
+fn test_shell_task_deserialize_with_custom_shell() {
+    let yaml = r#"content: echo hello
+shell: /bin/bash
+"#;
+    let task: ShellTask =
+        serde_yaml::from_str(yaml).expect("should parse ShellTask with custom shell");
+    assert_eq!(task.source(), &ScriptSource::Content("echo hello".to_string()));
+    assert_eq!(task.shell(), "/bin/bash");
+}
+
+#[test]
+fn test_shell_task_deserialize_rejects_both_script_and_content() {
+    let yaml = r#"script: /path/to/test.sh
+content: echo hello
+"#;
+    let result: std::result::Result<ShellTask, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("mutually exclusive"),
+        "Expected 'mutually exclusive' error, got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_shell_task_deserialize_rejects_neither_script_nor_content() {
+    let yaml = r#"shell: /bin/bash
+"#;
+    let result: std::result::Result<ShellTask, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("either 'script' or 'content' must be specified"),
+        "Expected 'either script or content' error, got: {}",
+        err_msg
+    );
+}
+
+// =============================================================================
+// T3: TaskDefinition YAML deserialization tests
 // =============================================================================
 
 #[test]
