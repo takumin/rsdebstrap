@@ -2,6 +2,58 @@ use rsdebstrap::task::{ScriptSource, ShellTask};
 use tempfile::tempdir;
 
 #[test]
+fn test_validate_rejects_empty_shell_path() {
+    let task = ShellTask::with_shell(ScriptSource::Content("echo test".to_string()), "");
+    let result = task.validate();
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("shell path must not be empty"),
+        "Expected 'shell path must not be empty', got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_validate_rejects_relative_shell_path() {
+    let task = ShellTask::with_shell(ScriptSource::Content("echo test".to_string()), "bin/sh");
+    let result = task.validate();
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("shell path must be absolute"),
+        "Expected 'shell path must be absolute', got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_validate_rejects_empty_inline_content() {
+    let task = ShellTask::new(ScriptSource::Content("".to_string()));
+    let result = task.validate();
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("inline script content must not be empty"),
+        "Expected 'inline script content must not be empty', got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_validate_rejects_whitespace_only_inline_content() {
+    let task = ShellTask::new(ScriptSource::Content("   \n\t  ".to_string()));
+    let result = task.validate();
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("inline script content must not be empty"),
+        "Expected 'inline script content must not be empty', got: {}",
+        err_msg
+    );
+}
+
+#[test]
 fn test_validate_script_only() {
     let temp_dir = tempdir().expect("failed to create temp dir");
     let script_path = temp_dir.path().join("test.sh");

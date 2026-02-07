@@ -97,9 +97,10 @@ impl<'a> Pipeline<'a> {
             (Err(e), Ok(())) => return Err(e),
             (Ok(()), Err(e)) => return Err(e).context("failed to teardown isolation context"),
             (Err(run_err), Err(tear_err)) => {
-                // Phase error is primary; log teardown error separately
                 tracing::error!("isolation context teardown also failed: {:#}", tear_err);
-                return Err(run_err);
+                return Err(
+                    run_err.context(format!("additionally, teardown failed: {:#}", tear_err))
+                );
             }
         }
 

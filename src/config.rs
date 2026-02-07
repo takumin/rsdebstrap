@@ -97,7 +97,7 @@ pub struct Profile {
     /// Pre-processors to run before provisioning (optional)
     #[serde(default)]
     pub pre_processors: Vec<TaskDefinition>,
-    /// Provisioners to run after bootstrap (optional)
+    /// Main provisioning tasks (optional)
     #[serde(default)]
     pub provisioners: Vec<TaskDefinition>,
     /// Post-processors to run after provisioning (optional)
@@ -138,13 +138,12 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
         profile.dir = profile_dir.join(&profile.dir);
     }
 
-    for task in &mut profile.pre_processors {
-        task.resolve_paths(profile_dir);
-    }
-    for task in &mut profile.provisioners {
-        task.resolve_paths(profile_dir);
-    }
-    for task in &mut profile.post_processors {
+    for task in profile
+        .pre_processors
+        .iter_mut()
+        .chain(profile.provisioners.iter_mut())
+        .chain(profile.post_processors.iter_mut())
+    {
         task.resolve_paths(profile_dir);
     }
 }

@@ -13,7 +13,7 @@ use std::sync::Arc;
 /// to change the root directory before executing commands.
 ///
 /// Chroot doesn't require any special setup or teardown operations,
-/// making it a lightweight option for provisioning.
+/// making it a lightweight option for pipeline task execution.
 #[derive(Debug, Default, Clone)]
 pub struct ChrootProvider;
 

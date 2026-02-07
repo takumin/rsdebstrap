@@ -227,7 +227,7 @@ bootstrap:
 }
 
 #[test]
-fn test_profile_parsing_rejects_incomplete_shell_provisioner() -> Result<()> {
+fn test_profile_parsing_rejects_incomplete_shell_task() -> Result<()> {
     // editorconfig-checker-disable
     // With ScriptSource enum, missing script/content is now a parse error, not validation error
     let result = helpers::load_profile_from_yaml(crate::yaml!(
@@ -256,7 +256,7 @@ provisioners:
 }
 
 #[test]
-fn test_profile_validation_rejects_shell_provisioner_with_script_and_content() -> Result<()> {
+fn test_profile_validation_rejects_shell_task_with_script_and_content() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
@@ -336,7 +336,7 @@ provisioners:
                 Utf8PathBuf::from_path_buf(script_path.canonicalize()?).unwrap()
             );
         }
-        _ => panic!("expected one shell provisioner"),
+        _ => panic!("expected one shell task"),
     }
 
     Ok(())
@@ -380,7 +380,7 @@ bootstrap:
 }
 
 #[test]
-fn test_shell_provisioner_validation_requires_script_file() -> Result<()> {
+fn test_shell_task_validation_requires_script_file() -> Result<()> {
     let temp_dir = tempdir()?;
     let profile_path = temp_dir.path().join("profile.yml");
 
@@ -411,7 +411,7 @@ provisioners:
 }
 
 #[test]
-fn test_shell_provisioner_path_resolution_with_relative_profile_path() -> Result<()> {
+fn test_shell_task_path_resolution_with_relative_profile_path() -> Result<()> {
     // Acquire global lock to prevent parallel CWD modifications
     let _lock = helpers::CWD_TEST_LOCK.lock().unwrap();
 
@@ -467,14 +467,14 @@ provisioners:
                 "Script path should resolve to the expected absolute path"
             );
         }
-        _ => panic!("expected one shell provisioner"),
+        _ => panic!("expected one shell task"),
     }
 
     Ok(())
 }
 
-/// Helper function to test provisioner validation rejection with non-directory output
-fn test_provisioner_validation_rejects_target(target: &str) -> Result<()> {
+/// Helper function to test task validation rejection with non-directory output
+fn test_task_validation_rejects_target(target: &str) -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(format!(
         r#"---
@@ -500,7 +500,7 @@ provisioners:
 
 #[test]
 fn test_profile_validation_rejects_provisioners_with_tar_output() -> Result<()> {
-    test_provisioner_validation_rejects_target("rootfs.tar.zst")
+    test_task_validation_rejects_target("rootfs.tar.zst")
 }
 
 #[test]
@@ -552,7 +552,7 @@ provisioners:
 
 #[test]
 fn test_profile_validation_rejects_provisioners_with_squashfs_output() -> Result<()> {
-    test_provisioner_validation_rejects_target("rootfs.squashfs")
+    test_task_validation_rejects_target("rootfs.squashfs")
 }
 
 #[test]

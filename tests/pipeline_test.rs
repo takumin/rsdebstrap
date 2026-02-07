@@ -335,7 +335,7 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
     for call in &calls {
         // call[0] is "mock" (from MockContext)
         // call[1] is "/bin/sh" (the shell)
-        // call[2] is "/tmp/provision-<uuid>.sh" (the script path)
+        // call[2] is "/tmp/task-<uuid>.sh" (the script path)
         assert_eq!(call[0], OsString::from("mock"));
         assert_eq!(call[1], OsString::from("/bin/sh"));
     }
@@ -406,7 +406,7 @@ fn test_pipeline_run_successful_phases_with_teardown_error() {
 
 #[test]
 fn test_pipeline_run_phase_error_and_teardown_error() {
-    // Both phase and teardown fail -> returns phase error (primary)
+    // Both phase and teardown fail -> returns phase error with teardown context
     let tasks = [inline_task("echo hello")];
     let pipeline = Pipeline::new(&tasks, &[], &[]);
 
@@ -421,6 +421,12 @@ fn test_pipeline_run_phase_error_and_teardown_error() {
     assert!(
         err_msg.contains("failed to run pre-processor 1"),
         "Expected phase error as primary error, got: {}",
+        err_msg
+    );
+    // Teardown error should be attached as context
+    assert!(
+        err_msg.contains("additionally, teardown failed"),
+        "Expected teardown context in error, got: {}",
         err_msg
     );
 }
@@ -440,6 +446,61 @@ fn test_pipeline_run_skips_empty_phases() {
 
     // Only one task should have been executed
     assert_eq!(mock_executor.call_count(), 1);
+}
+
+#[test]
+fn test_pipeline_run_phase_order_is_strictly_pre_prov_post() {
+    // Use distinct shell paths per phase to verify strict ordering
+    let pre = [TaskDefinition::Shell(ShellTask::with_shell(
+        ScriptSource::Content("echo pre".to_string()),
+        "/bin/sh-pre",
+    ))];
+    let prov = [TaskDefinition::Shell(ShellTask::with_shell(
+        ScriptSource::Content("echo prov".to_string()),
+        "/bin/sh-prov",
+    ))];
+    let post = [TaskDefinition::Shell(ShellTask::with_shell(
+        ScriptSource::Content("echo post".to_string()),
+        "/bin/sh-post",
+    ))];
+    let pipeline = Pipeline::new(&pre, &prov, &post);
+
+    let mock_executor = Arc::new(MockExecutor::new());
+    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
+    let provider = MockProvider::new();
+
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    assert!(result.is_ok(), "pipeline run failed: {:?}", result);
+
+    let calls = mock_executor.calls();
+    assert_eq!(calls.len(), 3);
+
+    // Verify strict phase ordering via shell path in args[1]
+    // call[0] = "mock", call[1] = shell path, call[2] = script path
+    assert_eq!(calls[0][1], OsString::from("/bin/sh-pre"));
+    assert_eq!(calls[1][1], OsString::from("/bin/sh-prov"));
+    assert_eq!(calls[2][1], OsString::from("/bin/sh-post"));
+}
+
+#[test]
+fn test_pipeline_run_stops_within_phase_on_error() {
+    // provisioner phase has 3 tasks; 2nd fails -> 3rd should NOT execute
+    let prov = [
+        inline_task("echo prov1"),
+        inline_task("echo prov2"),
+        inline_task("echo prov3"),
+    ];
+    let pipeline = Pipeline::new(&[], &prov, &[]);
+
+    let mock_executor = Arc::new(MockExecutor::failing_on(1)); // fail on 2nd call (0-indexed)
+    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
+    let provider = MockProvider::new();
+
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    assert!(result.is_err());
+
+    // 1st task succeeds (call 0), 2nd task fails (call 1), 3rd never executed
+    assert_eq!(mock_executor.call_count(), 2);
 }
 
 #[test]

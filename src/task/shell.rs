@@ -31,8 +31,8 @@ pub enum ScriptSource {
 /// Shell task data and execution logic.
 ///
 /// Represents a shell script to be executed within an isolation context.
-/// This is a pure data structure with methods for validation and execution,
-/// following Rust's idiomatic enum-based dispatch pattern.
+/// Holds configuration data and provides methods for validation and execution.
+/// Used as a variant in the `TaskDefinition` enum for compile-time dispatch.
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct ShellTask {
     /// Script source: either an external file path or inline content
@@ -103,8 +103,15 @@ impl ShellTask {
     /// Validates the task configuration.
     ///
     /// For external script files, validates that the file exists and is a regular file.
-    /// For inline content, no additional validation is needed (type system ensures it's present).
+    /// For inline content, validates that the content is not empty.
     pub fn validate(&self) -> Result<()> {
+        if self.shell.is_empty() {
+            bail!("shell path must not be empty");
+        }
+        if !self.shell.starts_with('/') {
+            bail!("shell path must be absolute (start with '/'): {}", self.shell);
+        }
+
         match &self.source {
             ScriptSource::Script(script) => {
                 // Prevent path traversal attacks
@@ -126,7 +133,12 @@ impl ShellTask {
                 }
                 Ok(())
             }
-            ScriptSource::Content(_) => Ok(()),
+            ScriptSource::Content(content) => {
+                if content.trim().is_empty() {
+                    bail!("inline script content must not be empty");
+                }
+                Ok(())
+            }
         }
     }
 
@@ -150,7 +162,7 @@ impl ShellTask {
         debug!("rootfs: {}, shell: {}, dry_run: {}", rootfs, self.shell, dry_run);
 
         // Generate unique script name in rootfs
-        let script_name = format!("provision-{}.sh", uuid::Uuid::new_v4());
+        let script_name = format!("task-{}.sh", uuid::Uuid::new_v4());
         let target_script = rootfs.join("tmp").join(&script_name);
 
         // RAII guard ensures cleanup even on error
@@ -325,11 +337,15 @@ impl ScriptGuard {
 
 impl Drop for ScriptGuard {
     fn drop(&mut self) {
-        if !self.dry_run && self.path.exists() {
-            if let Err(e) = fs::remove_file(&self.path) {
-                tracing::error!("failed to cleanup script {}: {}", self.path, e);
-            } else {
-                tracing::debug!("cleaned up script: {}", self.path);
+        if !self.dry_run {
+            match fs::remove_file(&self.path) {
+                Ok(()) => tracing::debug!("cleaned up script: {}", self.path),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    tracing::debug!("script already removed: {}", self.path);
+                }
+                Err(e) => {
+                    tracing::error!("failed to cleanup script {}: {}", self.path, e);
+                }
             }
         }
     }

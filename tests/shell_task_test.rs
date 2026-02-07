@@ -318,7 +318,7 @@ fn test_run_with_external_script_dry_run() {
     assert_eq!(commands[0][0], OsString::from("/bin/sh"));
     let script_arg = commands[0][1].to_string_lossy();
     assert!(
-        script_arg.starts_with("/tmp/provision-"),
+        script_arg.starts_with("/tmp/task-"),
         "Expected script path in /tmp, got: {}",
         script_arg
     );

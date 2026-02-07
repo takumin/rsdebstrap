@@ -57,7 +57,7 @@ fn run_validate_succeeds_on_valid_profile() {
 }
 
 #[test]
-fn run_apply_with_provisioners_uses_isolation() {
+fn run_apply_with_pipeline_tasks_uses_isolation() {
     let opts = cli::ApplyArgs {
         file: "examples/debian_trixie_with_provisioners.yml".into(),
         log_level: cli::LogLevel::Error,
@@ -71,14 +71,14 @@ fn run_apply_with_provisioners_uses_isolation() {
     run_apply(&opts, executor).expect("run_apply should succeed");
 
     let calls = calls.lock().unwrap();
-    // Expect 2 calls: 1 for bootstrap (mmdebstrap), 1 for provisioner (chroot)
+    // Expect 2 calls: 1 for bootstrap (mmdebstrap), 1 for pipeline task (chroot)
     assert_eq!(calls.len(), 2);
 
     // First call should be mmdebstrap
     let (command, _) = &calls[0];
     assert_eq!(command, "mmdebstrap");
 
-    // Second call should be chroot (from provisioner via isolation)
+    // Second call should be chroot (from pipeline task via isolation)
     let (command, args) = &calls[1];
     assert_eq!(command, "chroot");
     // First arg should be the rootfs path
@@ -121,10 +121,10 @@ impl CommandExecutor for FailingExecutor {
 }
 
 #[test]
-fn test_run_apply_provisioning_and_teardown_both_fail() {
-    // This test verifies that when both provisioning and teardown fail:
-    // 1. The provisioning error is returned (not chained with teardown error)
-    // 2. The returned error message does NOT contain teardown error details
+fn test_run_apply_pipeline_and_teardown_both_fail() {
+    // This test verifies that when both pipeline execution and teardown fail:
+    // 1. The pipeline error is returned as the primary error
+    // 2. The teardown error is attached as context for debugging
 
     let opts = cli::ApplyArgs {
         file: "examples/debian_trixie_with_provisioners.yml".into(),
@@ -132,9 +132,9 @@ fn test_run_apply_provisioning_and_teardown_both_fail() {
         dry_run: true,
     };
 
-    // Fail starting from the 2nd call (provisioner execution)
+    // Fail starting from the 2nd call (pipeline task execution)
     // Call 1: mmdebstrap (succeeds)
-    // Call 2: chroot for provisioner (fails) - this is the provisioning error
+    // Call 2: chroot for pipeline task (fails) - this is the pipeline error
     // Note: In dry_run mode with chroot isolation, there's no separate teardown command,
     // but the error handling path is still exercised
     let executor: Arc<dyn CommandExecutor> = Arc::new(FailingExecutor::new(2));
@@ -147,18 +147,10 @@ fn test_run_apply_provisioning_and_teardown_both_fail() {
     let err = result.unwrap_err();
     let err_string = format!("{:#}", err);
 
-    // The error should be about the provisioner failing
+    // The error should be about the pipeline task failing
     assert!(
         err_string.contains("failed to run provisioner"),
         "Expected provisioner error, got: {}",
-        err_string
-    );
-
-    // The error should NOT contain teardown error details
-    // (teardown error is logged separately, not chained)
-    assert!(
-        !err_string.contains("teardown also failed"),
-        "Error should not chain teardown error: {}",
         err_string
     );
 }

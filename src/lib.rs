@@ -49,10 +49,14 @@ fn run_bootstrap_phase(
         .with_context(|| format!("failed to execute {}", command_name))?;
 
     if !result.success() {
+        let status_display = result
+            .status
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown (no status available)".to_string());
         anyhow::bail!(
             "{} exited with non-zero status: {}. Spec: {:?}",
             command_name,
-            result.status.expect("status should be present on failure"),
+            status_display,
             spec
         );
     }

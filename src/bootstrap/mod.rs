@@ -12,10 +12,10 @@ pub mod mmdebstrap;
 
 pub use args::{CommandArgsBuilder, FlagValueStyle};
 
-/// Output classification for provisioner rootfs usage.
+/// Output classification for pipeline task rootfs usage.
 #[derive(Debug)]
 pub enum RootfsOutput {
-    /// Directory output that can be used for provisioners.
+    /// Directory output that can be used for pipeline tasks.
     Directory(camino::Utf8PathBuf),
     /// Non-directory output with a reason.
     NonDirectory { reason: String },
@@ -38,6 +38,6 @@ pub trait BootstrapBackend {
     /// A vector of command-line arguments to pass to the bootstrap tool.
     fn build_args(&self, output_dir: &camino::Utf8Path) -> Result<Vec<OsString>>;
 
-    /// Returns the rootfs output classification for provisioner usage.
+    /// Returns the rootfs output classification for pipeline task usage.
     fn rootfs_output(&self, output_dir: &camino::Utf8Path) -> Result<RootfsOutput>;
 }
