@@ -86,7 +86,7 @@ fn test_script_source_inline() {
 #[test]
 fn test_script_path_returns_some_for_script() {
     let task = ShellTask::new(ScriptSource::Script("test.sh".into()));
-    assert_eq!(task.script_path(), Some(&camino::Utf8PathBuf::from("test.sh")));
+    assert_eq!(task.script_path(), Some(camino::Utf8Path::new("test.sh")));
 }
 
 #[test]

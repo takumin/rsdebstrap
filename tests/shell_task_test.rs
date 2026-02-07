@@ -341,7 +341,7 @@ fn test_shell_task_accessors_with_script() {
     assert_eq!(task.shell(), "/bin/sh");
     assert_eq!(*task.source(), ScriptSource::Script("/path/to/script.sh".into()));
     assert_eq!(task.name(), "/path/to/script.sh");
-    assert_eq!(task.script_path(), Some(&camino::Utf8PathBuf::from("/path/to/script.sh")));
+    assert_eq!(task.script_path(), Some(camino::Utf8Path::new("/path/to/script.sh")));
 }
 
 #[test]
@@ -408,6 +408,256 @@ fn test_run_fails_when_script_copy_fails() {
         err_msg.contains("failed to copy script"),
         "Expected 'failed to copy script' in error, got: {}",
         err_msg
+    );
+}
+
+#[test]
+fn test_execute_inline_script_success() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("path should be valid UTF-8");
+
+    setup_valid_rootfs(&temp_dir);
+
+    let task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
+
+    let context = MockContext::new(&rootfs);
+    let result = task.execute(&context);
+
+    assert!(result.is_ok(), "non-dry_run inline script should succeed, got: {:?}", result);
+
+    // Verify the correct command was executed
+    let commands = context.executed_commands();
+    assert_eq!(commands.len(), 1, "Expected exactly one command executed");
+    assert_eq!(commands[0][0], OsString::from("/bin/sh"));
+    let script_arg = commands[0][1].to_string_lossy();
+    assert!(
+        script_arg.starts_with("/tmp/task-"),
+        "Expected script path in /tmp, got: {}",
+        script_arg
+    );
+
+    // Verify the script file was cleaned up by ScriptGuard (RAII)
+    let tmp_dir = temp_dir.path().join("tmp");
+    let remaining_scripts: Vec<_> = std::fs::read_dir(&tmp_dir)
+        .expect("failed to read tmp dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("task-"))
+        .collect();
+    assert!(
+        remaining_scripts.is_empty(),
+        "Expected script to be cleaned up, but found: {:?}",
+        remaining_scripts
+            .iter()
+            .map(|e| e.file_name())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_execute_external_script_success() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("path should be valid UTF-8");
+
+    setup_valid_rootfs(&temp_dir);
+
+    // Create an external script file
+    let script_path = temp_dir.path().join("external_script.sh");
+    std::fs::write(&script_path, "#!/bin/sh\necho external\n").expect("failed to write script");
+    let script_path_utf8 =
+        camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
+
+    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+
+    let context = MockContext::new(&rootfs);
+    let result = task.execute(&context);
+
+    assert!(result.is_ok(), "non-dry_run external script should succeed, got: {:?}", result);
+
+    // Verify the correct command was executed
+    let commands = context.executed_commands();
+    assert_eq!(commands.len(), 1, "Expected exactly one command executed");
+    assert_eq!(commands[0][0], OsString::from("/bin/sh"));
+    let script_arg = commands[0][1].to_string_lossy();
+    assert!(
+        script_arg.starts_with("/tmp/task-"),
+        "Expected script path in /tmp, got: {}",
+        script_arg
+    );
+
+    // Verify the script file was cleaned up by ScriptGuard (RAII)
+    let tmp_dir = temp_dir.path().join("tmp");
+    let remaining_scripts: Vec<_> = std::fs::read_dir(&tmp_dir)
+        .expect("failed to read tmp dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("task-"))
+        .collect();
+    assert!(
+        remaining_scripts.is_empty(),
+        "Expected script to be cleaned up, but found: {:?}",
+        remaining_scripts
+            .iter()
+            .map(|e| e.file_name())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_execute_inline_script_verifies_file_written() {
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("path should be valid UTF-8");
+
+    setup_valid_rootfs(&temp_dir);
+
+    let script_content = "#!/bin/sh\necho hello world\n";
+    let task = ShellTask::new(ScriptSource::Content(script_content.to_string()));
+
+    // Use a custom mock that captures the script content at execution time
+    let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let captured_clone = Arc::clone(&captured_content);
+
+    struct CapturingContext {
+        rootfs: camino::Utf8PathBuf,
+        captured_content: Arc<Mutex<Option<String>>>,
+        executed_commands: RefCell<Vec<Vec<OsString>>>,
+    }
+
+    impl IsolationContext for CapturingContext {
+        fn name(&self) -> &'static str {
+            "capturing-mock"
+        }
+        fn rootfs(&self) -> &Utf8Path {
+            &self.rootfs
+        }
+        fn dry_run(&self) -> bool {
+            false
+        }
+        fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+            self.executed_commands.borrow_mut().push(command.to_vec());
+            // Read the script file that was written to rootfs
+            if command.len() >= 2 {
+                let script_path_in_isolation = command[1].to_string_lossy();
+                let script_path_on_host = self
+                    .rootfs
+                    .join(script_path_in_isolation.trim_start_matches('/'));
+                if let Ok(content) = std::fs::read_to_string(&script_path_on_host) {
+                    *self.captured_content.lock().unwrap() = Some(content);
+                }
+                // Verify the script is executable
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(metadata) = std::fs::metadata(&script_path_on_host) {
+                        let mode = metadata.permissions().mode();
+                        assert_eq!(mode & 0o700, 0o700, "Script should be executable");
+                    }
+                }
+            }
+            Ok(ExecutionResult {
+                status: Some(ExitStatus::from_raw(0)),
+            })
+        }
+        fn teardown(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    let context = CapturingContext {
+        rootfs: rootfs.clone(),
+        captured_content: captured_clone,
+        executed_commands: RefCell::new(Vec::new()),
+    };
+
+    let result = task.execute(&context);
+    assert!(result.is_ok(), "execute should succeed, got: {:?}", result);
+
+    // Verify the inline content was written correctly
+    let captured = captured_content.lock().unwrap();
+    assert_eq!(
+        captured.as_deref(),
+        Some(script_content),
+        "Script content should match the inline content"
+    );
+}
+
+#[test]
+fn test_execute_external_script_verifies_file_copied() {
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("path should be valid UTF-8");
+
+    setup_valid_rootfs(&temp_dir);
+
+    let original_content = "#!/bin/sh\necho copied script\n";
+    let script_path = temp_dir.path().join("my_script.sh");
+    std::fs::write(&script_path, original_content).expect("failed to write script");
+    let script_path_utf8 =
+        camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
+
+    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+
+    let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let captured_clone = Arc::clone(&captured_content);
+
+    struct CapturingContext {
+        rootfs: camino::Utf8PathBuf,
+        captured_content: Arc<Mutex<Option<String>>>,
+        executed_commands: RefCell<Vec<Vec<OsString>>>,
+    }
+
+    impl IsolationContext for CapturingContext {
+        fn name(&self) -> &'static str {
+            "capturing-mock"
+        }
+        fn rootfs(&self) -> &Utf8Path {
+            &self.rootfs
+        }
+        fn dry_run(&self) -> bool {
+            false
+        }
+        fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+            self.executed_commands.borrow_mut().push(command.to_vec());
+            if command.len() >= 2 {
+                let script_path_in_isolation = command[1].to_string_lossy();
+                let script_path_on_host = self
+                    .rootfs
+                    .join(script_path_in_isolation.trim_start_matches('/'));
+                if let Ok(content) = std::fs::read_to_string(&script_path_on_host) {
+                    *self.captured_content.lock().unwrap() = Some(content);
+                }
+            }
+            Ok(ExecutionResult {
+                status: Some(ExitStatus::from_raw(0)),
+            })
+        }
+        fn teardown(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    let context = CapturingContext {
+        rootfs: rootfs.clone(),
+        captured_content: captured_clone,
+        executed_commands: RefCell::new(Vec::new()),
+    };
+
+    let result = task.execute(&context);
+    assert!(result.is_ok(), "execute should succeed, got: {:?}", result);
+
+    // Verify the external script was copied correctly
+    let captured = captured_content.lock().unwrap();
+    assert_eq!(
+        captured.as_deref(),
+        Some(original_content),
+        "Copied script content should match the original"
     );
 }
 

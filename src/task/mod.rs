@@ -6,7 +6,7 @@
 //!
 //! Adding a new task type requires:
 //! 1. Adding a new variant to `TaskDefinition`
-//! 2. Creating a corresponding data struct (e.g., `FileTask`)
+//! 2. Creating a corresponding data struct (e.g., a hypothetical `FileTask`)
 //! 3. Implementing the match arms in each method
 //!
 //! The compiler enforces exhaustiveness, ensuring all task types are handled.
@@ -57,7 +57,7 @@ impl TaskDefinition {
     }
 
     /// Returns the script path if this task uses an external script file.
-    pub fn script_path(&self) -> Option<&camino::Utf8PathBuf> {
+    pub fn script_path(&self) -> Option<&Utf8Path> {
         match self {
             Self::Shell(task) => task.script_path(),
         }

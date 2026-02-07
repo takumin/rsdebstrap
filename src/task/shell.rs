@@ -3,7 +3,7 @@
 //! This module provides the `ShellTask` data structure and execution logic
 //! for running shell scripts within an isolation context. It handles:
 //! - Script source management (external files or inline content)
-//! - Security validation (path traversal, symlink attacks, TOCTOU mitigation)
+//! - Security validation (path traversal, symlink attacks, TOCTOU risk reduction)
 //! - Script lifecycle (copy/write to rootfs, execute, cleanup via RAII guard)
 
 use anyhow::{Context, Result, bail};
@@ -33,6 +33,14 @@ pub enum ScriptSource {
 /// Represents a shell script to be executed within an isolation context.
 /// Holds configuration data and provides methods for validation and execution.
 /// Used as a variant in the `TaskDefinition` enum for compile-time dispatch.
+///
+/// ## Lifecycle
+///
+/// The expected call sequence is:
+/// 1. **Deserialize** — construct from YAML via `serde`
+/// 2. [`resolve_paths()`](Self::resolve_paths) — resolve relative script paths
+/// 3. [`validate()`](Self::validate) — check script existence and configuration
+/// 4. [`execute()`](Self::execute) — run within an isolation context
 ///
 /// Deserialization validates that exactly one of `script` or `content` is
 /// specified, rejecting YAML that provides both or neither.
@@ -165,7 +173,7 @@ impl ShellTask {
     }
 
     /// Returns the script path if this task uses an external script file.
-    pub fn script_path(&self) -> Option<&Utf8PathBuf> {
+    pub fn script_path(&self) -> Option<&Utf8Path> {
         match &self.source {
             ScriptSource::Script(path) => Some(path),
             ScriptSource::Content(_) => None,
@@ -224,6 +232,9 @@ impl ShellTask {
     }
 
     /// Executes the shell script using the provided isolation context.
+    ///
+    /// Callers should invoke [`validate()`](Self::validate) before this method
+    /// to ensure the task configuration is valid (e.g., script file exists).
     ///
     /// This method:
     /// 1. Validates the rootfs (unless dry_run)
@@ -289,8 +300,9 @@ impl ShellTask {
         }
 
         // Execute script using the configured isolation backend
-        let script_path_in_chroot = format!("/tmp/{}", script_name);
-        let command: Vec<OsString> = vec![self.shell.as_str().into(), script_path_in_chroot.into()];
+        let script_path_in_isolation = format!("/tmp/{}", script_name);
+        let command: Vec<OsString> =
+            vec![self.shell.as_str().into(), script_path_in_isolation.into()];
 
         let result = context
             .execute(&command)
@@ -429,5 +441,59 @@ impl Drop for ScriptGuard {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_script_guard_removes_file_on_drop() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let script_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("test_script.sh"))
+            .expect("path should be valid UTF-8");
+
+        // Create the file
+        fs::write(&script_path, "#!/bin/sh\n").expect("failed to write script");
+        assert!(script_path.exists(), "script should exist before drop");
+
+        // Drop the guard — should remove the file
+        {
+            let _guard = ScriptGuard::new(script_path.clone(), false);
+        }
+
+        assert!(!script_path.exists(), "script should be removed after drop");
+    }
+
+    #[test]
+    fn test_script_guard_handles_already_removed_file() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let script_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("nonexistent.sh"))
+            .expect("path should be valid UTF-8");
+
+        // File does not exist — drop should not panic
+        {
+            let _guard = ScriptGuard::new(script_path.clone(), false);
+        }
+        // If we get here, no panic occurred
+    }
+
+    #[test]
+    fn test_script_guard_skips_removal_in_dry_run() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let script_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("dry_run_script.sh"))
+            .expect("path should be valid UTF-8");
+
+        // Create the file
+        fs::write(&script_path, "#!/bin/sh\n").expect("failed to write script");
+        assert!(script_path.exists(), "script should exist before drop");
+
+        // Drop the guard with dry_run=true — should NOT remove the file
+        {
+            let _guard = ScriptGuard::new(script_path.clone(), true);
+        }
+
+        assert!(script_path.exists(), "script should still exist after dry_run drop");
     }
 }

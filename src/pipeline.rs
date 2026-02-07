@@ -12,11 +12,16 @@
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::executor::CommandExecutor;
 use crate::isolation::{IsolationContext, IsolationProvider};
 use crate::task::TaskDefinition;
+
+// Phase name constants to avoid duplication between validate() and run_phases()
+const PHASE_PRE_PROCESSOR: &str = "pre-processor";
+const PHASE_PROVISIONER: &str = "provisioner";
+const PHASE_POST_PROCESSOR: &str = "post-processor";
 
 /// Pipeline orchestrator for executing tasks in phases.
 ///
@@ -59,9 +64,9 @@ impl<'a> Pipeline<'a> {
 
     /// Validates all tasks in the pipeline.
     pub fn validate(&self) -> Result<()> {
-        self.validate_phase("pre-processor", self.pre_processors)?;
-        self.validate_phase("provisioner", self.provisioners)?;
-        self.validate_phase("post-processor", self.post_processors)?;
+        self.validate_phase(PHASE_PRE_PROCESSOR, self.pre_processors)?;
+        self.validate_phase(PHASE_PROVISIONER, self.provisioners)?;
+        self.validate_phase(PHASE_POST_PROCESSOR, self.post_processors)?;
         Ok(())
     }
 
@@ -111,9 +116,9 @@ impl<'a> Pipeline<'a> {
     }
 
     fn run_phases(&self, ctx: &dyn IsolationContext) -> Result<()> {
-        self.run_phase("pre-processor", self.pre_processors, ctx)?;
-        self.run_phase("provisioner", self.provisioners, ctx)?;
-        self.run_phase("post-processor", self.post_processors, ctx)?;
+        self.run_phase(PHASE_PRE_PROCESSOR, self.pre_processors, ctx)?;
+        self.run_phase(PHASE_PROVISIONER, self.provisioners, ctx)?;
+        self.run_phase(PHASE_POST_PROCESSOR, self.post_processors, ctx)?;
         Ok(())
     }
 
@@ -124,6 +129,7 @@ impl<'a> Pipeline<'a> {
         ctx: &dyn IsolationContext,
     ) -> Result<()> {
         if tasks.is_empty() {
+            debug!("skipping empty {} phase", phase_name);
             return Ok(());
         }
 
