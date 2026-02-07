@@ -95,11 +95,9 @@ fn run_pipeline_phase(
 
 pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
     let profile = config::load_profile(opts.file.as_path())
-        .map_err(anyhow::Error::from)
         .with_context(|| format!("failed to load profile from {}", opts.file))?;
     profile
         .validate()
-        .map_err(anyhow::Error::from)
         .context("profile validation failed")?;
 
     if !opts.dry_run && !profile.dir.exists() {
@@ -115,11 +113,9 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> R
 
 pub fn run_validate(opts: &cli::ValidateArgs) -> Result<()> {
     let profile = config::load_profile(opts.file.as_path())
-        .map_err(anyhow::Error::from)
         .with_context(|| format!("failed to load profile from {}", opts.file))?;
     profile
         .validate()
-        .map_err(anyhow::Error::from)
         .context("profile validation failed")?;
     info!("validation successful:\n{:#?}", profile);
     Ok(())
