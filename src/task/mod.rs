@@ -64,7 +64,7 @@ impl TaskDefinition {
     }
 
     /// Resolves relative paths in this task relative to the given base directory.
-    pub(crate) fn resolve_paths(&mut self, base_dir: &Utf8Path) {
+    pub fn resolve_paths(&mut self, base_dir: &Utf8Path) {
         match self {
             Self::Shell(task) => task.resolve_paths(base_dir),
         }

@@ -88,7 +88,7 @@ pub trait IsolationContext: Send {
     /// This method is idempotent - calling it multiple times has no effect
     /// after the first successful teardown.
     ///
-    /// Note: This is also called automatically when the context is dropped,
+    /// Implementations should also call this in their `Drop` impl for safety,
     /// but calling it explicitly allows for error handling.
     fn teardown(&mut self) -> Result<()>;
 }

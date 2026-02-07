@@ -1,8 +1,7 @@
 //! Tests for the Pipeline orchestrator.
 
-use std::cell::RefCell;
 use std::ffi::OsString;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use camino::Utf8Path;
@@ -17,7 +16,7 @@ use rsdebstrap::task::{ScriptSource, ShellTask, TaskDefinition};
 
 /// Records executed commands in order, optionally failing on specific calls.
 struct MockExecutor {
-    calls: RefCell<Vec<Vec<OsString>>>,
+    calls: Mutex<Vec<Vec<OsString>>>,
     /// If set, the Nth call (0-indexed) will return an error.
     fail_on_call: Option<usize>,
 }
@@ -25,41 +24,35 @@ struct MockExecutor {
 impl MockExecutor {
     fn new() -> Self {
         Self {
-            calls: RefCell::new(Vec::new()),
+            calls: Mutex::new(Vec::new()),
             fail_on_call: None,
         }
     }
 
     fn failing_on(call_index: usize) -> Self {
         Self {
-            calls: RefCell::new(Vec::new()),
+            calls: Mutex::new(Vec::new()),
             fail_on_call: Some(call_index),
         }
     }
 
     fn call_count(&self) -> usize {
-        self.calls.borrow().len()
+        self.calls.lock().unwrap().len()
     }
 
     fn calls(&self) -> Vec<Vec<OsString>> {
-        self.calls.borrow().clone()
+        self.calls.lock().unwrap().clone()
     }
 }
 
-// SAFETY: MockExecutor uses RefCell for interior mutability.
-// We only use it in single-threaded test contexts through IsolationContext
-// (which is !Sync by design). This unsafe impl is required because
-// CommandExecutor requires Send + Sync, but our mock is only used
-// within the Pipeline's sequential execution.
-unsafe impl Send for MockExecutor {}
-unsafe impl Sync for MockExecutor {}
-
 impl CommandExecutor for MockExecutor {
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
-        let index = self.calls.borrow().len();
+        let mut calls = self.calls.lock().unwrap();
+        let index = calls.len();
         let mut args = vec![OsString::from(&spec.command)];
         args.extend(spec.args.iter().cloned());
-        self.calls.borrow_mut().push(args);
+        calls.push(args);
+        drop(calls);
 
         if self.fail_on_call == Some(index) {
             anyhow::bail!("simulated failure on call {}", index);
@@ -520,4 +513,32 @@ fn test_pipeline_run_stops_on_first_phase_error() {
 
     // Only 1 call should have been made (the failed pre-processor)
     assert_eq!(mock_executor.call_count(), 1);
+}
+
+#[test]
+fn test_pipeline_run_provisioner_failure_skips_post_processors() {
+    // provisioner fails -> post-processors should NOT execute
+    let pre = [inline_task("echo pre")];
+    let prov = [inline_task("echo prov")];
+    let post = [inline_task("echo post")];
+    let pipeline = Pipeline::new(&pre, &prov, &post);
+
+    // fail_on_call=1 means: call 0 (pre) succeeds, call 1 (prov) fails
+    let mock_executor = Arc::new(MockExecutor::failing_on(1));
+    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
+    let provider = MockProvider::new();
+
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    assert!(result.is_err());
+
+    let err_msg = format!("{:#}", result.unwrap_err());
+    assert!(
+        err_msg.contains("failed to run provisioner 1"),
+        "Expected provisioner failure error, got: {}",
+        err_msg
+    );
+
+    // pre-processor (call 0) succeeded, provisioner (call 1) failed,
+    // post-processor should NOT have been executed
+    assert_eq!(mock_executor.call_count(), 2);
 }

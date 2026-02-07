@@ -9,7 +9,9 @@
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
+use serde::de::{self, MapAccess, Visitor};
 use std::ffi::OsString;
+use std::fmt;
 use std::fs;
 use tracing::{debug, info};
 
@@ -17,10 +19,11 @@ use crate::isolation::IsolationContext;
 
 /// Script source for shell execution.
 ///
-/// This enum enforces at the type level that exactly one of `script` or `content`
-/// must be specified, eliminating the need for runtime validation of mutual exclusivity.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Represents exactly one of `script` (external file) or `content` (inline).
+/// When deserialized via `ShellTask`'s custom `Deserialize` impl, mutual
+/// exclusivity is validated at parse time — specifying both or neither
+/// produces a descriptive error.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptSource {
     /// External shell script file path
     Script(Utf8PathBuf),
@@ -33,19 +36,100 @@ pub enum ScriptSource {
 /// Represents a shell script to be executed within an isolation context.
 /// Holds configuration data and provides methods for validation and execution.
 /// Used as a variant in the `TaskDefinition` enum for compile-time dispatch.
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+///
+/// Deserialization validates that exactly one of `script` or `content` is
+/// specified, rejecting YAML that provides both or neither.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellTask {
     /// Script source: either an external file path or inline content
-    #[serde(flatten)]
     source: ScriptSource,
 
     /// Shell interpreter to use (default: /bin/sh)
-    #[serde(default = "default_shell")]
     shell: String,
 }
 
 fn default_shell() -> String {
     "/bin/sh".to_string()
+}
+
+impl<'de> Deserialize<'de> for ShellTask {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field {
+            Script,
+            Content,
+            Shell,
+        }
+
+        struct ShellTaskVisitor;
+
+        impl<'de> Visitor<'de> for ShellTaskVisitor {
+            type Value = ShellTask;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a shell task with either 'script' or 'content'")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> std::result::Result<ShellTask, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut script: Option<Utf8PathBuf> = None;
+                let mut content: Option<String> = None;
+                let mut shell: Option<String> = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Script => {
+                            if script.is_some() {
+                                return Err(de::Error::duplicate_field("script"));
+                            }
+                            script = Some(map.next_value()?);
+                        }
+                        Field::Content => {
+                            if content.is_some() {
+                                return Err(de::Error::duplicate_field("content"));
+                            }
+                            content = Some(map.next_value()?);
+                        }
+                        Field::Shell => {
+                            if shell.is_some() {
+                                return Err(de::Error::duplicate_field("shell"));
+                            }
+                            shell = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let source = match (script, content) {
+                    (Some(_), Some(_)) => {
+                        return Err(de::Error::custom(
+                            "'script' and 'content' are mutually exclusive",
+                        ));
+                    }
+                    (None, None) => {
+                        return Err(de::Error::custom(
+                            "either 'script' or 'content' must be specified",
+                        ));
+                    }
+                    (Some(s), None) => ScriptSource::Script(s),
+                    (None, Some(c)) => ScriptSource::Content(c),
+                };
+
+                Ok(ShellTask {
+                    source,
+                    shell: shell.unwrap_or_else(default_shell),
+                })
+            }
+        }
+
+        const FIELDS: &[&str] = &["script", "content", "shell"];
+        deserializer.deserialize_struct("ShellTask", FIELDS, ShellTaskVisitor)
+    }
 }
 
 impl ShellTask {
@@ -92,7 +176,7 @@ impl ShellTask {
     }
 
     /// Resolves relative paths in this task relative to the given base directory.
-    pub(crate) fn resolve_paths(&mut self, base_dir: &Utf8Path) {
+    pub fn resolve_paths(&mut self, base_dir: &Utf8Path) {
         if let ScriptSource::Script(path) = &mut self.source
             && path.is_relative()
         {

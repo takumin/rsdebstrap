@@ -3,9 +3,9 @@
 //! The pipeline manages the lifecycle of an isolation context and executes
 //! tasks in three ordered phases:
 //!
-//! 1. **Pre-processors** — preparation tasks (e.g., mount, download)
-//! 2. **Provisioners** — main configuration tasks (e.g., install packages)
-//! 3. **Post-processors** — finalization tasks (e.g., cleanup, compress)
+//! 1. **Pre-processors** — preparation tasks before main provisioning
+//! 2. **Provisioners** — main configuration tasks (e.g., package installation, config)
+//! 3. **Post-processors** — finalization tasks (e.g., cleanup scripts)
 //!
 //! Isolation setup/teardown is handled once for all phases.
 

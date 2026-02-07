@@ -1,4 +1,5 @@
-use rsdebstrap::task::{ScriptSource, ShellTask};
+use camino::Utf8Path;
+use rsdebstrap::task::{ScriptSource, ShellTask, TaskDefinition};
 use tempfile::tempdir;
 
 #[test]
@@ -115,4 +116,82 @@ fn test_validate_script_is_directory() {
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("shell script is not a file"));
+}
+
+// =============================================================================
+// T1: TaskDefinition::resolve_paths unit tests
+// =============================================================================
+
+#[test]
+fn test_resolve_paths_joins_relative_script_with_base_dir() {
+    let mut task =
+        TaskDefinition::Shell(ShellTask::new(ScriptSource::Script("scripts/test.sh".into())));
+    task.resolve_paths(Utf8Path::new("/home/user/project"));
+
+    match &task {
+        TaskDefinition::Shell(shell) => {
+            assert_eq!(shell.script_path().unwrap().as_str(), "/home/user/project/scripts/test.sh");
+        }
+    }
+}
+
+#[test]
+fn test_resolve_paths_preserves_absolute_script_path() {
+    let mut task = TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
+        "/absolute/path/test.sh".into(),
+    )));
+    task.resolve_paths(Utf8Path::new("/home/user/project"));
+
+    match &task {
+        TaskDefinition::Shell(shell) => {
+            assert_eq!(shell.script_path().unwrap().as_str(), "/absolute/path/test.sh");
+        }
+    }
+}
+
+#[test]
+fn test_resolve_paths_does_not_modify_content_source() {
+    let mut task =
+        TaskDefinition::Shell(ShellTask::new(ScriptSource::Content("echo hello".to_string())));
+    task.resolve_paths(Utf8Path::new("/home/user/project"));
+
+    match &task {
+        TaskDefinition::Shell(shell) => {
+            assert_eq!(shell.script_path(), None);
+            assert_eq!(shell.source(), &ScriptSource::Content("echo hello".to_string()));
+        }
+    }
+}
+
+// =============================================================================
+// T2: TaskDefinition YAML deserialization tests
+// =============================================================================
+
+#[test]
+fn test_task_definition_deserialize_rejects_unknown_type() {
+    let yaml = r#"type: ansible
+content: echo hello
+"#;
+    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("unknown variant"),
+        "Expected 'unknown variant' error, got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_task_definition_deserialize_rejects_missing_type() {
+    let yaml = r#"content: echo hello
+"#;
+    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("missing field") || err_msg.contains("type"),
+        "Expected error about missing 'type' field, got: {}",
+        err_msg
+    );
 }

@@ -247,7 +247,7 @@ provisioners:
     // The error message should indicate that neither 'script' nor 'content' was found
     let err_msg = format!("{:#}", result.unwrap_err());
     assert!(
-        err_msg.contains("flattened") || err_msg.contains("script") || err_msg.contains("content"),
+        err_msg.contains("either 'script' or 'content' must be specified"),
         "Expected error about missing script/content, got: {}",
         err_msg
     );
@@ -256,9 +256,9 @@ provisioners:
 }
 
 #[test]
-fn test_profile_validation_rejects_shell_task_with_script_and_content() -> Result<()> {
+fn test_profile_parsing_rejects_shell_task_with_script_and_content() -> Result<()> {
     // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+    let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 bootstrap:
@@ -270,10 +270,16 @@ provisioners:
     script: /tmp/provision.sh
     content: echo "hello"
 "#
-    ))?;
+    ));
     // editorconfig-checker-enable
 
-    assert!(profile.validate().is_err());
+    assert!(result.is_err());
+    let err_msg = format!("{:#}", result.unwrap_err());
+    assert!(
+        err_msg.contains("mutually exclusive"),
+        "Expected error about mutually exclusive, got: {}",
+        err_msg
+    );
 
     Ok(())
 }

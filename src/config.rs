@@ -106,6 +106,11 @@ pub struct Profile {
 }
 
 impl Profile {
+    /// Creates a `Pipeline` from this profile's task phases.
+    pub fn pipeline(&self) -> Pipeline<'_> {
+        Pipeline::new(&self.pre_processors, &self.provisioners, &self.post_processors)
+    }
+
     /// Validate configuration semantics beyond basic deserialization.
     pub fn validate(&self) -> Result<()> {
         if self.dir.exists() && !self.dir.is_dir() {
@@ -113,8 +118,7 @@ impl Profile {
         }
 
         // Validate all tasks across phases
-        let pipeline =
-            Pipeline::new(&self.pre_processors, &self.provisioners, &self.post_processors);
+        let pipeline = self.pipeline();
         pipeline.validate()?;
 
         // Validate tasks are compatible with bootstrap output format

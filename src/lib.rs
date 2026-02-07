@@ -14,7 +14,6 @@ use tracing::info;
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
 use crate::executor::CommandExecutor;
-use crate::pipeline::Pipeline;
 
 pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
     let filter = match log_level {
@@ -70,8 +69,7 @@ fn run_pipeline_phase(
     executor: Arc<dyn CommandExecutor>,
     dry_run: bool,
 ) -> Result<()> {
-    let pipeline =
-        Pipeline::new(&profile.pre_processors, &profile.provisioners, &profile.post_processors);
+    let pipeline = profile.pipeline();
 
     if pipeline.is_empty() {
         return Ok(());
@@ -81,8 +79,9 @@ fn run_pipeline_phase(
     let backend = profile.bootstrap.as_backend();
     let bootstrap::RootfsOutput::Directory(rootfs) = backend.rootfs_output(&profile.dir)? else {
         anyhow::bail!(
-            "pipeline tasks require directory output but got non-directory format. \
-            This should have been caught during validation."
+            "pipeline tasks require directory output but bootstrap is configured for \
+            non-directory format. Please set bootstrap format to 'directory' or remove \
+            pipeline tasks."
         );
     };
 
