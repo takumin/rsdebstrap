@@ -7,7 +7,8 @@
 //! Adding a new task type requires:
 //! 1. Adding a new variant to `TaskDefinition`
 //! 2. Creating a corresponding data struct (e.g., a hypothetical `FileTask`)
-//! 3. Implementing the match arms in each method
+//! 3. Implementing the match arms in all methods on `TaskDefinition`
+//!    (`name`, `validate`, `execute`, `script_path`, `resolve_paths`)
 //!
 //! The compiler enforces exhaustiveness, ensuring all task types are handled.
 

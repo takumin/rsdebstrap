@@ -1,6 +1,7 @@
 //! Tests for the Pipeline orchestrator.
 
 use std::ffi::OsString;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -65,6 +66,7 @@ impl CommandExecutor for MockExecutor {
 struct MockProvider {
     setup_should_fail: bool,
     teardown_should_fail: bool,
+    teardown_called: Arc<AtomicBool>,
 }
 
 impl MockProvider {
@@ -72,6 +74,7 @@ impl MockProvider {
         Self {
             setup_should_fail: false,
             teardown_should_fail: false,
+            teardown_called: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -79,6 +82,7 @@ impl MockProvider {
         Self {
             setup_should_fail: true,
             teardown_should_fail: false,
+            teardown_called: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -86,6 +90,7 @@ impl MockProvider {
         Self {
             setup_should_fail: false,
             teardown_should_fail: true,
+            teardown_called: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -109,6 +114,7 @@ impl IsolationProvider for MockProvider {
             executor,
             dry_run,
             teardown_should_fail: self.teardown_should_fail,
+            teardown_called: Arc::clone(&self.teardown_called),
             torn_down: false,
         }))
     }
@@ -120,6 +126,7 @@ struct MockContext {
     executor: Arc<dyn CommandExecutor>,
     dry_run: bool,
     teardown_should_fail: bool,
+    teardown_called: Arc<AtomicBool>,
     torn_down: bool,
 }
 
@@ -146,6 +153,7 @@ impl IsolationContext for MockContext {
             return Ok(());
         }
         self.torn_down = true;
+        self.teardown_called.store(true, Ordering::SeqCst);
         if self.teardown_should_fail {
             anyhow::bail!("mock teardown failure");
         }
@@ -332,6 +340,12 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
         assert_eq!(call[0], OsString::from("mock"));
         assert_eq!(call[1], OsString::from("/bin/sh"));
     }
+
+    // Teardown must be called after successful execution
+    assert!(
+        provider.teardown_called.load(Ordering::SeqCst),
+        "teardown must be called after successful execution"
+    );
 }
 
 #[test]
@@ -375,6 +389,11 @@ fn test_pipeline_run_phase_error_with_successful_teardown() {
         "Should not contain teardown error, got: {}",
         err_msg
     );
+    // Teardown must still be called even when phases fail
+    assert!(
+        provider.teardown_called.load(Ordering::SeqCst),
+        "teardown must be called even when a phase fails"
+    );
 }
 
 #[test]
@@ -394,6 +413,11 @@ fn test_pipeline_run_successful_phases_with_teardown_error() {
         err_msg.contains("failed to teardown isolation context"),
         "Expected teardown error, got: {}",
         err_msg
+    );
+    // Teardown was attempted (even though it failed)
+    assert!(
+        provider.teardown_called.load(Ordering::SeqCst),
+        "teardown must be called even when it fails"
     );
 }
 
@@ -421,6 +445,11 @@ fn test_pipeline_run_phase_error_and_teardown_error() {
         err_msg.contains("additionally, teardown failed"),
         "Expected teardown context in error, got: {}",
         err_msg
+    );
+    // Teardown must be called even when both phases and teardown fail
+    assert!(
+        provider.teardown_called.load(Ordering::SeqCst),
+        "teardown must be called even when both phases and teardown fail"
     );
 }
 

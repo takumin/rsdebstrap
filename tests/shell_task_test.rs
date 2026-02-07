@@ -26,6 +26,8 @@ struct MockContext {
     error_message: Option<String>,
     /// Recorded commands that were executed
     executed_commands: RefCell<Vec<Vec<OsString>>>,
+    /// Whether to return status: None (simulates signal-killed process)
+    return_no_status: bool,
 }
 
 impl MockContext {
@@ -38,6 +40,7 @@ impl MockContext {
             should_error: false,
             error_message: None,
             executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
         }
     }
 
@@ -50,6 +53,7 @@ impl MockContext {
             should_error: false,
             error_message: None,
             executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
         }
     }
 
@@ -62,6 +66,7 @@ impl MockContext {
             should_error: false,
             error_message: None,
             executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
         }
     }
 
@@ -74,6 +79,20 @@ impl MockContext {
             should_error: true,
             error_message: Some(message.to_string()),
             executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
+        }
+    }
+
+    fn with_no_status(rootfs: &Utf8Path) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: false,
+            should_fail: false,
+            exit_code: None,
+            should_error: false,
+            error_message: None,
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: true,
         }
     }
 
@@ -103,7 +122,10 @@ impl IsolationContext for MockContext {
             anyhow::bail!("{}", self.error_message.as_deref().unwrap_or("mock error"));
         }
 
-        if self.should_fail {
+        if self.return_no_status {
+            // Simulate a process killed by signal (no exit status available)
+            Ok(ExecutionResult { status: None })
+        } else if self.should_fail {
             // Create an ExitStatus from the raw exit code
             // On Unix, exit codes are stored as (code << 8) in the raw wait status
             let status = Some(ExitStatus::from_raw(self.exit_code.unwrap_or(1) << 8));
@@ -673,4 +695,25 @@ fn test_validate_script_path_traversal_rejected() {
         "Expected 'security' in error message, got: {}",
         err_msg
     );
+}
+
+#[test]
+fn test_execute_with_no_exit_status_succeeds() {
+    // When a process returns no exit status (e.g., in dry-run mode),
+    // ExecutionResult::success() returns true, so ShellTask treats it as success.
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("path should be valid UTF-8");
+
+    setup_valid_rootfs(&temp_dir);
+
+    let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
+
+    let context = MockContext::with_no_status(&rootfs);
+    let result = task.execute(&context);
+
+    assert!(result.is_ok(), "status: None should be treated as success, got: {:?}", result);
+
+    let commands = context.executed_commands();
+    assert_eq!(commands.len(), 1, "Expected exactly one command executed");
 }

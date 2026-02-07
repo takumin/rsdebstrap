@@ -241,6 +241,10 @@ impl ShellTask {
     /// 2. Copies or writes the script to rootfs /tmp
     /// 3. Executes the script via the isolation context
     /// 4. Cleans up the script file (via RAII guard)
+    ///
+    /// In dry-run mode, skips file I/O (rootfs validation, script copy/write,
+    /// permission changes, cleanup) while still constructing and delegating
+    /// commands to the executor.
     pub fn execute(&self, context: &dyn IsolationContext) -> Result<()> {
         let rootfs = context.rootfs();
         let dry_run = context.dry_run();

@@ -90,6 +90,8 @@ pub trait IsolationContext: Send {
     /// after the first successful teardown.
     ///
     /// Implementations should also call this in their `Drop` impl for safety,
-    /// but calling it explicitly allows for error handling.
+    /// but calling it explicitly allows for error handling. Note that `Drop`
+    /// cannot propagate errors, so implementations should log failures as
+    /// warnings in their `Drop` impl.
     fn teardown(&mut self) -> Result<()>;
 }
