@@ -333,7 +333,7 @@ impl ShellTask {
         } else if !dry_run && result.status.is_none() {
             tracing::warn!(
                 "command returned no exit status in non-dry-run mode; \
-                 this may indicate an executor implementation bug"
+                this may indicate an executor implementation bug"
             );
         }
 
