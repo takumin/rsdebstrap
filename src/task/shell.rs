@@ -15,19 +15,9 @@ use std::fmt;
 use std::fs;
 use tracing::{debug, info};
 
+use super::{ScriptSource, TempFileGuard};
 use crate::error::RsdebstrapError;
 use crate::isolation::IsolationContext;
-
-/// Script source for shell execution.
-///
-/// Represents exactly one of `script` (external file) or `content` (inline).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScriptSource {
-    /// External shell script file path
-    Script(Utf8PathBuf),
-    /// Inline shell script content
-    Content(String),
-}
 
 /// Shell task data and execution logic.
 ///
@@ -37,8 +27,9 @@ pub enum ScriptSource {
 ///
 /// ## Lifecycle
 ///
-/// The expected call sequence is:
+/// The typical lifecycle when loaded from a YAML profile is:
 /// 1. **Deserialize** — construct from YAML via `serde`
+///    (or [`new()`](Self::new) for programmatic use)
 /// 2. [`resolve_paths()`](Self::resolve_paths) — resolve relative script paths
 /// 3. [`validate()`](Self::validate) — check script existence and configuration
 /// 4. [`execute()`](Self::execute) — run within an isolation context
@@ -171,20 +162,14 @@ impl ShellTask {
         &self.shell
     }
 
-    /// Returns a human-readable name for this task.
+    /// Returns a human-readable name for this task (without type prefix).
     pub fn name(&self) -> &str {
-        match &self.source {
-            ScriptSource::Script(path) => path.as_str(),
-            ScriptSource::Content(_) => "<inline>",
-        }
+        self.source.name()
     }
 
     /// Returns the script path if this task uses an external script file.
     pub fn script_path(&self) -> Option<&Utf8Path> {
-        match &self.source {
-            ScriptSource::Script(path) => Some(path),
-            ScriptSource::Content(_) => None,
-        }
+        self.source.script_path()
     }
 
     /// Resolves relative paths in this task relative to the given base directory.
@@ -192,7 +177,7 @@ impl ShellTask {
         if let ScriptSource::Script(path) = &mut self.source
             && path.is_relative()
         {
-            *path = base_dir.join(path.as_path());
+            *path = base_dir.join(&*path);
         }
     }
 
@@ -220,43 +205,7 @@ impl ShellTask {
             )));
         }
 
-        match &self.source {
-            ScriptSource::Script(script) => {
-                // Prevent path traversal attacks
-                if camino::Utf8Path::new(script.as_str())
-                    .components()
-                    .any(|c| c == camino::Utf8Component::ParentDir)
-                {
-                    return Err(RsdebstrapError::Validation(format!(
-                        "script path '{}' contains '..' components, \
-                        which is not allowed for security reasons",
-                        script
-                    )));
-                }
-
-                let metadata = fs::metadata(script).map_err(|e| {
-                    RsdebstrapError::io(
-                        format!("failed to read shell script metadata: {}", script),
-                        e,
-                    )
-                })?;
-                if !metadata.is_file() {
-                    return Err(RsdebstrapError::Validation(format!(
-                        "shell script is not a file: {}",
-                        script
-                    )));
-                }
-                Ok(())
-            }
-            ScriptSource::Content(content) => {
-                if content.trim().is_empty() {
-                    return Err(RsdebstrapError::Validation(
-                        "inline script content must not be empty".to_string(),
-                    ));
-                }
-                Ok(())
-            }
-        }
+        self.source.validate("shell script")
     }
 
     /// Executes the shell script using the provided isolation context.
@@ -266,9 +215,11 @@ impl ShellTask {
     ///
     /// This method:
     /// 1. Validates the rootfs (unless dry_run)
-    /// 2. Copies or writes the script to rootfs /tmp
-    /// 3. Executes the script via the isolation context
-    /// 4. Cleans up the script file (via RAII guard)
+    /// 2. Sets up an RAII guard for cleanup of the temp script file
+    /// 3. Re-validates /tmp to mitigate TOCTOU race conditions (unless dry_run)
+    /// 4. Copies or writes the script to rootfs /tmp
+    /// 5. Executes the script via the isolation context
+    /// 6. Returns an error if the process fails or exits without status
     ///
     /// In dry-run mode, skips file I/O (rootfs validation, script copy/write,
     /// permission changes, cleanup) while still constructing and delegating
@@ -290,45 +241,14 @@ impl ShellTask {
         let target_script = rootfs.join("tmp").join(&script_name);
 
         // RAII guard ensures cleanup even on error
-        let _guard = ScriptGuard::new(target_script.clone(), dry_run);
+        let _guard = TempFileGuard::new(target_script.clone(), dry_run);
 
         if !dry_run {
             // Re-validate /tmp immediately before use to mitigate TOCTOU race conditions
-            Self::validate_tmp_directory(rootfs)
+            super::validate_tmp_directory(rootfs)
                 .context("TOCTOU check: /tmp validation failed before writing script")?;
 
-            // Copy or write script to rootfs based on source type
-            match &self.source {
-                ScriptSource::Script(script_path) => {
-                    // External script: copy to rootfs
-                    info!("copying script from {} to rootfs", script_path);
-                    fs::copy(script_path, &target_script).with_context(|| {
-                        format!("failed to copy script {} to {}", script_path, target_script)
-                    })?;
-                }
-                ScriptSource::Content(content) => {
-                    // Inline script: write to rootfs
-                    info!("writing inline script to rootfs");
-                    fs::write(&target_script, content).with_context(|| {
-                        format!("failed to write inline script to {}", target_script)
-                    })?;
-                }
-            }
-
-            // Make script executable
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = fs::metadata(&target_script)
-                    .with_context(|| {
-                        format!("failed to read metadata for script {}", target_script)
-                    })?
-                    .permissions();
-                perms.set_mode(0o700);
-                fs::set_permissions(&target_script, perms).with_context(|| {
-                    format!("failed to set execute permission on script {}", target_script)
-                })?;
-            }
+            super::prepare_source_file(&self.source, &target_script, 0o700, "script")?;
         }
 
         // Execute script using the configured isolation backend
@@ -336,9 +256,13 @@ impl ShellTask {
         let command: Vec<OsString> =
             vec![self.shell.as_str().into(), script_path_in_isolation.into()];
 
-        let result = context
-            .execute(&command)
-            .context("failed to execute script")?;
+        let result =
+            context
+                .execute(&command)
+                .map_err(|e| match e.downcast::<RsdebstrapError>() {
+                    Ok(typed) => typed.into(),
+                    Err(e) => e.context("failed to execute script"),
+                })?;
 
         if !result.success() {
             let status_display = result
@@ -352,66 +276,21 @@ impl ShellTask {
             )
             .into());
         } else if !dry_run && result.status.is_none() {
-            tracing::warn!(
-                "command returned no exit status in non-dry-run mode; \
-                this may indicate an executor implementation bug"
-            );
+            return Err(RsdebstrapError::execution_in_isolation(
+                &command,
+                context.name(),
+                "process exited without status (possibly killed by signal)",
+            )
+            .into());
         }
 
         info!("shell script completed successfully");
         Ok(())
     }
 
-    /// Validates that /tmp exists as a real directory (not a symlink).
-    ///
-    /// This is a security-critical check to prevent attackers from using symlinks
-    /// to write files outside the chroot.
-    fn validate_tmp_directory(rootfs: &Utf8Path) -> Result<()> {
-        let tmp_dir = rootfs.join("tmp");
-        let metadata = match std::fs::symlink_metadata(&tmp_dir) {
-            Ok(metadata) => metadata,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(RsdebstrapError::Validation(format!(
-                    "/tmp directory not found in rootfs at {}. \
-                    The rootfs may not be properly bootstrapped.",
-                    tmp_dir
-                ))
-                .into());
-            }
-            Err(e) => {
-                return Err(RsdebstrapError::io(
-                    format!("failed to read /tmp metadata at {}", tmp_dir),
-                    e,
-                )
-                .into());
-            }
-        };
-
-        if metadata.file_type().is_symlink() {
-            return Err(RsdebstrapError::Validation(
-                "/tmp in rootfs is a symlink, which is not allowed for security reasons. \
-                An attacker could use this to write files outside the chroot."
-                    .to_string(),
-            )
-            .into());
-        }
-
-        if !metadata.file_type().is_dir() {
-            return Err(RsdebstrapError::Validation(format!(
-                "/tmp in rootfs is not a directory: {}. \
-                The rootfs may not be properly bootstrapped.",
-                tmp_dir
-            ))
-            .into());
-        }
-
-        Ok(())
-    }
-
     /// Validates that the rootfs is ready for isolated command execution.
     fn validate_rootfs(&self, rootfs: &Utf8Path) -> Result<()> {
-        // Check if /tmp directory exists and is a real directory (not a symlink)
-        Self::validate_tmp_directory(rootfs)?;
+        super::validate_tmp_directory(rootfs)?;
 
         // Validate shell path to prevent path traversal attacks
         let shell_path = self.shell.trim_start_matches('/');
@@ -467,87 +346,5 @@ impl ShellTask {
         }
 
         Ok(())
-    }
-}
-
-/// RAII guard to ensure script cleanup even on error
-struct ScriptGuard {
-    path: Utf8PathBuf,
-    dry_run: bool,
-}
-
-impl ScriptGuard {
-    fn new(path: Utf8PathBuf, dry_run: bool) -> Self {
-        Self { path, dry_run }
-    }
-}
-
-impl Drop for ScriptGuard {
-    fn drop(&mut self) {
-        if !self.dry_run {
-            match fs::remove_file(&self.path) {
-                Ok(()) => tracing::debug!("cleaned up script: {}", self.path),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    tracing::debug!("script already removed: {}", self.path);
-                }
-                Err(e) => {
-                    tracing::error!("failed to cleanup script {}: {}", self.path, e);
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_script_guard_removes_file_on_drop() {
-        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-        let script_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("test_script.sh"))
-            .expect("path should be valid UTF-8");
-
-        // Create the file
-        fs::write(&script_path, "#!/bin/sh\n").expect("failed to write script");
-        assert!(script_path.exists(), "script should exist before drop");
-
-        // Drop the guard — should remove the file
-        {
-            let _guard = ScriptGuard::new(script_path.clone(), false);
-        }
-
-        assert!(!script_path.exists(), "script should be removed after drop");
-    }
-
-    #[test]
-    fn test_script_guard_handles_already_removed_file() {
-        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-        let script_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("nonexistent.sh"))
-            .expect("path should be valid UTF-8");
-
-        // File does not exist — drop should not panic
-        {
-            let _guard = ScriptGuard::new(script_path.clone(), false);
-        }
-        // If we get here, no panic occurred
-    }
-
-    #[test]
-    fn test_script_guard_skips_removal_in_dry_run() {
-        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-        let script_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("dry_run_script.sh"))
-            .expect("path should be valid UTF-8");
-
-        // Create the file
-        fs::write(&script_path, "#!/bin/sh\n").expect("failed to write script");
-        assert!(script_path.exists(), "script should exist before drop");
-
-        // Drop the guard with dry_run=true — should NOT remove the file
-        {
-            let _guard = ScriptGuard::new(script_path.clone(), true);
-        }
-
-        assert!(script_path.exists(), "script should still exist after dry_run drop");
     }
 }

@@ -1,0 +1,30 @@
+---
+# Example profile for Debian Trixie with mitamae provisioning
+# This demonstrates using mitamae as a provisioner to configure
+# the system after bootstrap
+
+dir: /tmp/debian-trixie-mitamae
+
+# Isolation backend for running commands in rootfs
+isolation:
+  type: chroot
+
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+  mirrors:
+  - https://deb.debian.org/debian
+  variant: apt
+  components:
+  - main
+  architectures:
+  - amd64
+
+provisioners:
+- type: mitamae
+  binary: /usr/local/bin/mitamae
+  content: |-
+    package 'vim' do
+      action :install
+    end

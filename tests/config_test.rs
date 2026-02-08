@@ -834,6 +834,7 @@ fn test_load_profile_with_pre_processors() -> Result<()> {
         TaskDefinition::Shell(task) => {
             assert_eq!(task.name(), "<inline>");
         }
+        other => panic!("Expected Shell task, got: {:?}", other),
     }
 
     Ok(())
@@ -865,6 +866,7 @@ fn test_load_profile_with_post_processors() -> Result<()> {
         TaskDefinition::Shell(task) => {
             assert_eq!(task.name(), "<inline>");
         }
+        other => panic!("Expected Shell task, got: {:?}", other),
     }
 
     Ok(())
@@ -1054,6 +1056,141 @@ fn test_load_profile_resolves_post_processor_script_path() -> Result<()> {
         }
         _ => panic!("expected one shell post_processor"),
     }
+
+    Ok(())
+}
+
+// =============================================================================
+// MitamaeTask integration tests
+// =============================================================================
+
+#[test]
+fn test_load_profile_resolves_mitamae_binary_relative_to_profile_dir() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let bin_dir = temp_dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let binary_path = bin_dir.join("mitamae");
+    std::fs::write(&binary_path, "fake mitamae binary")?;
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: mitamae
+    binary: bin/mitamae
+    content: "package 'vim'"
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match profile.provisioners.as_slice() {
+        [TaskDefinition::Mitamae(mitamae)] => {
+            assert_eq!(
+                mitamae.binary().canonicalize_utf8()?,
+                Utf8PathBuf::from_path_buf(binary_path.canonicalize()?).unwrap()
+            );
+        }
+        _ => panic!("expected one mitamae task"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_resolves_mitamae_recipe_relative_to_profile_dir() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let bin_dir = temp_dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let binary_path = bin_dir.join("mitamae");
+    std::fs::write(&binary_path, "fake mitamae binary")?;
+    let recipes_dir = temp_dir.path().join("recipes");
+    std::fs::create_dir_all(&recipes_dir)?;
+    let recipe_path = recipes_dir.join("default.rb");
+    std::fs::write(&recipe_path, "package 'vim'\n")?;
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: mitamae
+    binary: bin/mitamae
+    script: recipes/default.rb
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match profile.provisioners.as_slice() {
+        [TaskDefinition::Mitamae(mitamae)] => {
+            assert_eq!(
+                mitamae.script_path().unwrap().canonicalize_utf8()?,
+                Utf8PathBuf::from_path_buf(recipe_path.canonicalize()?).unwrap()
+            );
+            assert_eq!(
+                mitamae.binary().canonicalize_utf8()?,
+                Utf8PathBuf::from_path_buf(binary_path.canonicalize()?).unwrap()
+            );
+        }
+        _ => panic!("expected one mitamae task"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_mitamae_task_validation_requires_binary_file() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: mitamae
+    binary: bin/nonexistent_mitamae
+    content: "package 'vim'"
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    assert!(profile.validate().is_err());
 
     Ok(())
 }

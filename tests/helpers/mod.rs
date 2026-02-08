@@ -1,17 +1,25 @@
+#![allow(dead_code)]
+
+use std::cell::RefCell;
+use std::ffi::OsString;
+use std::io::Write;
+use std::os::unix::process::ExitStatusExt;
+use std::process::ExitStatus;
+use std::sync::{LazyLock, Mutex};
+
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::bootstrap::debootstrap::{self, DebootstrapConfig};
 use rsdebstrap::bootstrap::mmdebstrap::{self, MmdebstrapConfig};
 use rsdebstrap::config::{Bootstrap, Profile, load_profile};
-use std::io::Write;
-use std::sync::{LazyLock, Mutex};
+use rsdebstrap::executor::ExecutionResult;
+use rsdebstrap::isolation::IsolationContext;
 use tempfile::NamedTempFile;
 use tracing::warn;
 
 /// Global mutex to serialize tests that modify the current working directory.
 /// This prevents parallel tests from interfering with each other.
-#[allow(dead_code)]
 pub static CWD_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[macro_export]
@@ -21,7 +29,6 @@ macro_rules! yaml {
     };
 }
 
-#[allow(dead_code)]
 pub fn dedent(input: &str) -> String {
     let mut lines: Vec<&str> = input.lines().collect();
     while matches!(lines.first(), Some(line) if line.trim().is_empty()) {
@@ -59,43 +66,10 @@ pub fn dedent(input: &str) -> String {
     out
 }
 
-/// Minimal mmdebstrap profile YAML fixture (for future tests).
-#[allow(dead_code)]
-pub fn yaml_profile_mmdebstrap_minimal() -> String {
-    // editorconfig-checker-disable
-    dedent(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs.tar.zst
-"#,
-    )
-    // editorconfig-checker-enable
-}
-
-/// Minimal debootstrap profile YAML fixture (for future tests).
-#[allow(dead_code)]
-pub fn yaml_profile_debootstrap_minimal() -> String {
-    // editorconfig-checker-disable
-    dedent(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: debootstrap
-  suite: bookworm
-  target: rootfs
-"#,
-    )
-    // editorconfig-checker-enable
-}
-
 /// Builder for constructing `MmdebstrapConfig` in tests.
 ///
 /// Provides a fluent API to set only the fields that differ from defaults,
 /// reducing boilerplate in test code.
-#[allow(dead_code)]
 pub struct MmdebstrapConfigBuilder {
     suite: String,
     target: String,
@@ -115,7 +89,6 @@ pub struct MmdebstrapConfigBuilder {
     mirrors: Vec<String>,
 }
 
-#[allow(dead_code)]
 impl MmdebstrapConfigBuilder {
     pub fn new(suite: impl Into<String>, target: impl Into<String>) -> Self {
         Self {
@@ -277,7 +250,6 @@ impl MmdebstrapConfigBuilder {
 /// Test helper to create a MmdebstrapConfig with minimal required fields.
 ///
 /// All optional fields are initialized with their default values.
-#[allow(dead_code)]
 pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) -> MmdebstrapConfig {
     MmdebstrapConfigBuilder::new(suite, target).build()
 }
@@ -286,7 +258,6 @@ pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) ->
 ///
 /// Provides a fluent API to set only the fields that differ from defaults,
 /// reducing boilerplate in test code.
-#[allow(dead_code)]
 pub struct DebootstrapConfigBuilder {
     suite: String,
     target: String,
@@ -303,7 +274,6 @@ pub struct DebootstrapConfigBuilder {
     print_debs: bool,
 }
 
-#[allow(dead_code)]
 impl DebootstrapConfigBuilder {
     pub fn new(suite: impl Into<String>, target: impl Into<String>) -> Self {
         Self {
@@ -412,7 +382,6 @@ impl DebootstrapConfigBuilder {
 /// Test helper to create a DebootstrapConfig with minimal required fields.
 ///
 /// All optional fields are initialized with their default values.
-#[allow(dead_code)]
 pub fn create_debootstrap(
     suite: impl Into<String>,
     target: impl Into<String>,
@@ -421,7 +390,6 @@ pub fn create_debootstrap(
 }
 
 /// Extracts MmdebstrapConfig from a Profile, returning `None` if it's not the mmdebstrap backend.
-#[allow(dead_code)]
 pub fn get_mmdebstrap_config(profile: &Profile) -> Option<&MmdebstrapConfig> {
     match &profile.bootstrap {
         Bootstrap::Mmdebstrap(cfg) => Some(cfg),
@@ -430,7 +398,6 @@ pub fn get_mmdebstrap_config(profile: &Profile) -> Option<&MmdebstrapConfig> {
 }
 
 /// Extracts DebootstrapConfig from a Profile, returning `None` if it's not the debootstrap backend.
-#[allow(dead_code)]
 pub fn get_debootstrap_config(profile: &Profile) -> Option<&DebootstrapConfig> {
     match &profile.bootstrap {
         Bootstrap::Debootstrap(cfg) => Some(cfg),
@@ -439,7 +406,6 @@ pub fn get_debootstrap_config(profile: &Profile) -> Option<&DebootstrapConfig> {
 }
 
 /// Loads a Profile from YAML content in a temporary file.
-#[allow(dead_code)]
 pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
     let yaml = yaml.as_ref();
     let mut file = NamedTempFile::new()?;
@@ -452,7 +418,6 @@ pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
 }
 
 /// Loads a Profile from YAML content, returning typed `RsdebstrapError`.
-#[allow(dead_code)]
 pub fn load_profile_from_yaml_typed(
     yaml: impl AsRef<str>,
 ) -> std::result::Result<Profile, RsdebstrapError> {
@@ -471,12 +436,10 @@ pub fn load_profile_from_yaml_typed(
 ///
 /// This guard saves the current directory on creation and automatically
 /// restores it when it goes out of scope, even if a panic occurs.
-#[allow(dead_code)]
 pub struct CwdGuard {
     original: Utf8PathBuf,
 }
 
-#[allow(dead_code)]
 impl CwdGuard {
     /// Creates a new CwdGuard, saving the current working directory.
     ///
@@ -510,5 +473,125 @@ impl Drop for CwdGuard {
                 "failed to restore working directory"
             );
         }
+    }
+}
+
+/// Mock isolation context for testing task execution.
+pub struct MockContext {
+    rootfs: Utf8PathBuf,
+    dry_run: bool,
+    should_fail: bool,
+    exit_code: Option<i32>,
+    should_error: bool,
+    error_message: Option<String>,
+    executed_commands: RefCell<Vec<Vec<OsString>>>,
+    return_no_status: bool,
+}
+
+impl MockContext {
+    pub fn new(rootfs: &Utf8Path) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: false,
+            should_fail: false,
+            exit_code: None,
+            should_error: false,
+            error_message: None,
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
+        }
+    }
+
+    pub fn new_dry_run(rootfs: &Utf8Path) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: true,
+            should_fail: false,
+            exit_code: None,
+            should_error: false,
+            error_message: None,
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
+        }
+    }
+
+    pub fn with_failure(rootfs: &Utf8Path, exit_code: i32) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: false,
+            should_fail: true,
+            exit_code: Some(exit_code),
+            should_error: false,
+            error_message: None,
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
+        }
+    }
+
+    pub fn with_error(rootfs: &Utf8Path, message: &str) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: false,
+            should_fail: false,
+            exit_code: None,
+            should_error: true,
+            error_message: Some(message.to_string()),
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
+        }
+    }
+
+    pub fn with_no_status(rootfs: &Utf8Path) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: false,
+            should_fail: false,
+            exit_code: None,
+            should_error: false,
+            error_message: None,
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: true,
+        }
+    }
+
+    pub fn executed_commands(&self) -> Vec<Vec<OsString>> {
+        self.executed_commands.borrow().clone()
+    }
+}
+
+impl IsolationContext for MockContext {
+    fn name(&self) -> &'static str {
+        "mock"
+    }
+
+    fn rootfs(&self) -> &Utf8Path {
+        &self.rootfs
+    }
+
+    fn dry_run(&self) -> bool {
+        self.dry_run
+    }
+
+    fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+        self.executed_commands.borrow_mut().push(command.to_vec());
+
+        if self.should_error {
+            anyhow::bail!("{}", self.error_message.as_deref().unwrap_or("mock error"));
+        }
+
+        if self.return_no_status {
+            Ok(ExecutionResult { status: None })
+        } else if self.should_fail {
+            let status = Some(ExitStatus::from_raw(self.exit_code.unwrap_or(1) << 8));
+            Ok(ExecutionResult { status })
+        } else {
+            Ok(ExecutionResult {
+                status: Some(ExitStatus::from_raw(0)),
+            })
+        }
+    }
+
+    fn teardown(&mut self) -> Result<()> {
+        Ok(())
     }
 }
