@@ -24,7 +24,7 @@ bootstrap:
 
     assert_eq!(profile.dir, "/tmp/test");
 
-    let cfg = helpers::get_mmdebstrap_config(&profile);
+    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
     assert_eq!(cfg.suite, "bookworm");
     assert_eq!(cfg.target, "rootfs.tar.zst");
     assert_eq!(cfg.mode, mmdebstrap::Mode::Auto);
@@ -83,7 +83,7 @@ bootstrap:
 
     assert_eq!(profile.dir, "/tmp/debian-test");
 
-    let cfg = helpers::get_mmdebstrap_config(&profile);
+    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
     assert_eq!(cfg.suite, "bookworm");
     assert_eq!(cfg.target, "rootfs.tar.zst");
     assert_eq!(cfg.mode, mmdebstrap::Mode::Auto);
@@ -173,7 +173,7 @@ bootstrap:
 
     assert_eq!(profile.dir, "/tmp/debian-mirror-test");
 
-    let cfg = helpers::get_mmdebstrap_config(&profile);
+    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
     assert_eq!(cfg.suite, "bookworm");
     assert_eq!(cfg.target, "rootfs.tar.zst");
     assert_eq!(
@@ -212,7 +212,7 @@ bootstrap:
 
     assert_eq!(profile.dir, "/tmp/debian-debootstrap-test");
 
-    let cfg = helpers::get_debootstrap_config(&profile);
+    let cfg = helpers::get_debootstrap_config(&profile).expect("expected debootstrap config");
     use rsdebstrap::bootstrap::debootstrap::Variant;
 
     assert_eq!(cfg.suite, "trixie");
@@ -621,7 +621,7 @@ bootstrap:
     ))?;
     // editorconfig-checker-enable
 
-    let cfg = helpers::get_mmdebstrap_config(&profile);
+    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
     assert_eq!(cfg.format, Format::TarXz);
 
     Ok(())
@@ -642,7 +642,7 @@ bootstrap:
     ))?;
     // editorconfig-checker-enable
 
-    let cfg = helpers::get_mmdebstrap_config(&profile);
+    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
     assert_eq!(cfg.format, Format::TarGz);
 
     Ok(())
@@ -663,7 +663,7 @@ bootstrap:
     ))?;
     // editorconfig-checker-enable
 
-    let cfg = helpers::get_mmdebstrap_config(&profile);
+    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
     assert_eq!(cfg.format, Format::TarZst);
 
     Ok(())

@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::RsdebstrapError;
-use rsdebstrap::bootstrap::debootstrap::DebootstrapConfig;
-use rsdebstrap::bootstrap::mmdebstrap::MmdebstrapConfig;
+use rsdebstrap::bootstrap::debootstrap::{self, DebootstrapConfig};
+use rsdebstrap::bootstrap::mmdebstrap::{self, MmdebstrapConfig};
 use rsdebstrap::config::{Bootstrap, Profile, load_profile};
 use std::io::Write;
 use std::sync::{LazyLock, Mutex};
@@ -91,28 +91,265 @@ bootstrap:
     // editorconfig-checker-enable
 }
 
+/// Builder for constructing `MmdebstrapConfig` in tests.
+///
+/// Provides a fluent API to set only the fields that differ from defaults,
+/// reducing boilerplate in test code.
+#[allow(dead_code)]
+pub struct MmdebstrapConfigBuilder {
+    suite: String,
+    target: String,
+    mode: mmdebstrap::Mode,
+    format: mmdebstrap::Format,
+    variant: mmdebstrap::Variant,
+    architectures: Vec<String>,
+    components: Vec<String>,
+    include: Vec<String>,
+    keyring: Vec<String>,
+    aptopt: Vec<String>,
+    dpkgopt: Vec<String>,
+    setup_hook: Vec<String>,
+    extract_hook: Vec<String>,
+    essential_hook: Vec<String>,
+    customize_hook: Vec<String>,
+    mirrors: Vec<String>,
+}
+
+#[allow(dead_code)]
+impl MmdebstrapConfigBuilder {
+    pub fn new(suite: impl Into<String>, target: impl Into<String>) -> Self {
+        Self {
+            suite: suite.into(),
+            target: target.into(),
+            mode: Default::default(),
+            format: Default::default(),
+            variant: Default::default(),
+            architectures: Default::default(),
+            components: Default::default(),
+            include: Default::default(),
+            keyring: Default::default(),
+            aptopt: Default::default(),
+            dpkgopt: Default::default(),
+            setup_hook: Default::default(),
+            extract_hook: Default::default(),
+            essential_hook: Default::default(),
+            customize_hook: Default::default(),
+            mirrors: Default::default(),
+        }
+    }
+
+    pub fn mode(mut self, mode: mmdebstrap::Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    pub fn format(mut self, format: mmdebstrap::Format) -> Self {
+        self.format = format;
+        self
+    }
+
+    pub fn variant(mut self, variant: mmdebstrap::Variant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    pub fn architectures(mut self, architectures: Vec<String>) -> Self {
+        self.architectures = architectures;
+        self
+    }
+
+    pub fn components(mut self, components: Vec<String>) -> Self {
+        self.components = components;
+        self
+    }
+
+    pub fn include(mut self, include: Vec<String>) -> Self {
+        self.include = include;
+        self
+    }
+
+    pub fn keyring(mut self, keyring: Vec<String>) -> Self {
+        self.keyring = keyring;
+        self
+    }
+
+    pub fn aptopt(mut self, aptopt: Vec<String>) -> Self {
+        self.aptopt = aptopt;
+        self
+    }
+
+    pub fn dpkgopt(mut self, dpkgopt: Vec<String>) -> Self {
+        self.dpkgopt = dpkgopt;
+        self
+    }
+
+    pub fn setup_hook(mut self, setup_hook: Vec<String>) -> Self {
+        self.setup_hook = setup_hook;
+        self
+    }
+
+    pub fn extract_hook(mut self, extract_hook: Vec<String>) -> Self {
+        self.extract_hook = extract_hook;
+        self
+    }
+
+    pub fn essential_hook(mut self, essential_hook: Vec<String>) -> Self {
+        self.essential_hook = essential_hook;
+        self
+    }
+
+    pub fn customize_hook(mut self, customize_hook: Vec<String>) -> Self {
+        self.customize_hook = customize_hook;
+        self
+    }
+
+    pub fn mirrors(mut self, mirrors: Vec<String>) -> Self {
+        self.mirrors = mirrors;
+        self
+    }
+
+    pub fn build(self) -> MmdebstrapConfig {
+        MmdebstrapConfig {
+            suite: self.suite,
+            target: self.target,
+            mode: self.mode,
+            format: self.format,
+            variant: self.variant,
+            architectures: self.architectures,
+            components: self.components,
+            include: self.include,
+            keyring: self.keyring,
+            aptopt: self.aptopt,
+            dpkgopt: self.dpkgopt,
+            setup_hook: self.setup_hook,
+            extract_hook: self.extract_hook,
+            essential_hook: self.essential_hook,
+            customize_hook: self.customize_hook,
+            mirrors: self.mirrors,
+        }
+    }
+}
+
 /// Test helper to create a MmdebstrapConfig with minimal required fields.
 ///
 /// All optional fields are initialized with their default values.
 #[allow(dead_code)]
 pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) -> MmdebstrapConfig {
-    MmdebstrapConfig {
-        suite: suite.into(),
-        target: target.into(),
-        mode: Default::default(),
-        format: Default::default(),
-        variant: Default::default(),
-        architectures: Default::default(),
-        components: Default::default(),
-        include: Default::default(),
-        keyring: Default::default(),
-        aptopt: Default::default(),
-        dpkgopt: Default::default(),
-        setup_hook: Default::default(),
-        extract_hook: Default::default(),
-        essential_hook: Default::default(),
-        customize_hook: Default::default(),
-        mirrors: Default::default(),
+    MmdebstrapConfigBuilder::new(suite, target).build()
+}
+
+/// Builder for constructing `DebootstrapConfig` in tests.
+///
+/// Provides a fluent API to set only the fields that differ from defaults,
+/// reducing boilerplate in test code.
+#[allow(dead_code)]
+pub struct DebootstrapConfigBuilder {
+    suite: String,
+    target: String,
+    variant: debootstrap::Variant,
+    arch: Option<String>,
+    components: Vec<String>,
+    include: Vec<String>,
+    exclude: Vec<String>,
+    mirror: Option<String>,
+    foreign: bool,
+    merged_usr: Option<bool>,
+    no_resolve_deps: bool,
+    verbose: bool,
+    print_debs: bool,
+}
+
+#[allow(dead_code)]
+impl DebootstrapConfigBuilder {
+    pub fn new(suite: impl Into<String>, target: impl Into<String>) -> Self {
+        Self {
+            suite: suite.into(),
+            target: target.into(),
+            variant: Default::default(),
+            arch: Default::default(),
+            components: Default::default(),
+            include: Default::default(),
+            exclude: Default::default(),
+            mirror: Default::default(),
+            foreign: Default::default(),
+            merged_usr: Default::default(),
+            no_resolve_deps: Default::default(),
+            verbose: Default::default(),
+            print_debs: Default::default(),
+        }
+    }
+
+    pub fn variant(mut self, variant: debootstrap::Variant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    pub fn arch(mut self, arch: impl Into<String>) -> Self {
+        self.arch = Some(arch.into());
+        self
+    }
+
+    pub fn components(mut self, components: Vec<String>) -> Self {
+        self.components = components;
+        self
+    }
+
+    pub fn include(mut self, include: Vec<String>) -> Self {
+        self.include = include;
+        self
+    }
+
+    pub fn exclude(mut self, exclude: Vec<String>) -> Self {
+        self.exclude = exclude;
+        self
+    }
+
+    pub fn mirror(mut self, mirror: impl Into<String>) -> Self {
+        self.mirror = Some(mirror.into());
+        self
+    }
+
+    pub fn foreign(mut self, foreign: bool) -> Self {
+        self.foreign = foreign;
+        self
+    }
+
+    pub fn merged_usr(mut self, merged_usr: bool) -> Self {
+        self.merged_usr = Some(merged_usr);
+        self
+    }
+
+    pub fn no_resolve_deps(mut self, no_resolve_deps: bool) -> Self {
+        self.no_resolve_deps = no_resolve_deps;
+        self
+    }
+
+    pub fn verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
+    }
+
+    pub fn print_debs(mut self, print_debs: bool) -> Self {
+        self.print_debs = print_debs;
+        self
+    }
+
+    pub fn build(self) -> DebootstrapConfig {
+        DebootstrapConfig {
+            suite: self.suite,
+            target: self.target,
+            variant: self.variant,
+            arch: self.arch,
+            components: self.components,
+            include: self.include,
+            exclude: self.exclude,
+            mirror: self.mirror,
+            foreign: self.foreign,
+            merged_usr: self.merged_usr,
+            no_resolve_deps: self.no_resolve_deps,
+            verbose: self.verbose,
+            print_debs: self.print_debs,
+        }
     }
 }
 
@@ -124,46 +361,24 @@ pub fn create_debootstrap(
     suite: impl Into<String>,
     target: impl Into<String>,
 ) -> DebootstrapConfig {
-    DebootstrapConfig {
-        suite: suite.into(),
-        target: target.into(),
-        variant: Default::default(),
-        arch: Default::default(),
-        components: Default::default(),
-        include: Default::default(),
-        exclude: Default::default(),
-        mirror: Default::default(),
-        foreign: Default::default(),
-        merged_usr: Default::default(),
-        no_resolve_deps: Default::default(),
-        verbose: Default::default(),
-        print_debs: Default::default(),
+    DebootstrapConfigBuilder::new(suite, target).build()
+}
+
+/// Extracts MmdebstrapConfig from a Profile, returning `None` if it's not the mmdebstrap backend.
+#[allow(dead_code)]
+pub fn get_mmdebstrap_config(profile: &Profile) -> Option<&MmdebstrapConfig> {
+    match &profile.bootstrap {
+        Bootstrap::Mmdebstrap(cfg) => Some(cfg),
+        _ => None,
     }
 }
 
-/// Extracts MmdebstrapConfig from a Profile, panicking if it's not the mmdebstrap backend.
-///
-/// # Panics
-/// Panics if the profile's bootstrap type is not mmdebstrap.
+/// Extracts DebootstrapConfig from a Profile, returning `None` if it's not the debootstrap backend.
 #[allow(dead_code)]
-pub fn get_mmdebstrap_config(profile: &Profile) -> &MmdebstrapConfig {
-    if let Bootstrap::Mmdebstrap(cfg) = &profile.bootstrap {
-        cfg
-    } else {
-        panic!("Expected mmdebstrap bootstrap type");
-    }
-}
-
-/// Extracts DebootstrapConfig from a Profile, panicking if it's not the debootstrap backend.
-///
-/// # Panics
-/// Panics if the profile's bootstrap type is not debootstrap.
-#[allow(dead_code)]
-pub fn get_debootstrap_config(profile: &Profile) -> &DebootstrapConfig {
-    if let Bootstrap::Debootstrap(cfg) = &profile.bootstrap {
-        cfg
-    } else {
-        panic!("Expected debootstrap bootstrap type");
+pub fn get_debootstrap_config(profile: &Profile) -> Option<&DebootstrapConfig> {
+    match &profile.bootstrap {
+        Bootstrap::Debootstrap(cfg) => Some(cfg),
+        _ => None,
     }
 }
 

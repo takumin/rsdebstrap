@@ -88,23 +88,16 @@ fn test_build_mmdebstrap_args_with_mirrors() -> Result<()> {
 
 #[test]
 fn test_build_debootstrap_args() -> Result<()> {
-    use rsdebstrap::bootstrap::debootstrap::{DebootstrapConfig, Variant};
+    use rsdebstrap::bootstrap::debootstrap::Variant;
 
-    let config = DebootstrapConfig {
-        suite: "trixie".to_string(),
-        target: "rootfs".to_string(),
-        variant: Variant::Minbase,
-        arch: Some("amd64".to_string()),
-        components: vec!["main".to_string(), "contrib".to_string()],
-        include: vec!["curl".to_string()],
-        exclude: vec![],
-        mirror: Some("https://deb.debian.org/debian".to_string()),
-        foreign: false,
-        merged_usr: Some(true),
-        no_resolve_deps: false,
-        verbose: false,
-        print_debs: false,
-    };
+    let config = helpers::DebootstrapConfigBuilder::new("trixie", "rootfs")
+        .variant(Variant::Minbase)
+        .arch("amd64")
+        .components(vec!["main".to_string(), "contrib".to_string()])
+        .include(vec!["curl".to_string()])
+        .mirror("https://deb.debian.org/debian")
+        .merged_usr(true)
+        .build();
     let dir = Utf8PathBuf::from("/tmp/test-debootstrap");
 
     let args = config.build_args(&dir)?;
@@ -136,24 +129,11 @@ fn test_build_debootstrap_args() -> Result<()> {
 fn test_build_mmdebstrap_args_with_non_default_values() -> Result<()> {
     use rsdebstrap::bootstrap::mmdebstrap::{Format, Mode, Variant};
 
-    let config = MmdebstrapConfig {
-        suite: "bookworm".to_string(),
-        target: "rootfs.tar.zst".to_string(),
-        mode: Mode::Sudo,
-        format: Format::TarZst,
-        variant: Variant::Apt,
-        architectures: vec![],
-        components: vec![],
-        include: vec![],
-        keyring: vec![],
-        aptopt: vec![],
-        dpkgopt: vec![],
-        setup_hook: vec![],
-        extract_hook: vec![],
-        essential_hook: vec![],
-        customize_hook: vec![],
-        mirrors: vec![],
-    };
+    let config = helpers::MmdebstrapConfigBuilder::new("bookworm", "rootfs.tar.zst")
+        .mode(Mode::Sudo)
+        .format(Format::TarZst)
+        .variant(Variant::Apt)
+        .build();
     let dir = Utf8PathBuf::from("/tmp/test");
 
     let args = config.build_args(&dir)?;
@@ -183,23 +163,11 @@ fn test_build_mmdebstrap_args_with_non_default_values() -> Result<()> {
 
 #[test]
 fn test_build_debootstrap_args_with_non_default_variant() -> Result<()> {
-    use rsdebstrap::bootstrap::debootstrap::{DebootstrapConfig, Variant};
+    use rsdebstrap::bootstrap::debootstrap::Variant;
 
-    let config = DebootstrapConfig {
-        suite: "bookworm".to_string(),
-        target: "rootfs".to_string(),
-        variant: Variant::Buildd,
-        arch: None,
-        components: vec![],
-        include: vec![],
-        exclude: vec![],
-        mirror: None,
-        foreign: false,
-        merged_usr: None,
-        no_resolve_deps: false,
-        verbose: false,
-        print_debs: false,
-    };
+    let config = helpers::DebootstrapConfigBuilder::new("bookworm", "rootfs")
+        .variant(Variant::Buildd)
+        .build();
     let dir = Utf8PathBuf::from("/tmp/test");
 
     let args = config.build_args(&dir)?;
