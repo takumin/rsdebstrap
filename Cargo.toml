@@ -24,6 +24,7 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 uuid = { version = "1.9", features = ["v4"] }
 which = "8.0.0"
+url = "2.5.8"
 
 [dev-dependencies]
 tempfile = "=3.24.0"

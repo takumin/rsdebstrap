@@ -53,6 +53,9 @@ impl CommandArgsBuilder {
 
     /// Append a flag with comma-joined values if the list is non-empty.
     pub fn push_comma_joined(&mut self, flag: &str, values: &[String], style: FlagValueStyle) {
+        if values.is_empty() {
+            return;
+        }
         self.push_flag_value(flag, &values.join(","), style);
     }
 
@@ -79,5 +82,17 @@ impl CommandArgsBuilder {
     /// Return the collected arguments.
     pub fn into_args(self) -> Vec<OsString> {
         self.args
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_comma_joined_empty_list_adds_nothing() {
+        let mut builder = CommandArgsBuilder::new();
+        builder.push_comma_joined("--include", &[], FlagValueStyle::Equals);
+        assert!(builder.into_args().is_empty());
     }
 }
