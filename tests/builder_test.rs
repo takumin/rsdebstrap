@@ -9,9 +9,9 @@ use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
 #[test]
 fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
     let config = MmdebstrapConfig {
-        components: vec!["main".to_string(), "contrib".to_string()],
-        architectures: vec!["amd64".to_string()],
-        include: vec!["curl".to_string(), "ca-certificates".to_string()],
+        components: vec!["main".into(), "contrib".into()],
+        architectures: vec!["amd64".into()],
+        include: vec!["curl".into(), "ca-certificates".into()],
         ..helpers::create_mmdebstrap("bookworm", "rootfs.tar.zst")
     };
     let dir = Utf8PathBuf::from("/tmp/test-success");
@@ -30,9 +30,9 @@ fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
 #[test]
 fn test_run_mmdebstrap_with_mock_failure() -> Result<()> {
     let config = MmdebstrapConfig {
-        components: vec!["main".to_string(), "contrib".to_string()],
-        architectures: vec!["amd64".to_string()],
-        include: vec!["curl".to_string(), "ca-certificates".to_string()],
+        components: vec!["main".into(), "contrib".into()],
+        architectures: vec!["amd64".into()],
+        include: vec!["curl".into(), "ca-certificates".into()],
         ..helpers::create_mmdebstrap("bookworm", "rootfs.tar.zst")
     };
     let dir = Utf8PathBuf::from("/tmp/test-failure");
@@ -93,8 +93,8 @@ fn test_build_debootstrap_args() -> Result<()> {
     let config = helpers::DebootstrapConfigBuilder::new("trixie", "rootfs")
         .variant(Variant::Minbase)
         .arch("amd64")
-        .components(vec!["main".to_string(), "contrib".to_string()])
-        .include(vec!["curl".to_string()])
+        .components(["main", "contrib"])
+        .include(["curl"])
         .mirror("https://deb.debian.org/debian")
         .merged_usr(true)
         .build();
