@@ -26,6 +26,7 @@ tasks:
     - task: ghalint-run
     - task: ghalint-act
     - task: zizmor
+    - task: clippy
 
   matrix:
     desc: '{{.TASK}}'
@@ -142,6 +143,21 @@ tasks:
     sources:
     - '.github/**/*.yml'
     - '.github/**/*.yaml'
+    generates:
+    - .task/.done_{{.TASK}}
+    cmds:
+    - task: reviewdog
+      vars:
+        REVIEWDOG_RUNNER: '{{splitList ":" .TASK | last}}'
+    - cmd: touch .task/.done_{{.TASK}}
+      silent: true
+
+  clippy:
+    desc: '{{.TASK}}'
+    deps:
+    - task: tool:aqua:tag:clippy-reviewdog-filter
+    sources:
+    - '**/*.rs'
     generates:
     - .task/.done_{{.TASK}}
     cmds:

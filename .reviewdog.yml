@@ -27,6 +27,9 @@ runner:
   zizmor:
     cmd: zizmor --quiet --no-progress --format=sarif .
     format: sarif
+  clippy:
+    cmd: fd -H -E .git/ -E .task/ -t f -e rs -X cargo clippy --message-format json 2>&1 | clippy-reviewdog-filter
+    format: checkstyle
   hadolint:
     cmd: fd -H -E .git/ -E .task/ -t f -g Dockerfile -X hadolint -f json {} | jq -M -f scripts/reviewdog-hadolint.jq
     format: rdjson
