@@ -38,6 +38,51 @@ where
     }
 }
 
+/// Spawns stdout and stderr reader threads for a child process.
+///
+/// Takes the pipes from the child process and spawns a thread for each.
+/// On failure, cleans up the child process and any already-spawned threads
+/// before returning the error.
+fn spawn_reader_threads(
+    child: &mut Child,
+    spec: &CommandSpec,
+) -> Result<(JoinHandle<()>, JoinHandle<()>)> {
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    let stdout_handle = match thread::Builder::new()
+        .name("stdout-reader".to_string())
+        .spawn(move || read_pipe_to_log(stdout_pipe, StreamType::Stdout))
+    {
+        Ok(handle) => handle,
+        Err(e) => {
+            cleanup_child_process(child, []);
+            return Err(crate::error::RsdebstrapError::execution(
+                spec,
+                format!("failed to spawn stdout reader thread: {}", e),
+            )
+            .into());
+        }
+    };
+
+    let stderr_handle = match thread::Builder::new()
+        .name("stderr-reader".to_string())
+        .spawn(move || read_pipe_to_log(stderr_pipe, StreamType::Stderr))
+    {
+        Ok(handle) => handle,
+        Err(e) => {
+            cleanup_child_process(child, [stdout_handle]);
+            return Err(crate::error::RsdebstrapError::execution(
+                spec,
+                format!("failed to spawn stderr reader thread: {}", e),
+            )
+            .into());
+        }
+    };
+
+    Ok((stdout_handle, stderr_handle))
+}
+
 /// Command executor that runs actual system commands.
 ///
 /// When `dry_run` is true, commands are logged but not executed,
@@ -84,40 +129,7 @@ impl CommandExecutor for RealCommandExecutor {
 
         tracing::trace!("spawned command: {}: pid={}", spec.command, child.id());
 
-        let stdout_pipe = child.stdout.take();
-        let stderr_pipe = child.stderr.take();
-
-        // Read both stdout and stderr in separate threads with panic error propagation
-        let stdout_handle = match thread::Builder::new()
-            .name("stdout-reader".to_string())
-            .spawn(move || read_pipe_to_log(stdout_pipe, StreamType::Stdout))
-        {
-            Ok(handle) => handle,
-            Err(e) => {
-                cleanup_child_process(&mut child, []);
-                return Err(crate::error::RsdebstrapError::execution(
-                    spec,
-                    format!("failed to spawn stdout reader thread: {}", e),
-                )
-                .into());
-            }
-        };
-
-        let stderr_handle = match thread::Builder::new()
-            .name("stderr-reader".to_string())
-            .spawn(move || read_pipe_to_log(stderr_pipe, StreamType::Stderr))
-        {
-            Ok(handle) => handle,
-            Err(e) => {
-                // Clean up by killing the child process and joining the stdout thread
-                cleanup_child_process(&mut child, [stdout_handle]);
-                return Err(crate::error::RsdebstrapError::execution(
-                    spec,
-                    format!("failed to spawn stderr reader thread: {}", e),
-                )
-                .into());
-            }
-        };
+        let (stdout_handle, stderr_handle) = spawn_reader_threads(&mut child, spec)?;
 
         // Wait for the child process to complete
         let status = match child.wait() {

@@ -31,6 +31,43 @@ use crate::error::RsdebstrapError;
 use crate::executor::ExecutionResult;
 use crate::isolation::IsolationContext;
 
+/// Validates that a path contains no `..` components.
+///
+/// Returns `RsdebstrapError::Validation` if any parent directory component is found.
+/// The `label` parameter is used in error messages to describe the path's purpose
+/// (e.g., "shell script", "mitamae binary").
+pub(crate) fn validate_no_parent_dirs(path: &Utf8Path, label: &str) -> Result<(), RsdebstrapError> {
+    if path
+        .components()
+        .any(|c| c == camino::Utf8Component::ParentDir)
+    {
+        return Err(RsdebstrapError::Validation(format!(
+            "{} path '{}' contains '..' components, \
+            which is not allowed for security reasons",
+            label, path
+        )));
+    }
+    Ok(())
+}
+
+/// Validates that a host-side file exists and is a regular file.
+///
+/// Returns `RsdebstrapError::Io` if the file cannot be accessed, or
+/// `RsdebstrapError::Validation` if the path is not a regular file.
+/// The `label` parameter is used in error messages (e.g., "shell script", "mitamae binary").
+pub(crate) fn validate_host_file_exists(
+    path: &Utf8Path,
+    label: &str,
+) -> Result<(), RsdebstrapError> {
+    let metadata = fs::metadata(path).map_err(|e| {
+        RsdebstrapError::io(format!("failed to read {} metadata: {}", label, path), e)
+    })?;
+    if !metadata.is_file() {
+        return Err(RsdebstrapError::Validation(format!("{} is not a file: {}", label, path)));
+    }
+    Ok(())
+}
+
 /// Resolves `script`/`content` mutual exclusivity and builds a [`ScriptSource`].
 ///
 /// Used by task `Deserialize` impls to share the common validation logic:
@@ -82,25 +119,8 @@ impl ScriptSource {
     pub fn validate(&self, label: &str) -> Result<(), RsdebstrapError> {
         match self {
             Self::Script(script) => {
-                if script
-                    .components()
-                    .any(|c| c == camino::Utf8Component::ParentDir)
-                {
-                    return Err(RsdebstrapError::Validation(format!(
-                        "{} path '{}' contains '..' components, \
-                        which is not allowed for security reasons",
-                        label, script
-                    )));
-                }
-                let metadata = fs::metadata(script).map_err(|e| {
-                    RsdebstrapError::io(format!("failed to read {} metadata: {}", label, script), e)
-                })?;
-                if !metadata.is_file() {
-                    return Err(RsdebstrapError::Validation(format!(
-                        "{} is not a file: {}",
-                        label, script
-                    )));
-                }
+                validate_no_parent_dirs(script, label)?;
+                validate_host_file_exists(script, label)?;
                 Ok(())
             }
             Self::Content(content) => {
