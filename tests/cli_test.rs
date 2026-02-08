@@ -9,8 +9,8 @@ fn test_parse_apply_command() -> Result<()> {
 
     match args.command {
         Commands::Apply(opts) => {
-            assert_eq!(opts.file, Utf8PathBuf::from("test.yml"));
-            assert_eq!(opts.log_level, LogLevel::Info);
+            assert_eq!(opts.common.file, Utf8PathBuf::from("test.yml"));
+            assert_eq!(opts.common.log_level, LogLevel::Info);
             assert!(!opts.dry_run);
         }
         _ => panic!("Expected Apply command"),
@@ -33,8 +33,8 @@ fn test_parse_apply_command_with_flags() -> Result<()> {
 
     match args.command {
         Commands::Apply(opts) => {
-            assert_eq!(opts.file, Utf8PathBuf::from("test.yml"));
-            assert_eq!(opts.log_level, LogLevel::Error);
+            assert_eq!(opts.common.file, Utf8PathBuf::from("test.yml"));
+            assert_eq!(opts.common.log_level, LogLevel::Error);
             assert!(opts.dry_run);
         }
         _ => panic!("Expected Apply command"),
@@ -49,7 +49,7 @@ fn test_parse_validate_command() -> Result<()> {
 
     match args.command {
         Commands::Validate(opts) => {
-            assert_eq!(opts.file, Utf8PathBuf::from("test.yml"));
+            assert_eq!(opts.common.file, Utf8PathBuf::from("test.yml"));
         }
         _ => panic!("Expected Validate command"),
     }
