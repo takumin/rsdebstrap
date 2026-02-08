@@ -6,7 +6,6 @@ use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use strum::Display;
-use tracing::debug;
 
 /// Known archive file extensions that indicate non-directory output formats.
 /// Used to detect archive targets when format is set to Auto.
@@ -169,17 +168,9 @@ impl BootstrapBackend for MmdebstrapConfig {
         builder.push_if_not_default("--format", &self.format, FlagValueStyle::Separate);
         builder.push_if_not_default("--variant", &self.variant, FlagValueStyle::Separate);
 
-        builder.push_flag_value(
-            "--architectures",
-            &self.architectures.join(","),
-            FlagValueStyle::Separate,
-        );
-        builder.push_flag_value(
-            "--components",
-            &self.components.join(","),
-            FlagValueStyle::Separate,
-        );
-        builder.push_flag_value("--include", &self.include.join(","), FlagValueStyle::Separate);
+        builder.push_comma_joined("--architectures", &self.architectures, FlagValueStyle::Separate);
+        builder.push_comma_joined("--components", &self.components, FlagValueStyle::Separate);
+        builder.push_comma_joined("--include", &self.include, FlagValueStyle::Separate);
 
         builder.push_flag_values("--keyring", &self.keyring, FlagValueStyle::Separate);
         builder.push_flag_values("--aptopt", &self.aptopt, FlagValueStyle::Separate);
@@ -212,14 +203,7 @@ impl BootstrapBackend for MmdebstrapConfig {
                 .map(|m| m.into()),
         );
 
-        debug!(
-            "mmdebstrap would run: mmdebstrap {}",
-            cmd_args
-                .iter()
-                .map(|s| s.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
+        self.log_command_args(&cmd_args);
 
         Ok(cmd_args)
     }

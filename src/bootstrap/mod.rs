@@ -40,4 +40,16 @@ pub trait BootstrapBackend {
 
     /// Returns the rootfs output classification for pipeline task usage.
     fn rootfs_output(&self, output_dir: &camino::Utf8Path) -> Result<RootfsOutput>;
+
+    /// Logs the final command arguments at debug level.
+    fn log_command_args(&self, args: &[OsString]) {
+        let name = self.command_name();
+        tracing::debug!(
+            "{name} would run: {name} {}",
+            args.iter()
+                .map(|s| s.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
 }
