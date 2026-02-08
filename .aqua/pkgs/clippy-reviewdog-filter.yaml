@@ -1,0 +1,5 @@
+---
+packages:
+- name: qnighy/clippy-reviewdog-filter@v0.1.6
+  tags:
+  - clippy-reviewdog-filter
