@@ -72,6 +72,13 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
 
 ```yaml
 dir: /output/path           # Base output directory
+defaults:                   # Optional default settings
+  isolation:
+    type: chroot            # Isolation backend: chroot (default)
+  mitamae:                  # Optional mitamae defaults
+    binary:
+      x86_64: /path/to/mitamae-x86_64
+      aarch64: /path/to/mitamae-aarch64
 bootstrap:
   type: mmdebstrap          # Backend type: mmdebstrap | debootstrap
   suite: trixie             # Debian suite

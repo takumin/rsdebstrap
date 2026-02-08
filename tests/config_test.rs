@@ -568,8 +568,9 @@ fn test_load_profile_with_explicit_chroot_isolation() -> Result<()> {
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
-isolation:
-  type: chroot
+defaults:
+  isolation:
+    type: chroot
 bootstrap:
   type: mmdebstrap
   suite: bookworm
@@ -580,7 +581,7 @@ bootstrap:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    assert!(matches!(profile.isolation, IsolationConfig::Chroot));
+    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot));
 
     Ok(())
 }
@@ -601,7 +602,7 @@ bootstrap:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    assert!(matches!(profile.isolation, IsolationConfig::Chroot));
+    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot));
 
     Ok(())
 }
@@ -1099,7 +1100,7 @@ provisioners:
     match profile.provisioners.as_slice() {
         [TaskDefinition::Mitamae(mitamae)] => {
             assert_eq!(
-                mitamae.binary().canonicalize_utf8()?,
+                mitamae.binary().unwrap().canonicalize_utf8()?,
                 Utf8PathBuf::from_path_buf(binary_path.canonicalize()?).unwrap()
             );
         }
@@ -1152,7 +1153,7 @@ provisioners:
                 Utf8PathBuf::from_path_buf(recipe_path.canonicalize()?).unwrap()
             );
             assert_eq!(
-                mitamae.binary().canonicalize_utf8()?,
+                mitamae.binary().unwrap().canonicalize_utf8()?,
                 Utf8PathBuf::from_path_buf(binary_path.canonicalize()?).unwrap()
             );
         }
@@ -1344,6 +1345,179 @@ provisioners:
             panic!("Expected RsdebstrapError::Io (preserved through pipeline), got: {:?}", other)
         }
     }
+
+    Ok(())
+}
+
+// =============================================================================
+// MitamaeDefaults tests
+// =============================================================================
+
+#[test]
+fn test_load_profile_mitamae_defaults_binary_resolves_for_current_arch() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let bin_dir = temp_dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+
+    let arch = std::env::consts::ARCH;
+    let binary_name = format!("mitamae-{}", arch);
+    let binary_path = bin_dir.join(&binary_name);
+    std::fs::write(&binary_path, "fake mitamae binary")?;
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        format!(
+            r#"---
+dir: /tmp/test
+defaults:
+  mitamae:
+    binary:
+      {}: bin/{}
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: mitamae
+    content: "package 'vim'"
+"#,
+            arch, binary_name
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match profile.provisioners.as_slice() {
+        [TaskDefinition::Mitamae(mitamae)] => {
+            assert_eq!(
+                mitamae.binary().unwrap().canonicalize_utf8()?,
+                Utf8PathBuf::from_path_buf(binary_path.canonicalize()?).unwrap(),
+                "binary should be resolved from defaults for arch '{}'",
+                arch
+            );
+        }
+        _ => panic!("expected one mitamae task"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_mitamae_task_binary_overrides_defaults() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let bin_dir = temp_dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+
+    let arch = std::env::consts::ARCH;
+    let default_binary = bin_dir.join(format!("mitamae-default-{}", arch));
+    std::fs::write(&default_binary, "default binary")?;
+    let override_binary = bin_dir.join("mitamae-override");
+    std::fs::write(&override_binary, "override binary")?;
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        format!(
+            r#"---
+dir: /tmp/test
+defaults:
+  mitamae:
+    binary:
+      {}: bin/mitamae-default-{}
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: mitamae
+    binary: bin/mitamae-override
+    content: "package 'vim'"
+"#,
+            arch, arch
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match profile.provisioners.as_slice() {
+        [TaskDefinition::Mitamae(mitamae)] => {
+            assert_eq!(
+                mitamae.binary().unwrap().canonicalize_utf8()?,
+                Utf8PathBuf::from_path_buf(override_binary.canonicalize()?).unwrap(),
+                "task-level binary should override defaults"
+            );
+        }
+        _ => panic!("expected one mitamae task"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_mitamae_defaults_no_matching_arch() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+defaults:
+  mitamae:
+    binary:
+      nonexistent_arch: /usr/local/bin/mitamae-nonexistent
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: mitamae
+    content: "package 'vim'"
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match profile.provisioners.as_slice() {
+        [TaskDefinition::Mitamae(mitamae)] => {
+            assert_eq!(
+                mitamae.binary(),
+                None,
+                "binary should remain None when no matching arch in defaults"
+            );
+        }
+        _ => panic!("expected one mitamae task"),
+    }
+
+    // Validation should fail because binary is not set
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains(std::env::consts::ARCH),
+        "Expected architecture '{}' in error, got: {}",
+        std::env::consts::ARCH,
+        msg
+    );
 
     Ok(())
 }

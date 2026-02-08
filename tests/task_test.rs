@@ -376,7 +376,7 @@ content: |
         serde_yaml::from_str(yaml).expect("should parse mitamae with content");
     match &task {
         TaskDefinition::Mitamae(m) => {
-            assert_eq!(m.binary().as_str(), "/usr/local/bin/mitamae");
+            assert_eq!(m.binary().unwrap().as_str(), "/usr/local/bin/mitamae");
             assert!(matches!(m.source(), ScriptSource::Content(_)));
         }
         other => panic!("Expected Mitamae task, got: {:?}", other),
@@ -395,7 +395,7 @@ script: ./recipe.rb
         serde_yaml::from_str(yaml).expect("should parse mitamae with script");
     match &task {
         TaskDefinition::Mitamae(m) => {
-            assert_eq!(m.binary().as_str(), "/usr/local/bin/mitamae");
+            assert_eq!(m.binary().unwrap().as_str(), "/usr/local/bin/mitamae");
             assert_eq!(m.script_path(), Some(Utf8Path::new("./recipe.rb")));
         }
         other => panic!("Expected Mitamae task, got: {:?}", other),
@@ -403,20 +403,21 @@ script: ./recipe.rb
 }
 
 #[test]
-fn test_task_definition_deserialize_mitamae_rejects_missing_binary() {
+fn test_task_definition_deserialize_mitamae_without_binary() {
     // editorconfig-checker-disable
     let yaml = r#"type: mitamae
 content: echo test
 "#;
     // editorconfig-checker-enable
-    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("binary"),
-        "Expected error about missing 'binary' field, got: {}",
-        err_msg
-    );
+    let task: TaskDefinition =
+        serde_yaml::from_str(yaml).expect("should parse mitamae without binary");
+    match &task {
+        TaskDefinition::Mitamae(m) => {
+            assert_eq!(m.binary(), None, "binary should be None when not specified");
+            assert!(matches!(m.source(), ScriptSource::Content(_)));
+        }
+        other => panic!("Expected Mitamae task, got: {:?}", other),
+    }
 }
 
 #[test]
@@ -591,7 +592,7 @@ fn test_mitamae_resolve_paths_resolves_binary_and_recipe() {
     let mut task =
         MitamaeTask::new(ScriptSource::Script("recipes/default.rb".into()), "bin/mitamae".into());
     task.resolve_paths(Utf8Path::new("/home/user/project"));
-    assert_eq!(task.binary().as_str(), "/home/user/project/bin/mitamae");
+    assert_eq!(task.binary().unwrap().as_str(), "/home/user/project/bin/mitamae");
     assert_eq!(task.script_path().unwrap().as_str(), "/home/user/project/recipes/default.rb");
 }
 
@@ -602,7 +603,7 @@ fn test_mitamae_resolve_paths_preserves_absolute() {
         "/usr/local/bin/mitamae".into(),
     );
     task.resolve_paths(Utf8Path::new("/home/user/project"));
-    assert_eq!(task.binary().as_str(), "/usr/local/bin/mitamae");
+    assert_eq!(task.binary().unwrap().as_str(), "/usr/local/bin/mitamae");
     assert_eq!(task.script_path().unwrap().as_str(), "/abs/recipe.rb");
 }
 
@@ -723,4 +724,67 @@ fn test_script_source_validate_accepts_valid_script() {
 fn test_script_source_validate_accepts_valid_content() {
     let source = ScriptSource::Content("echo test".to_string());
     assert!(source.validate("test script").is_ok());
+}
+
+// =============================================================================
+// MitamaeTask binary Option tests
+// =============================================================================
+
+#[test]
+fn test_mitamae_validate_rejects_none_binary() {
+    let task = MitamaeTask::new_without_binary(ScriptSource::Content("package 'vim'".to_string()));
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    let msg = err.to_string();
+    assert!(msg.contains("not specified"), "Expected 'not specified' in error, got: {}", msg);
+    assert!(
+        msg.contains(std::env::consts::ARCH),
+        "Expected architecture '{}' in error, got: {}",
+        std::env::consts::ARCH,
+        msg
+    );
+}
+
+#[test]
+fn test_mitamae_set_binary_if_absent() {
+    let mut task =
+        MitamaeTask::new_without_binary(ScriptSource::Content("package 'vim'".to_string()));
+    assert_eq!(task.binary(), None);
+    task.set_binary_if_absent("/usr/local/bin/mitamae".into());
+    assert_eq!(task.binary(), Some(Utf8Path::new("/usr/local/bin/mitamae")));
+}
+
+#[test]
+fn test_mitamae_set_binary_if_absent_does_not_override() {
+    let mut task = MitamaeTask::new(
+        ScriptSource::Content("package 'vim'".to_string()),
+        "/usr/local/bin/mitamae-task".into(),
+    );
+    task.set_binary_if_absent("/usr/local/bin/mitamae-default".into());
+    assert_eq!(
+        task.binary(),
+        Some(Utf8Path::new("/usr/local/bin/mitamae-task")),
+        "set_binary_if_absent should not override existing binary"
+    );
+}
+
+#[test]
+fn test_mitamae_resolve_paths_with_none_binary() {
+    let mut task =
+        MitamaeTask::new_without_binary(ScriptSource::Script("recipes/default.rb".into()));
+    task.resolve_paths(Utf8Path::new("/home/user/project"));
+    assert_eq!(task.binary(), None);
+    assert_eq!(task.script_path().unwrap().as_str(), "/home/user/project/recipes/default.rb");
+}
+
+#[test]
+fn test_task_definition_binary_path_mitamae_none_when_unset() {
+    let task = TaskDefinition::Mitamae(MitamaeTask::new_without_binary(ScriptSource::Content(
+        "package 'vim'".to_string(),
+    )));
+    assert_eq!(task.binary_path(), None);
 }

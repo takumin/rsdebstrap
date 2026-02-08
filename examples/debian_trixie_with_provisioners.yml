@@ -5,11 +5,14 @@
 
 dir: /tmp/debian-trixie-provisioned
 
-# Isolation backend for running commands in rootfs
-# Currently only 'chroot' is supported, with bwrap/systemd-nspawn planned for future
-# If omitted, defaults to 'chroot'
-isolation:
-  type: chroot
+# Default settings (isolation backend, etc.)
+# If omitted, all fields use their respective defaults
+defaults:
+  # Isolation backend for running commands in rootfs
+  # Currently only 'chroot' is supported, with bwrap/systemd-nspawn planned for future
+  # If omitted, defaults to 'chroot'
+  isolation:
+    type: chroot
 
 bootstrap:
   type: mmdebstrap
