@@ -80,8 +80,9 @@ pub enum Commands {
 pub struct CommonArgs {
     /// Path to the YAML file defining the profile.
     ///
-    /// This file should contain a valid rsdebstrap profile that defines
-    /// how the bootstrap backend should be configured and executed.
+    /// This file should contain a valid rsdebstrap profile. It is used
+    /// by the `apply` command to configure and execute a bootstrap, and by
+    /// the `validate` command to check for syntax and schema correctness.
     #[arg(short, long, default_value = "profile.yaml", value_hint = ValueHint::FilePath)]
     pub file: Utf8PathBuf,
 
