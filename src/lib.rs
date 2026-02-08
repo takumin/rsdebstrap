@@ -13,7 +13,7 @@ use std::fs;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
 use crate::executor::CommandExecutor;
@@ -90,6 +90,10 @@ fn run_pipeline_phase(
 }
 
 pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
+    if opts.dry_run {
+        warn!("DRY-RUN MODE: No changes will be made");
+    }
+
     let profile = config::load_profile(opts.file.as_path())
         .with_context(|| format!("failed to load profile from {}", opts.file))?;
     profile.validate().context("profile validation failed")?;
