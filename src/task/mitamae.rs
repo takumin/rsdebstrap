@@ -150,9 +150,9 @@ impl MitamaeTask {
 
     /// Sets the mitamae binary path if not already set (used for applying defaults).
     /// Does nothing if binary is already set (task-level takes precedence).
-    pub fn set_binary_if_absent(&mut self, binary: Utf8PathBuf) {
+    pub fn set_binary_if_absent(&mut self, binary: &Utf8Path) {
         if self.binary.is_none() {
-            self.binary = Some(binary);
+            self.binary = Some(binary.to_path_buf());
         }
     }
 
@@ -245,13 +245,7 @@ impl MitamaeTask {
         let rootfs = context.rootfs();
         let dry_run = context.dry_run();
 
-        let binary = self.binary.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "mitamae binary path is not configured. Specify 'binary' in the task \
-                definition or configure 'defaults.mitamae.binary.{}' in the profile",
-                std::env::consts::ARCH,
-            )
-        })?;
+        let binary = self.binary.as_ref().unwrap();
 
         // Unlike ShellTask, no validate_rootfs() is needed here because the mitamae
         // binary is copied from the host side — there is no rootfs-resident binary

@@ -754,7 +754,7 @@ fn test_mitamae_set_binary_if_absent() {
     let mut task =
         MitamaeTask::new_without_binary(ScriptSource::Content("package 'vim'".to_string()));
     assert_eq!(task.binary(), None);
-    task.set_binary_if_absent("/usr/local/bin/mitamae".into());
+    task.set_binary_if_absent(Utf8Path::new("/usr/local/bin/mitamae"));
     assert_eq!(task.binary(), Some(Utf8Path::new("/usr/local/bin/mitamae")));
 }
 
@@ -764,7 +764,7 @@ fn test_mitamae_set_binary_if_absent_does_not_override() {
         ScriptSource::Content("package 'vim'".to_string()),
         "/usr/local/bin/mitamae-task".into(),
     );
-    task.set_binary_if_absent("/usr/local/bin/mitamae-default".into());
+    task.set_binary_if_absent(Utf8Path::new("/usr/local/bin/mitamae-default"));
     assert_eq!(
         task.binary(),
         Some(Utf8Path::new("/usr/local/bin/mitamae-task")),

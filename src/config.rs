@@ -218,7 +218,7 @@ fn parse_profile_yaml(
 
 fn apply_defaults_to_tasks(profile: &mut Profile) {
     let arch = std::env::consts::ARCH;
-    let default_binary = profile.defaults.mitamae.binary.get(arch).cloned();
+    let default_binary = profile.defaults.mitamae.binary.get(arch);
 
     if default_binary.is_none() && !profile.defaults.mitamae.binary.is_empty() {
         let available: Vec<&String> = profile.defaults.mitamae.binary.keys().collect();
@@ -237,9 +237,9 @@ fn apply_defaults_to_tasks(profile: &mut Profile) {
         .chain(profile.post_processors.iter_mut())
     {
         if let TaskDefinition::Mitamae(mitamae_task) = task
-            && let Some(ref binary) = default_binary
+            && let Some(binary) = default_binary
         {
-            mitamae_task.set_binary_if_absent(binary.clone());
+            mitamae_task.set_binary_if_absent(binary);
         }
     }
 }
