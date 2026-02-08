@@ -264,23 +264,21 @@ pub(crate) fn check_execution_result(
     context_name: &str,
     dry_run: bool,
 ) -> Result<()> {
-    if !result.success() {
-        let status_display = result
-            .status
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "unknown (no status available)".to_string());
-        return Err(
-            RsdebstrapError::execution_in_isolation(command, context_name, status_display).into()
-        );
-    } else if !dry_run && result.status.is_none() {
-        return Err(RsdebstrapError::execution_in_isolation(
+    match result.status {
+        Some(status) if !status.success() => {
+            Err(
+                RsdebstrapError::execution_in_isolation(command, context_name, status.to_string())
+                    .into(),
+            )
+        }
+        None if !dry_run => Err(RsdebstrapError::execution_in_isolation(
             command,
             context_name,
             "process exited without status (possibly killed by signal)",
         )
-        .into());
+        .into()),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 /// Re-validates `/tmp` (TOCTOU mitigation) and runs the file preparation closure.
