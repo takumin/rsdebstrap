@@ -18,8 +18,8 @@ fn main() -> Result<()> {
     }
 
     let log_level = match &args.command {
-        cli::Commands::Apply(opts) => opts.log_level,
-        cli::Commands::Validate(opts) => opts.log_level,
+        cli::Commands::Apply(opts) => opts.common.log_level,
+        cli::Commands::Validate(opts) => opts.common.log_level,
         cli::Commands::Completions(_) => unreachable!("completions handled above"),
     };
 

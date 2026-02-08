@@ -72,12 +72,12 @@ pub enum Commands {
     Completions(CompletionsArgs),
 }
 
-/// Arguments for the `Apply` command.
+/// Common arguments shared across multiple commands.
 ///
-/// This struct defines all the arguments that can be passed to the `Apply` command.
-/// It includes options for specifying the profile file, log level, and dry run mode.
+/// This struct defines arguments that are common to commands like `Apply` and `Validate`,
+/// including the profile file path and log level.
 #[derive(Args, Debug)]
-pub struct ApplyArgs {
+pub struct CommonArgs {
     /// Path to the YAML file defining the profile.
     ///
     /// This file should contain a valid rsdebstrap profile that defines
@@ -91,6 +91,16 @@ pub struct ApplyArgs {
     /// Options range from `trace` (most verbose) to `error` (least verbose).
     #[arg(short, long, default_value = "info")]
     pub log_level: LogLevel,
+}
+
+/// Arguments for the `Apply` command.
+///
+/// This struct defines all the arguments that can be passed to the `Apply` command.
+/// It includes common options and a dry run mode flag.
+#[derive(Args, Debug)]
+pub struct ApplyArgs {
+    #[command(flatten)]
+    pub common: CommonArgs,
 
     /// Do not run the actual bootstrap command, just show what would be done.
     ///
@@ -104,22 +114,11 @@ pub struct ApplyArgs {
 /// Arguments for the `Validate` command.
 ///
 /// This struct defines all the arguments that can be passed to the `Validate` command.
-/// It includes options for specifying the profile file and log level.
+/// It includes common options for specifying the profile file and log level.
 #[derive(Args, Debug)]
 pub struct ValidateArgs {
-    /// Path to the YAML file to validate.
-    ///
-    /// This file will be checked for syntax and schema correctness
-    /// according to the rsdebstrap profile specifications.
-    #[arg(short, long, default_value = "profile.yaml", value_hint = ValueHint::FilePath)]
-    pub file: Utf8PathBuf,
-
-    /// Set the log level for controlling verbosity of output.
-    ///
-    /// This determines the amount of information logged during validation.
-    /// Options range from `trace` (most verbose) to `error` (least verbose).
-    #[arg(short, long, default_value = "info")]
-    pub log_level: LogLevel,
+    #[command(flatten)]
+    pub common: CommonArgs,
 }
 
 /// Arguments for the `Completions` command.

@@ -94,8 +94,8 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> R
         warn!("DRY-RUN MODE: No changes will be made");
     }
 
-    let profile = config::load_profile(opts.file.as_path())
-        .with_context(|| format!("failed to load profile from {}", opts.file))?;
+    let profile = config::load_profile(opts.common.file.as_path())
+        .with_context(|| format!("failed to load profile from {}", opts.common.file))?;
     profile.validate().context("profile validation failed")?;
 
     if !opts.dry_run && !profile.dir.exists() {
@@ -110,8 +110,8 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> R
 }
 
 pub fn run_validate(opts: &cli::ValidateArgs) -> Result<()> {
-    let profile = config::load_profile(opts.file.as_path())
-        .with_context(|| format!("failed to load profile from {}", opts.file))?;
+    let profile = config::load_profile(opts.common.file.as_path())
+        .with_context(|| format!("failed to load profile from {}", opts.common.file))?;
     profile.validate().context("profile validation failed")?;
     info!("validation successful:\n{:#?}", profile);
     Ok(())

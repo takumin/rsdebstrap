@@ -28,8 +28,10 @@ impl CommandExecutor for RecordingExecutor {
 #[test]
 fn run_apply_uses_executor_with_built_args() {
     let opts = cli::ApplyArgs {
-        file: "examples/debian_trixie_mmdebstrap.yml".into(),
-        log_level: cli::LogLevel::Error,
+        common: cli::CommonArgs {
+            file: "examples/debian_trixie_mmdebstrap.yml".into(),
+            log_level: cli::LogLevel::Error,
+        },
         dry_run: true,
     };
     let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
@@ -49,8 +51,10 @@ fn run_apply_uses_executor_with_built_args() {
 #[test]
 fn run_validate_succeeds_on_valid_profile() {
     let opts = cli::ValidateArgs {
-        file: "examples/debian_trixie_mmdebstrap.yml".into(),
-        log_level: cli::LogLevel::Error,
+        common: cli::CommonArgs {
+            file: "examples/debian_trixie_mmdebstrap.yml".into(),
+            log_level: cli::LogLevel::Error,
+        },
     };
 
     run_validate(&opts).expect("run_validate should succeed for sample profile");
@@ -59,8 +63,10 @@ fn run_validate_succeeds_on_valid_profile() {
 #[test]
 fn run_apply_with_pipeline_tasks_uses_isolation() {
     let opts = cli::ApplyArgs {
-        file: "examples/debian_trixie_with_provisioners.yml".into(),
-        log_level: cli::LogLevel::Error,
+        common: cli::CommonArgs {
+            file: "examples/debian_trixie_with_provisioners.yml".into(),
+            log_level: cli::LogLevel::Error,
+        },
         dry_run: true,
     };
     let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
@@ -128,8 +134,10 @@ fn test_run_apply_pipeline_and_teardown_both_fail() {
     // tested in pipeline_test.rs with mock contexts.
 
     let opts = cli::ApplyArgs {
-        file: "examples/debian_trixie_with_provisioners.yml".into(),
-        log_level: cli::LogLevel::Error,
+        common: cli::CommonArgs {
+            file: "examples/debian_trixie_with_provisioners.yml".into(),
+            log_level: cli::LogLevel::Error,
+        },
         dry_run: true,
     };
 
