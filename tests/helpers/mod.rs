@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::io::Write;
@@ -18,7 +20,6 @@ use tracing::warn;
 
 /// Global mutex to serialize tests that modify the current working directory.
 /// This prevents parallel tests from interfering with each other.
-#[allow(dead_code)]
 pub static CWD_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[macro_export]
@@ -28,7 +29,6 @@ macro_rules! yaml {
     };
 }
 
-#[allow(dead_code)]
 pub fn dedent(input: &str) -> String {
     let mut lines: Vec<&str> = input.lines().collect();
     while matches!(lines.first(), Some(line) if line.trim().is_empty()) {
@@ -66,43 +66,10 @@ pub fn dedent(input: &str) -> String {
     out
 }
 
-/// Minimal mmdebstrap profile YAML fixture (for future tests).
-#[allow(dead_code)]
-pub fn yaml_profile_mmdebstrap_minimal() -> String {
-    // editorconfig-checker-disable
-    dedent(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs.tar.zst
-"#,
-    )
-    // editorconfig-checker-enable
-}
-
-/// Minimal debootstrap profile YAML fixture (for future tests).
-#[allow(dead_code)]
-pub fn yaml_profile_debootstrap_minimal() -> String {
-    // editorconfig-checker-disable
-    dedent(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: debootstrap
-  suite: bookworm
-  target: rootfs
-"#,
-    )
-    // editorconfig-checker-enable
-}
-
 /// Builder for constructing `MmdebstrapConfig` in tests.
 ///
 /// Provides a fluent API to set only the fields that differ from defaults,
 /// reducing boilerplate in test code.
-#[allow(dead_code)]
 pub struct MmdebstrapConfigBuilder {
     suite: String,
     target: String,
@@ -122,7 +89,6 @@ pub struct MmdebstrapConfigBuilder {
     mirrors: Vec<String>,
 }
 
-#[allow(dead_code)]
 impl MmdebstrapConfigBuilder {
     pub fn new(suite: impl Into<String>, target: impl Into<String>) -> Self {
         Self {
@@ -284,7 +250,6 @@ impl MmdebstrapConfigBuilder {
 /// Test helper to create a MmdebstrapConfig with minimal required fields.
 ///
 /// All optional fields are initialized with their default values.
-#[allow(dead_code)]
 pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) -> MmdebstrapConfig {
     MmdebstrapConfigBuilder::new(suite, target).build()
 }
@@ -293,7 +258,6 @@ pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) ->
 ///
 /// Provides a fluent API to set only the fields that differ from defaults,
 /// reducing boilerplate in test code.
-#[allow(dead_code)]
 pub struct DebootstrapConfigBuilder {
     suite: String,
     target: String,
@@ -310,7 +274,6 @@ pub struct DebootstrapConfigBuilder {
     print_debs: bool,
 }
 
-#[allow(dead_code)]
 impl DebootstrapConfigBuilder {
     pub fn new(suite: impl Into<String>, target: impl Into<String>) -> Self {
         Self {
@@ -419,7 +382,6 @@ impl DebootstrapConfigBuilder {
 /// Test helper to create a DebootstrapConfig with minimal required fields.
 ///
 /// All optional fields are initialized with their default values.
-#[allow(dead_code)]
 pub fn create_debootstrap(
     suite: impl Into<String>,
     target: impl Into<String>,
@@ -428,7 +390,6 @@ pub fn create_debootstrap(
 }
 
 /// Extracts MmdebstrapConfig from a Profile, returning `None` if it's not the mmdebstrap backend.
-#[allow(dead_code)]
 pub fn get_mmdebstrap_config(profile: &Profile) -> Option<&MmdebstrapConfig> {
     match &profile.bootstrap {
         Bootstrap::Mmdebstrap(cfg) => Some(cfg),
@@ -437,7 +398,6 @@ pub fn get_mmdebstrap_config(profile: &Profile) -> Option<&MmdebstrapConfig> {
 }
 
 /// Extracts DebootstrapConfig from a Profile, returning `None` if it's not the debootstrap backend.
-#[allow(dead_code)]
 pub fn get_debootstrap_config(profile: &Profile) -> Option<&DebootstrapConfig> {
     match &profile.bootstrap {
         Bootstrap::Debootstrap(cfg) => Some(cfg),
@@ -446,7 +406,6 @@ pub fn get_debootstrap_config(profile: &Profile) -> Option<&DebootstrapConfig> {
 }
 
 /// Loads a Profile from YAML content in a temporary file.
-#[allow(dead_code)]
 pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
     let yaml = yaml.as_ref();
     let mut file = NamedTempFile::new()?;
@@ -459,7 +418,6 @@ pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
 }
 
 /// Loads a Profile from YAML content, returning typed `RsdebstrapError`.
-#[allow(dead_code)]
 pub fn load_profile_from_yaml_typed(
     yaml: impl AsRef<str>,
 ) -> std::result::Result<Profile, RsdebstrapError> {
@@ -478,12 +436,10 @@ pub fn load_profile_from_yaml_typed(
 ///
 /// This guard saves the current directory on creation and automatically
 /// restores it when it goes out of scope, even if a panic occurs.
-#[allow(dead_code)]
 pub struct CwdGuard {
     original: Utf8PathBuf,
 }
 
-#[allow(dead_code)]
 impl CwdGuard {
     /// Creates a new CwdGuard, saving the current working directory.
     ///
@@ -521,7 +477,6 @@ impl Drop for CwdGuard {
 }
 
 /// Mock isolation context for testing task execution.
-#[allow(dead_code)]
 pub struct MockContext {
     rootfs: Utf8PathBuf,
     dry_run: bool,
@@ -533,7 +488,6 @@ pub struct MockContext {
     return_no_status: bool,
 }
 
-#[allow(dead_code)]
 impl MockContext {
     pub fn new(rootfs: &Utf8Path) -> Self {
         Self {
