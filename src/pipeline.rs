@@ -62,17 +62,17 @@ impl<'a> Pipeline<'a> {
 
     /// Returns true if the pipeline has no tasks to execute.
     pub fn is_empty(&self) -> bool {
-        self.phases().iter().all(|(_, tasks)| tasks.is_empty())
+        self.phases().into_iter().all(|(_, tasks)| tasks.is_empty())
     }
 
     /// Returns the total number of tasks across all phases.
     pub fn total_tasks(&self) -> usize {
-        self.phases().iter().map(|(_, tasks)| tasks.len()).sum()
+        self.phases().into_iter().map(|(_, tasks)| tasks.len()).sum()
     }
 
     /// Validates all tasks in the pipeline.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        for (phase_name, tasks) in &self.phases() {
+        for (phase_name, tasks) in self.phases() {
             self.validate_phase(phase_name, tasks)?;
         }
         Ok(())
@@ -123,7 +123,7 @@ impl<'a> Pipeline<'a> {
     }
 
     fn run_phases(&self, ctx: &dyn IsolationContext) -> Result<()> {
-        for (phase_name, tasks) in &self.phases() {
+        for (phase_name, tasks) in self.phases() {
             self.run_phase(phase_name, tasks, ctx)?;
         }
         Ok(())
