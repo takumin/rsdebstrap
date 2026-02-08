@@ -156,6 +156,8 @@ tasks:
     desc: '{{.TASK}}'
     deps:
     - task: tool:aqua:tag:clippy-reviewdog-filter
+    - task: tool:rustup:component:clippy
+    - task: tool:cargo:fetch
     sources:
     - '**/*.rs'
     generates:
