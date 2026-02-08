@@ -541,7 +541,10 @@ fn test_mitamae_validate_rejects_empty_content() {
         "Expected Validation error, got: {:?}",
         err
     );
-    assert!(err.to_string().contains("must not be empty"));
+    assert!(
+        err.to_string()
+            .contains("inline mitamae recipe content must not be empty")
+    );
 }
 
 #[test]
@@ -559,7 +562,7 @@ fn test_mitamae_validate_rejects_recipe_path_traversal() {
         "Expected Validation error, got: {:?}",
         err
     );
-    assert!(err.to_string().contains(".."));
+    assert!(err.to_string().contains("mitamae recipe path"));
 }
 
 #[test]
@@ -577,7 +580,10 @@ fn test_mitamae_validate_rejects_whitespace_only_content() {
         "Expected Validation error, got: {:?}",
         err
     );
-    assert!(err.to_string().contains("must not be empty"));
+    assert!(
+        err.to_string()
+            .contains("inline mitamae recipe content must not be empty")
+    );
 }
 
 #[test]
