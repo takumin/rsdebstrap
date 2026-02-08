@@ -38,8 +38,8 @@ use crate::isolation::IsolationContext;
 pub struct MitamaeTask {
     /// Recipe source: either an external file path or inline content
     source: ScriptSource,
-    /// Host-side mitamae binary path
-    binary: Utf8PathBuf,
+    /// Host-side mitamae binary path (None when relying on defaults)
+    binary: Option<Utf8PathBuf>,
 }
 
 impl<'de> Deserialize<'de> for MitamaeTask {
@@ -61,7 +61,9 @@ impl<'de> Deserialize<'de> for MitamaeTask {
             type Value = MitamaeTask;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a mitamae task with 'binary' and either 'script' or 'content'")
+                formatter.write_str(
+                    "a mitamae task with either 'script' or 'content' (and optional 'binary')",
+                )
             }
 
             fn visit_map<V>(self, mut map: V) -> std::result::Result<MitamaeTask, V::Error>
@@ -95,8 +97,6 @@ impl<'de> Deserialize<'de> for MitamaeTask {
                     }
                 }
 
-                let binary = binary.ok_or_else(|| de::Error::missing_field("binary"))?;
-
                 let source = match (script, content) {
                     (Some(_), Some(_)) => {
                         return Err(de::Error::custom(
@@ -124,7 +124,18 @@ impl<'de> Deserialize<'de> for MitamaeTask {
 impl MitamaeTask {
     /// Creates a new MitamaeTask with the given recipe source and binary path.
     pub fn new(source: ScriptSource, binary: Utf8PathBuf) -> Self {
-        Self { source, binary }
+        Self {
+            source,
+            binary: Some(binary),
+        }
+    }
+
+    /// Creates a new MitamaeTask without a binary path (expects defaults to provide it).
+    pub fn new_without_binary(source: ScriptSource) -> Self {
+        Self {
+            source,
+            binary: None,
+        }
     }
 
     /// Returns a reference to the recipe source.
@@ -132,9 +143,17 @@ impl MitamaeTask {
         &self.source
     }
 
-    /// Returns the mitamae binary path.
-    pub fn binary(&self) -> &Utf8Path {
-        &self.binary
+    /// Returns the mitamae binary path, if set.
+    pub fn binary(&self) -> Option<&Utf8Path> {
+        self.binary.as_deref()
+    }
+
+    /// Sets the mitamae binary path if not already set (used for applying defaults).
+    /// Does nothing if binary is already set (task-level takes precedence).
+    pub fn set_binary_if_absent(&mut self, binary: &Utf8Path) {
+        if self.binary.is_none() {
+            self.binary = Some(binary.to_path_buf());
+        }
     }
 
     /// Returns a human-readable name for this task (without type prefix).
@@ -149,8 +168,10 @@ impl MitamaeTask {
 
     /// Resolves relative paths in this task relative to the given base directory.
     pub fn resolve_paths(&mut self, base_dir: &Utf8Path) {
-        if self.binary.is_relative() {
-            self.binary = base_dir.join(&self.binary);
+        if let Some(ref mut binary) = self.binary
+            && binary.is_relative()
+        {
+            *binary = base_dir.join(&*binary);
         }
         if let ScriptSource::Script(path) = &mut self.source
             && path.is_relative()
@@ -162,39 +183,47 @@ impl MitamaeTask {
     /// Validates the task configuration.
     ///
     /// Checks:
-    /// - Binary path is non-empty and has no `..` components
+    /// - Binary path is set and non-empty with no `..` components
     /// - Binary file exists and is a regular file
     /// - Recipe: Script → no path traversal, exists, is a regular file; Content → non-empty
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        // Validate binary path
-        if self.binary.as_str().is_empty() {
+        let binary = match &self.binary {
+            Some(b) => b,
+            None => {
+                return Err(RsdebstrapError::Validation(format!(
+                    "mitamae binary path is not specified and no default is configured \
+                    for architecture '{}'. Either add 'binary: /path/to/mitamae' to the \
+                    task definition or configure 'defaults.mitamae.binary.{}' in the profile",
+                    std::env::consts::ARCH,
+                    std::env::consts::ARCH,
+                )));
+            }
+        };
+
+        if binary.as_str().is_empty() {
             return Err(RsdebstrapError::Validation(
                 "mitamae binary path must not be empty".to_string(),
             ));
         }
 
-        if self
-            .binary
+        if binary
             .components()
             .any(|c| c == camino::Utf8Component::ParentDir)
         {
             return Err(RsdebstrapError::Validation(format!(
                 "mitamae binary path '{}' contains '..' components, \
                 which is not allowed for security reasons",
-                self.binary
+                binary
             )));
         }
 
-        let metadata = fs::metadata(&self.binary).map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to read mitamae binary metadata: {}", self.binary),
-                e,
-            )
+        let metadata = fs::metadata(binary).map_err(|e| {
+            RsdebstrapError::io(format!("failed to read mitamae binary metadata: {}", binary), e)
         })?;
         if !metadata.is_file() {
             return Err(RsdebstrapError::Validation(format!(
                 "mitamae binary is not a file: {}",
-                self.binary
+                binary
             )));
         }
 
@@ -216,6 +245,8 @@ impl MitamaeTask {
         let rootfs = context.rootfs();
         let dry_run = context.dry_run();
 
+        let binary = self.binary.as_ref().unwrap();
+
         // Unlike ShellTask, no validate_rootfs() is needed here because the mitamae
         // binary is copied from the host side — there is no rootfs-resident binary
         // to verify. Only /tmp validation is required for the copy destination.
@@ -224,7 +255,7 @@ impl MitamaeTask {
         }
 
         info!("running mitamae recipe: {} (isolation: {})", self.name(), context.name());
-        debug!("rootfs: {}, binary: {}, dry_run: {}", rootfs, self.binary, dry_run);
+        debug!("rootfs: {}, binary: {}, dry_run: {}", rootfs, binary, dry_run);
 
         // Generate unique names for binary and recipe in rootfs
         let uuid = uuid::Uuid::new_v4();
@@ -243,9 +274,9 @@ impl MitamaeTask {
                 .context("TOCTOU check: /tmp validation failed before writing files")?;
 
             // Copy mitamae binary to rootfs
-            info!("copying mitamae binary from {} to rootfs", self.binary);
-            fs::copy(&self.binary, &target_binary).with_context(|| {
-                format!("failed to copy mitamae binary {} to {}", self.binary, target_binary)
+            info!("copying mitamae binary from {} to rootfs", binary);
+            fs::copy(binary, &target_binary).with_context(|| {
+                format!("failed to copy mitamae binary {} to {}", binary, target_binary)
             })?;
 
             #[cfg(unix)]

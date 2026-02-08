@@ -5,9 +5,14 @@
 
 dir: /tmp/debian-trixie-mitamae
 
-# Isolation backend for running commands in rootfs
-isolation:
-  type: chroot
+# Default settings (isolation backend, mitamae binary paths, etc.)
+defaults:
+  isolation:
+    type: chroot
+  mitamae:
+    binary:
+      x86_64: /usr/local/bin/mitamae-x86_64-linux
+      aarch64: /usr/local/bin/mitamae-aarch64-linux
 
 bootstrap:
   type: mmdebstrap
@@ -23,7 +28,6 @@ bootstrap:
 
 provisioners:
 - type: mitamae
-  binary: /usr/local/bin/mitamae
   content: |-
     package 'vim' do
       action :install

@@ -85,7 +85,7 @@ fn run_pipeline_phase(
         .into());
     };
 
-    let provider = profile.isolation.as_provider();
+    let provider = profile.defaults.isolation.as_provider();
     pipeline.run(&rootfs, provider.as_ref(), executor, dry_run)
 }
 

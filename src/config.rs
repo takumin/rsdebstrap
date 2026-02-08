@@ -7,6 +7,7 @@
 //! The configuration is typically loaded from YAML files using the
 //! `load_profile` function.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::LazyLock;
@@ -80,6 +81,31 @@ impl IsolationConfig {
     }
 }
 
+/// Default settings for mitamae tasks.
+///
+/// Allows specifying architecture-specific binary paths that apply to all
+/// mitamae tasks unless overridden at the task level.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct MitamaeDefaults {
+    /// Architecture-specific binary paths (key: "x86_64", "aarch64", etc.)
+    #[serde(default)]
+    pub binary: HashMap<String, Utf8PathBuf>,
+}
+
+/// Default settings that apply across the profile.
+///
+/// Groups configuration defaults like isolation backend.
+/// If omitted in YAML, all fields use their respective defaults.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct Defaults {
+    /// Isolation backend for running commands in rootfs (default: chroot)
+    #[serde(default)]
+    pub isolation: IsolationConfig,
+    /// Default settings for mitamae tasks
+    #[serde(default)]
+    pub mitamae: MitamaeDefaults,
+}
+
 /// Represents a bootstrap profile configuration.
 ///
 /// A profile contains the target directory and bootstrap tool configuration
@@ -88,9 +114,9 @@ impl IsolationConfig {
 pub struct Profile {
     /// Target directory path for the bootstrap operation
     pub dir: Utf8PathBuf,
-    /// Isolation backend for running commands in rootfs (default: chroot)
+    /// Default settings (isolation backend, etc.)
     #[serde(default)]
-    pub isolation: IsolationConfig,
+    pub defaults: Defaults,
     /// Bootstrap tool configuration
     pub bootstrap: Bootstrap,
     /// Pre-processors to run before provisioning (optional)
@@ -190,9 +216,44 @@ fn parse_profile_yaml(
     serde_yaml::from_reader(reader).map_err(|e| format_yaml_parse_error(e, file_path))
 }
 
+fn apply_defaults_to_tasks(profile: &mut Profile) {
+    let arch = std::env::consts::ARCH;
+    let default_binary = profile.defaults.mitamae.binary.get(arch);
+
+    if default_binary.is_none() && !profile.defaults.mitamae.binary.is_empty() {
+        let available: Vec<&String> = profile.defaults.mitamae.binary.keys().collect();
+        tracing::warn!(
+            "defaults.mitamae.binary has entries for {:?} but current architecture is '{}'; \
+            no default binary will be applied",
+            available,
+            arch,
+        );
+    }
+
+    for task in profile
+        .pre_processors
+        .iter_mut()
+        .chain(profile.provisioners.iter_mut())
+        .chain(profile.post_processors.iter_mut())
+    {
+        if let TaskDefinition::Mitamae(mitamae_task) = task
+            && let Some(binary) = default_binary
+        {
+            mitamae_task.set_binary_if_absent(binary);
+        }
+    }
+}
+
 fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
     if profile.dir.is_relative() {
         profile.dir = profile_dir.join(&profile.dir);
+    }
+
+    // Resolve relative paths in defaults.mitamae.binary
+    for binary in profile.defaults.mitamae.binary.values_mut() {
+        if binary.is_relative() {
+            *binary = profile_dir.join(&*binary);
+        }
     }
 
     for task in profile
@@ -239,6 +300,7 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile, RsdebstrapError> {
         ))
     })?;
     resolve_profile_paths(&mut profile, profile_dir);
+    apply_defaults_to_tasks(&mut profile);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
 }

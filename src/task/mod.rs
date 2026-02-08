@@ -277,7 +277,7 @@ impl TaskDefinition {
     pub fn binary_path(&self) -> Option<&Utf8Path> {
         match self {
             Self::Shell(_) => None,
-            Self::Mitamae(task) => Some(task.binary()),
+            Self::Mitamae(task) => task.binary(),
         }
     }
 }
