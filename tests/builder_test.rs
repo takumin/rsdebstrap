@@ -8,12 +8,11 @@ use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
 
 #[test]
 fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
-    let config = MmdebstrapConfig {
-        components: vec!["main".into(), "contrib".into()],
-        architectures: vec!["amd64".into()],
-        include: vec!["curl".into(), "ca-certificates".into()],
-        ..helpers::create_mmdebstrap("bookworm", "rootfs.tar.zst")
-    };
+    let config = helpers::MmdebstrapConfigBuilder::new("bookworm", "rootfs.tar.zst")
+        .components(["main", "contrib"])
+        .architectures(["amd64"])
+        .include(["curl", "ca-certificates"])
+        .build();
     let dir = Utf8PathBuf::from("/tmp/test-success");
 
     // Create a mock executor that will "succeed"
@@ -29,12 +28,11 @@ fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
 
 #[test]
 fn test_run_mmdebstrap_with_mock_failure() -> Result<()> {
-    let config = MmdebstrapConfig {
-        components: vec!["main".into(), "contrib".into()],
-        architectures: vec!["amd64".into()],
-        include: vec!["curl".into(), "ca-certificates".into()],
-        ..helpers::create_mmdebstrap("bookworm", "rootfs.tar.zst")
-    };
+    let config = helpers::MmdebstrapConfigBuilder::new("bookworm", "rootfs.tar.zst")
+        .components(["main", "contrib"])
+        .architectures(["amd64"])
+        .include(["curl", "ca-certificates"])
+        .build();
     let dir = Utf8PathBuf::from("/tmp/test-failure");
 
     // Create a mock executor that will "fail"
