@@ -50,18 +50,25 @@ pub(crate) fn validate_no_parent_dirs(path: &Utf8Path, label: &str) -> Result<()
     Ok(())
 }
 
-/// Validates that a host-side file exists and is a regular file.
+/// Validates that a host-side file exists and is a regular file (not a symlink).
 ///
-/// Returns `RsdebstrapError::Io` if the file cannot be accessed, or
-/// `RsdebstrapError::Validation` if the path is not a regular file.
+/// Uses `symlink_metadata` to avoid following symlinks. Returns
+/// `RsdebstrapError::Io` if the file cannot be accessed, or
+/// `RsdebstrapError::Validation` if the path is a symlink or not a regular file.
 /// The `label` parameter is used in error messages (e.g., "shell script", "mitamae binary").
 pub(crate) fn validate_host_file_exists(
     path: &Utf8Path,
     label: &str,
 ) -> Result<(), RsdebstrapError> {
-    let metadata = fs::metadata(path).map_err(|e| {
+    let metadata = fs::symlink_metadata(path).map_err(|e| {
         RsdebstrapError::io(format!("failed to read {} metadata: {}", label, path), e)
     })?;
+    if metadata.is_symlink() {
+        return Err(RsdebstrapError::Validation(format!(
+            "{} path '{}' is a symlink, which is not allowed for security reasons",
+            label, path
+        )));
+    }
     if !metadata.is_file() {
         return Err(RsdebstrapError::Validation(format!("{} is not a file: {}", label, path)));
     }
