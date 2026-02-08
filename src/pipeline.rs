@@ -51,23 +51,30 @@ impl<'a> Pipeline<'a> {
         }
     }
 
+    /// Returns the ordered list of phases with their names and task slices.
+    fn phases(&self) -> [(&'static str, &'a [TaskDefinition]); 3] {
+        [
+            (PHASE_PRE_PROCESSOR, self.pre_processors),
+            (PHASE_PROVISIONER, self.provisioners),
+            (PHASE_POST_PROCESSOR, self.post_processors),
+        ]
+    }
+
     /// Returns true if the pipeline has no tasks to execute.
     pub fn is_empty(&self) -> bool {
-        self.pre_processors.is_empty()
-            && self.provisioners.is_empty()
-            && self.post_processors.is_empty()
+        self.phases().iter().all(|(_, tasks)| tasks.is_empty())
     }
 
     /// Returns the total number of tasks across all phases.
     pub fn total_tasks(&self) -> usize {
-        self.pre_processors.len() + self.provisioners.len() + self.post_processors.len()
+        self.phases().iter().map(|(_, tasks)| tasks.len()).sum()
     }
 
     /// Validates all tasks in the pipeline.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        self.validate_phase(PHASE_PRE_PROCESSOR, self.pre_processors)?;
-        self.validate_phase(PHASE_PROVISIONER, self.provisioners)?;
-        self.validate_phase(PHASE_POST_PROCESSOR, self.post_processors)?;
+        for (phase_name, tasks) in &self.phases() {
+            self.validate_phase(phase_name, tasks)?;
+        }
         Ok(())
     }
 
@@ -116,9 +123,9 @@ impl<'a> Pipeline<'a> {
     }
 
     fn run_phases(&self, ctx: &dyn IsolationContext) -> Result<()> {
-        self.run_phase(PHASE_PRE_PROCESSOR, self.pre_processors, ctx)?;
-        self.run_phase(PHASE_PROVISIONER, self.provisioners, ctx)?;
-        self.run_phase(PHASE_POST_PROCESSOR, self.post_processors, ctx)?;
+        for (phase_name, tasks) in &self.phases() {
+            self.run_phase(phase_name, tasks, ctx)?;
+        }
         Ok(())
     }
 
