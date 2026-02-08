@@ -67,7 +67,10 @@ impl<'a> Pipeline<'a> {
 
     /// Returns the total number of tasks across all phases.
     pub fn total_tasks(&self) -> usize {
-        self.phases().into_iter().map(|(_, tasks)| tasks.len()).sum()
+        self.phases()
+            .into_iter()
+            .map(|(_, tasks)| tasks.len())
+            .sum()
     }
 
     /// Validates all tasks in the pipeline.
