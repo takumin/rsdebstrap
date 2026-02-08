@@ -148,6 +148,48 @@ impl Profile {
     }
 }
 
+fn format_yaml_parse_error(err: serde_yaml::Error, file_path: &Utf8Path) -> RsdebstrapError {
+    let location = err
+        .location()
+        .map(|loc| format!(" at line {}, column {}", loc.line(), loc.column()));
+    // Remove duplicate "at line X column Y" from serde_yaml's error message
+    let msg = err.to_string();
+    let clean_msg = YAML_LOCATION_RE.replace(&msg, "").to_string();
+    RsdebstrapError::Config(format!(
+        "{}: YAML parse error{}: {}",
+        file_path,
+        location.unwrap_or_default(),
+        clean_msg
+    ))
+}
+
+fn read_profile_file(path: &Utf8Path) -> Result<(BufReader<File>, Utf8PathBuf), RsdebstrapError> {
+    // Resolve symlinks so we operate on the real file path.
+    let canonical_path = path
+        .canonicalize_utf8()
+        .map_err(|e| RsdebstrapError::io(path.to_string(), e))?;
+
+    // On Linux, File::open on a directory succeeds silently, so we must
+    // check explicitly before attempting to open.
+    if canonical_path.is_dir() {
+        return Err(RsdebstrapError::Validation(format!(
+            "expected a file, not a directory: {}",
+            canonical_path
+        )));
+    }
+
+    let file = File::open(&canonical_path)
+        .map_err(|e| RsdebstrapError::io(canonical_path.to_string(), e))?;
+    Ok((BufReader::new(file), canonical_path))
+}
+
+fn parse_profile_yaml(
+    reader: BufReader<File>,
+    file_path: &Utf8Path,
+) -> Result<Profile, RsdebstrapError> {
+    serde_yaml::from_reader(reader).map_err(|e| format_yaml_parse_error(e, file_path))
+}
+
 fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
     if profile.dir.is_relative() {
         profile.dir = profile_dir.join(&profile.dir);
@@ -187,42 +229,9 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 /// ```
 #[tracing::instrument]
 pub fn load_profile(path: &Utf8Path) -> Result<Profile, RsdebstrapError> {
-    // Canonicalize the entire path first to resolve all symlinks and get the true absolute path.
-    // This ensures relative paths in the profile are resolved relative to the actual file location,
-    // not the symlink location.
-    let canonical_path = path
-        .canonicalize_utf8()
-        .map_err(|e| RsdebstrapError::io(path.to_string(), e))?;
+    let (reader, canonical_path) = read_profile_file(path)?;
+    let mut profile = parse_profile_yaml(reader, &canonical_path)?;
 
-    // Check if the path is a directory before attempting to open it.
-    // On Linux, File::open succeeds on directories but read fails later.
-    if canonical_path.is_dir() {
-        return Err(RsdebstrapError::Validation(format!(
-            "expected a file, not a directory: {}",
-            canonical_path
-        )));
-    }
-
-    let file = File::open(&canonical_path)
-        .map_err(|e| RsdebstrapError::io(canonical_path.to_string(), e))?;
-    let reader = BufReader::new(file);
-    let mut profile: Profile = serde_yaml::from_reader(reader).map_err(|e| {
-        let location = e
-            .location()
-            .map(|loc| format!(" at line {}, column {}", loc.line(), loc.column()));
-        // Remove duplicate "at line X column Y" from serde_yaml's error message
-        let msg = e.to_string();
-        let clean_msg = YAML_LOCATION_RE.replace(&msg, "").to_string();
-        RsdebstrapError::Config(format!(
-            "{}: YAML parse error{}: {}",
-            canonical_path,
-            location.unwrap_or_default(),
-            clean_msg
-        ))
-    })?;
-
-    // While parent() should always return Some for canonical file paths,
-    // we handle None for defensive programming
     let profile_dir = canonical_path.parent().ok_or_else(|| {
         RsdebstrapError::Config(format!(
             "could not determine parent directory of profile path: {}",
@@ -232,4 +241,154 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile, RsdebstrapError> {
     resolve_profile_paths(&mut profile, profile_dir);
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // =========================================================================
+    // format_yaml_parse_error tests
+    // =========================================================================
+
+    /// Generates a serde_yaml::Error by attempting to parse invalid YAML.
+    fn make_yaml_error(yaml: &str) -> serde_yaml::Error {
+        serde_yaml::from_str::<Profile>(yaml).unwrap_err()
+    }
+
+    #[test]
+    fn test_format_yaml_parse_error_with_location() {
+        // Indentation error produces location info
+        let err = make_yaml_error("key: value\n  bad_indent");
+        let result = format_yaml_parse_error(err, Utf8Path::new("/test/profile.yml"));
+        let msg = result.to_string();
+        assert!(msg.contains("/test/profile.yml"), "should contain file path: {}", msg);
+        assert!(msg.contains("YAML parse error"), "should contain 'YAML parse error': {}", msg);
+        assert!(msg.contains("at line "), "should contain line info: {}", msg);
+        assert!(msg.contains("column "), "should contain column info: {}", msg);
+    }
+
+    #[test]
+    fn test_format_yaml_parse_error_strips_duplicate_location() {
+        let err = make_yaml_error("key: value\n  bad_indent");
+        let result = format_yaml_parse_error(err, Utf8Path::new("/test/profile.yml"));
+        let msg = result.to_string();
+        // The "at line X column Y" from serde_yaml's own message should be stripped,
+        // leaving only our formatted "at line X, column Y" (with comma)
+        let at_count = msg.matches(" at line ").count();
+        assert!(
+            at_count <= 1,
+            "duplicate location should be stripped, found {} occurrences: {}",
+            at_count,
+            msg
+        );
+    }
+
+    #[test]
+    fn test_format_yaml_parse_error_without_location() {
+        // EOF error typically has no location
+        let err = make_yaml_error("");
+        let result = format_yaml_parse_error(err, Utf8Path::new("/test/empty.yml"));
+        let msg = result.to_string();
+        assert!(msg.contains("/test/empty.yml"), "should contain file path: {}", msg);
+        assert!(msg.contains("YAML parse error"), "should contain 'YAML parse error': {}", msg);
+    }
+
+    // =========================================================================
+    // read_profile_file tests
+    // =========================================================================
+
+    #[test]
+    fn test_read_profile_file_success() {
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            "dir: /tmp\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: rootfs\n"
+        )
+        .unwrap();
+        tmpfile.flush().unwrap();
+
+        let file_path = Utf8Path::from_path(tmpfile.path()).unwrap();
+        let result = read_profile_file(file_path);
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.unwrap_err());
+
+        let (_, canonical_path) = result.unwrap();
+        assert!(
+            canonical_path.is_absolute(),
+            "Canonical path should be absolute: {}",
+            canonical_path
+        );
+    }
+
+    #[test]
+    fn test_read_profile_file_nonexistent() {
+        let result = read_profile_file(Utf8Path::new("/nonexistent/path/file.yml"));
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                RsdebstrapError::Io { source, .. }
+                    if source.kind() == std::io::ErrorKind::NotFound
+            ),
+            "Expected Io error with NotFound, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_read_profile_file_directory() {
+        let result = read_profile_file(Utf8Path::new("/tmp"));
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, RsdebstrapError::Validation(msg) if msg.contains("expected a file")),
+            "Expected Validation error about directory, got: {:?}",
+            err
+        );
+    }
+
+    // =========================================================================
+    // parse_profile_yaml tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_profile_yaml_valid() {
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            "dir: /tmp/rootfs\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: rootfs\n"
+        )
+        .unwrap();
+        tmpfile.flush().unwrap();
+
+        let file = File::open(tmpfile.path()).unwrap();
+        let reader = BufReader::new(file);
+        let file_path = Utf8Path::from_path(tmpfile.path()).unwrap();
+
+        let result = parse_profile_yaml(reader, file_path);
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.unwrap_err());
+
+        let profile = result.unwrap();
+        assert_eq!(profile.dir, Utf8PathBuf::from("/tmp/rootfs"));
+    }
+
+    #[test]
+    fn test_parse_profile_yaml_invalid() {
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        write!(tmpfile, "not: valid\n  yaml_content").unwrap();
+        tmpfile.flush().unwrap();
+
+        let file = File::open(tmpfile.path()).unwrap();
+        let reader = BufReader::new(file);
+        let file_path = Utf8Path::from_path(tmpfile.path()).unwrap();
+
+        let result = parse_profile_yaml(reader, file_path);
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, RsdebstrapError::Config(msg) if msg.contains("YAML parse error")),
+            "Expected Config error with YAML parse error, got: {:?}",
+            err
+        );
+    }
 }
