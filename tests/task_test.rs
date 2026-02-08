@@ -1,6 +1,6 @@
 use camino::Utf8Path;
 use rsdebstrap::RsdebstrapError;
-use rsdebstrap::task::{ScriptSource, ShellTask, TaskDefinition};
+use rsdebstrap::task::{MitamaeTask, ScriptSource, ShellTask, TaskDefinition};
 use tempfile::tempdir;
 
 #[test]
@@ -36,8 +36,8 @@ fn test_validate_rejects_empty_inline_content() {
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("inline script content must not be empty"),
-        "Expected 'inline script content must not be empty', got: {}",
+        err_msg.contains("inline shell script content must not be empty"),
+        "Expected 'inline shell script content must not be empty', got: {}",
         err_msg
     );
 }
@@ -49,8 +49,8 @@ fn test_validate_rejects_whitespace_only_inline_content() {
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("inline script content must not be empty"),
-        "Expected 'inline script content must not be empty', got: {}",
+        err_msg.contains("inline shell script content must not be empty"),
+        "Expected 'inline shell script content must not be empty', got: {}",
         err_msg
     );
 }
@@ -102,7 +102,7 @@ fn test_validate_nonexistent_script() {
     let result = task.validate();
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("failed to read shell script metadata"));
+    assert!(err_msg.contains("failed to read shell script metadata:"));
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn test_validate_script_is_directory() {
     let result = task.validate();
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("shell script is not a file"));
+    assert!(err_msg.contains("is not a file"));
 }
 
 // =============================================================================
@@ -133,6 +133,7 @@ fn test_resolve_paths_joins_relative_script_with_base_dir() {
         TaskDefinition::Shell(shell) => {
             assert_eq!(shell.script_path().unwrap().as_str(), "/home/user/project/scripts/test.sh");
         }
+        other => panic!("Expected Shell task, got: {:?}", other),
     }
 }
 
@@ -147,6 +148,7 @@ fn test_resolve_paths_preserves_absolute_script_path() {
         TaskDefinition::Shell(shell) => {
             assert_eq!(shell.script_path().unwrap().as_str(), "/absolute/path/test.sh");
         }
+        other => panic!("Expected Shell task, got: {:?}", other),
     }
 }
 
@@ -161,6 +163,7 @@ fn test_resolve_paths_does_not_modify_content_source() {
             assert_eq!(shell.script_path(), None);
             assert_eq!(shell.source(), &ScriptSource::Content("echo hello".to_string()));
         }
+        other => panic!("Expected Shell task, got: {:?}", other),
     }
 }
 
@@ -352,4 +355,366 @@ fn test_validate_script_directory_returns_validation_error() {
         "Expected RsdebstrapError::Validation, got: {:?}",
         err
     );
+}
+
+// =============================================================================
+// MitamaeTask deserialization tests
+// =============================================================================
+
+#[test]
+fn test_task_definition_deserialize_mitamae_with_content() {
+    // editorconfig-checker-disable
+    let yaml = r#"type: mitamae
+binary: /usr/local/bin/mitamae
+content: |
+  package 'vim' do
+    action :install
+  end
+"#;
+    // editorconfig-checker-enable
+    let task: TaskDefinition =
+        serde_yaml::from_str(yaml).expect("should parse mitamae with content");
+    match &task {
+        TaskDefinition::Mitamae(m) => {
+            assert_eq!(m.binary().as_str(), "/usr/local/bin/mitamae");
+            assert!(matches!(m.source(), ScriptSource::Content(_)));
+        }
+        other => panic!("Expected Mitamae task, got: {:?}", other),
+    }
+}
+
+#[test]
+fn test_task_definition_deserialize_mitamae_with_script() {
+    // editorconfig-checker-disable
+    let yaml = r#"type: mitamae
+binary: /usr/local/bin/mitamae
+script: ./recipe.rb
+"#;
+    // editorconfig-checker-enable
+    let task: TaskDefinition =
+        serde_yaml::from_str(yaml).expect("should parse mitamae with script");
+    match &task {
+        TaskDefinition::Mitamae(m) => {
+            assert_eq!(m.binary().as_str(), "/usr/local/bin/mitamae");
+            assert_eq!(m.script_path(), Some(Utf8Path::new("./recipe.rb")));
+        }
+        other => panic!("Expected Mitamae task, got: {:?}", other),
+    }
+}
+
+#[test]
+fn test_task_definition_deserialize_mitamae_rejects_missing_binary() {
+    // editorconfig-checker-disable
+    let yaml = r#"type: mitamae
+content: echo test
+"#;
+    // editorconfig-checker-enable
+    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("binary"),
+        "Expected error about missing 'binary' field, got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_task_definition_deserialize_mitamae_rejects_both_script_and_content() {
+    // editorconfig-checker-disable
+    let yaml = r#"type: mitamae
+binary: /usr/local/bin/mitamae
+script: ./recipe.rb
+content: echo test
+"#;
+    // editorconfig-checker-enable
+    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("mutually exclusive"),
+        "Expected 'mutually exclusive' error, got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_task_definition_deserialize_mitamae_rejects_neither() {
+    // editorconfig-checker-disable
+    let yaml = r#"type: mitamae
+binary: /usr/local/bin/mitamae
+"#;
+    // editorconfig-checker-enable
+    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("either 'script' or 'content' must be specified"),
+        "Expected 'either script or content' error, got: {}",
+        err_msg
+    );
+}
+
+// =============================================================================
+// MitamaeTask validation and path tests
+// =============================================================================
+
+#[test]
+fn test_mitamae_validate_valid_task() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let binary_path = temp_dir.path().join("mitamae");
+    std::fs::write(&binary_path, "fake binary").expect("failed to write binary");
+    let binary_utf8 =
+        camino::Utf8PathBuf::from_path_buf(binary_path).expect("path should be valid UTF-8");
+
+    let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary_utf8);
+    assert!(task.validate().is_ok());
+}
+
+#[test]
+fn test_mitamae_validate_rejects_empty_binary() {
+    let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), "".into());
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(err.to_string().contains("must not be empty"));
+}
+
+#[test]
+fn test_mitamae_validate_rejects_binary_path_traversal() {
+    let task = MitamaeTask::new(
+        ScriptSource::Content("package 'vim'".to_string()),
+        "../../../usr/bin/mitamae".into(),
+    );
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(err.to_string().contains(".."));
+}
+
+#[test]
+fn test_mitamae_validate_rejects_nonexistent_binary() {
+    let task = MitamaeTask::new(
+        ScriptSource::Content("package 'vim'".to_string()),
+        "/nonexistent/mitamae".into(),
+    );
+    let err = task.validate().unwrap_err();
+    assert!(matches!(err, RsdebstrapError::Io { .. }), "Expected Io error, got: {:?}", err);
+}
+
+#[test]
+fn test_mitamae_validate_rejects_binary_directory() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let dir_path = temp_dir.path().join("not_a_binary");
+    std::fs::create_dir(&dir_path).expect("failed to create directory");
+    let dir_utf8 =
+        camino::Utf8PathBuf::from_path_buf(dir_path).expect("path should be valid UTF-8");
+
+    let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), dir_utf8);
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(err.to_string().contains("not a file"));
+}
+
+#[test]
+fn test_mitamae_validate_rejects_empty_content() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let binary_path = temp_dir.path().join("mitamae");
+    std::fs::write(&binary_path, "fake binary").expect("failed to write binary");
+    let binary_utf8 =
+        camino::Utf8PathBuf::from_path_buf(binary_path).expect("path should be valid UTF-8");
+
+    let task = MitamaeTask::new(ScriptSource::Content("".to_string()), binary_utf8);
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(err.to_string().contains("must not be empty"));
+}
+
+#[test]
+fn test_mitamae_validate_rejects_recipe_path_traversal() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let binary_path = temp_dir.path().join("mitamae");
+    std::fs::write(&binary_path, "fake binary").expect("failed to write binary");
+    let binary_utf8 =
+        camino::Utf8PathBuf::from_path_buf(binary_path).expect("path should be valid UTF-8");
+
+    let task = MitamaeTask::new(ScriptSource::Script("../../../etc/passwd".into()), binary_utf8);
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(err.to_string().contains(".."));
+}
+
+#[test]
+fn test_mitamae_validate_rejects_whitespace_only_content() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let binary_path = temp_dir.path().join("mitamae");
+    std::fs::write(&binary_path, "fake binary").expect("failed to write binary");
+    let binary_utf8 =
+        camino::Utf8PathBuf::from_path_buf(binary_path).expect("path should be valid UTF-8");
+
+    let task = MitamaeTask::new(ScriptSource::Content("   \n\t  ".to_string()), binary_utf8);
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(err.to_string().contains("must not be empty"));
+}
+
+#[test]
+fn test_mitamae_resolve_paths_resolves_binary_and_recipe() {
+    let mut task =
+        MitamaeTask::new(ScriptSource::Script("recipes/default.rb".into()), "bin/mitamae".into());
+    task.resolve_paths(Utf8Path::new("/home/user/project"));
+    assert_eq!(task.binary().as_str(), "/home/user/project/bin/mitamae");
+    assert_eq!(task.script_path().unwrap().as_str(), "/home/user/project/recipes/default.rb");
+}
+
+#[test]
+fn test_mitamae_resolve_paths_preserves_absolute() {
+    let mut task = MitamaeTask::new(
+        ScriptSource::Script("/abs/recipe.rb".into()),
+        "/usr/local/bin/mitamae".into(),
+    );
+    task.resolve_paths(Utf8Path::new("/home/user/project"));
+    assert_eq!(task.binary().as_str(), "/usr/local/bin/mitamae");
+    assert_eq!(task.script_path().unwrap().as_str(), "/abs/recipe.rb");
+}
+
+#[test]
+fn test_mitamae_name_inline() {
+    let task = MitamaeTask::new(
+        ScriptSource::Content("package 'vim'".to_string()),
+        "/usr/local/bin/mitamae".into(),
+    );
+    assert_eq!(task.name(), "<inline>");
+}
+
+#[test]
+fn test_mitamae_name_script() {
+    let task = MitamaeTask::new(
+        ScriptSource::Script("/path/to/recipe.rb".into()),
+        "/usr/local/bin/mitamae".into(),
+    );
+    assert_eq!(task.name(), "/path/to/recipe.rb");
+}
+
+#[test]
+fn test_task_definition_name_shell_prefix() {
+    let task =
+        TaskDefinition::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
+    assert_eq!(task.name().as_ref(), "shell:<inline>");
+}
+
+#[test]
+fn test_task_definition_name_mitamae_prefix() {
+    let task = TaskDefinition::Mitamae(MitamaeTask::new(
+        ScriptSource::Content("package 'vim'".to_string()),
+        "/usr/local/bin/mitamae".into(),
+    ));
+    assert_eq!(task.name().as_ref(), "mitamae:<inline>");
+}
+
+#[test]
+fn test_task_definition_binary_path_shell_none() {
+    let task =
+        TaskDefinition::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
+    assert_eq!(task.binary_path(), None);
+}
+
+#[test]
+fn test_task_definition_binary_path_mitamae_some() {
+    let task = TaskDefinition::Mitamae(MitamaeTask::new(
+        ScriptSource::Content("package 'vim'".to_string()),
+        "/usr/local/bin/mitamae".into(),
+    ));
+    assert_eq!(task.binary_path(), Some(Utf8Path::new("/usr/local/bin/mitamae")));
+}
+
+// =============================================================================
+// ScriptSource method tests
+// =============================================================================
+
+#[test]
+fn test_script_source_name_returns_path_for_script() {
+    let source = ScriptSource::Script("/path/to/script.sh".into());
+    assert_eq!(source.name(), "/path/to/script.sh");
+}
+
+#[test]
+fn test_script_source_name_returns_inline_for_content() {
+    let source = ScriptSource::Content("echo test".to_string());
+    assert_eq!(source.name(), "<inline>");
+}
+
+#[test]
+fn test_script_source_script_path_returns_some_for_script() {
+    let source = ScriptSource::Script("/path/to/script.sh".into());
+    assert_eq!(source.script_path(), Some(Utf8Path::new("/path/to/script.sh")));
+}
+
+#[test]
+fn test_script_source_script_path_returns_none_for_content() {
+    let source = ScriptSource::Content("echo test".to_string());
+    assert_eq!(source.script_path(), None);
+}
+
+#[test]
+fn test_script_source_validate_rejects_path_traversal() {
+    let source = ScriptSource::Script("../../../etc/passwd".into());
+    let err = source.validate("test script").unwrap_err();
+    assert!(matches!(err, RsdebstrapError::Validation(_)));
+    let msg = err.to_string();
+    assert!(msg.contains(".."), "Expected '..' in error, got: {}", msg);
+    assert!(msg.contains("test script"), "Expected label in error, got: {}", msg);
+}
+
+#[test]
+fn test_script_source_validate_rejects_empty_content() {
+    let source = ScriptSource::Content("".to_string());
+    let err = source.validate("test script").unwrap_err();
+    assert!(matches!(err, RsdebstrapError::Validation(_)));
+    let msg = err.to_string();
+    assert!(
+        msg.contains("must not be empty"),
+        "Expected 'must not be empty' in error, got: {}",
+        msg
+    );
+    assert!(msg.contains("test script"), "Expected label in error, got: {}", msg);
+}
+
+#[test]
+fn test_script_source_validate_accepts_valid_script() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let script_path = temp_dir.path().join("valid.sh");
+    std::fs::write(&script_path, "#!/bin/sh\necho ok\n").expect("failed to write script");
+    let source = ScriptSource::Script(
+        camino::Utf8PathBuf::from_path_buf(script_path).expect("path should be valid UTF-8"),
+    );
+    assert!(source.validate("test script").is_ok());
+}
+
+#[test]
+fn test_script_source_validate_accepts_valid_content() {
+    let source = ScriptSource::Content("echo test".to_string());
+    assert!(source.validate("test script").is_ok());
 }

@@ -1,11 +1,18 @@
+use std::cell::RefCell;
+use std::ffi::OsString;
+use std::io::Write;
+use std::os::unix::process::ExitStatusExt;
+use std::process::ExitStatus;
+use std::sync::{LazyLock, Mutex};
+
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::bootstrap::debootstrap::{self, DebootstrapConfig};
 use rsdebstrap::bootstrap::mmdebstrap::{self, MmdebstrapConfig};
 use rsdebstrap::config::{Bootstrap, Profile, load_profile};
-use std::io::Write;
-use std::sync::{LazyLock, Mutex};
+use rsdebstrap::executor::ExecutionResult;
+use rsdebstrap::isolation::IsolationContext;
 use tempfile::NamedTempFile;
 use tracing::warn;
 
@@ -510,5 +517,127 @@ impl Drop for CwdGuard {
                 "failed to restore working directory"
             );
         }
+    }
+}
+
+/// Mock isolation context for testing task execution.
+#[allow(dead_code)]
+pub struct MockContext {
+    rootfs: Utf8PathBuf,
+    dry_run: bool,
+    should_fail: bool,
+    exit_code: Option<i32>,
+    should_error: bool,
+    error_message: Option<String>,
+    executed_commands: RefCell<Vec<Vec<OsString>>>,
+    return_no_status: bool,
+}
+
+#[allow(dead_code)]
+impl MockContext {
+    pub fn new(rootfs: &Utf8Path) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: false,
+            should_fail: false,
+            exit_code: None,
+            should_error: false,
+            error_message: None,
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
+        }
+    }
+
+    pub fn new_dry_run(rootfs: &Utf8Path) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: true,
+            should_fail: false,
+            exit_code: None,
+            should_error: false,
+            error_message: None,
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
+        }
+    }
+
+    pub fn with_failure(rootfs: &Utf8Path, exit_code: i32) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: false,
+            should_fail: true,
+            exit_code: Some(exit_code),
+            should_error: false,
+            error_message: None,
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
+        }
+    }
+
+    pub fn with_error(rootfs: &Utf8Path, message: &str) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: false,
+            should_fail: false,
+            exit_code: None,
+            should_error: true,
+            error_message: Some(message.to_string()),
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: false,
+        }
+    }
+
+    pub fn with_no_status(rootfs: &Utf8Path) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            dry_run: false,
+            should_fail: false,
+            exit_code: None,
+            should_error: false,
+            error_message: None,
+            executed_commands: RefCell::new(Vec::new()),
+            return_no_status: true,
+        }
+    }
+
+    pub fn executed_commands(&self) -> Vec<Vec<OsString>> {
+        self.executed_commands.borrow().clone()
+    }
+}
+
+impl IsolationContext for MockContext {
+    fn name(&self) -> &'static str {
+        "mock"
+    }
+
+    fn rootfs(&self) -> &Utf8Path {
+        &self.rootfs
+    }
+
+    fn dry_run(&self) -> bool {
+        self.dry_run
+    }
+
+    fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+        self.executed_commands.borrow_mut().push(command.to_vec());
+
+        if self.should_error {
+            anyhow::bail!("{}", self.error_message.as_deref().unwrap_or("mock error"));
+        }
+
+        if self.return_no_status {
+            Ok(ExecutionResult { status: None })
+        } else if self.should_fail {
+            let status = Some(ExitStatus::from_raw(self.exit_code.unwrap_or(1) << 8));
+            Ok(ExecutionResult { status })
+        } else {
+            Ok(ExecutionResult {
+                status: Some(ExitStatus::from_raw(0)),
+            })
+        }
+    }
+
+    fn teardown(&mut self) -> Result<()> {
+        Ok(())
     }
 }

@@ -1,5 +1,7 @@
 //! Security validation tests for ShellTask.
 
+mod helpers;
+
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::os::unix::process::ExitStatusExt;
@@ -13,136 +15,7 @@ use rsdebstrap::isolation::IsolationContext;
 use rsdebstrap::task::{ScriptSource, ShellTask};
 use tempfile::tempdir;
 
-/// Mock isolation context for testing.
-struct MockContext {
-    rootfs: camino::Utf8PathBuf,
-    dry_run: bool,
-    /// Whether the execute call should fail with a non-zero exit code
-    should_fail: bool,
-    /// Exit code to return when executing (ignored if should_fail is false)
-    exit_code: Option<i32>,
-    /// Whether execute() should return an Err (simulates execution errors)
-    should_error: bool,
-    /// Error message to return when should_error is true
-    error_message: Option<String>,
-    /// Recorded commands that were executed
-    executed_commands: RefCell<Vec<Vec<OsString>>>,
-    /// Whether to return status: None (simulates signal-killed process)
-    return_no_status: bool,
-}
-
-impl MockContext {
-    fn new(rootfs: &Utf8Path) -> Self {
-        Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
-            should_fail: false,
-            exit_code: None,
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            return_no_status: false,
-        }
-    }
-
-    fn new_dry_run(rootfs: &Utf8Path) -> Self {
-        Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: true,
-            should_fail: false,
-            exit_code: None,
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            return_no_status: false,
-        }
-    }
-
-    fn with_failure(rootfs: &Utf8Path, exit_code: i32) -> Self {
-        Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
-            should_fail: true,
-            exit_code: Some(exit_code),
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            return_no_status: false,
-        }
-    }
-
-    fn with_error(rootfs: &Utf8Path, message: &str) -> Self {
-        Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
-            should_fail: false,
-            exit_code: None,
-            should_error: true,
-            error_message: Some(message.to_string()),
-            executed_commands: RefCell::new(Vec::new()),
-            return_no_status: false,
-        }
-    }
-
-    fn with_no_status(rootfs: &Utf8Path) -> Self {
-        Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
-            should_fail: false,
-            exit_code: None,
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            return_no_status: true,
-        }
-    }
-
-    fn executed_commands(&self) -> Vec<Vec<OsString>> {
-        self.executed_commands.borrow().clone()
-    }
-}
-
-impl IsolationContext for MockContext {
-    fn name(&self) -> &'static str {
-        "mock"
-    }
-
-    fn rootfs(&self) -> &Utf8Path {
-        &self.rootfs
-    }
-
-    fn dry_run(&self) -> bool {
-        self.dry_run
-    }
-
-    fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
-        self.executed_commands.borrow_mut().push(command.to_vec());
-
-        // Check if we should return an error
-        if self.should_error {
-            anyhow::bail!("{}", self.error_message.as_deref().unwrap_or("mock error"));
-        }
-
-        if self.return_no_status {
-            // Simulate a process killed by signal (no exit status available)
-            Ok(ExecutionResult { status: None })
-        } else if self.should_fail {
-            // Create an ExitStatus from the raw exit code
-            // On Unix, exit codes are stored as (code << 8) in the raw wait status
-            let status = Some(ExitStatus::from_raw(self.exit_code.unwrap_or(1) << 8));
-            Ok(ExecutionResult { status })
-        } else {
-            // Success case: return exit code 0
-            Ok(ExecutionResult {
-                status: Some(ExitStatus::from_raw(0)),
-            })
-        }
-    }
-
-    fn teardown(&mut self) -> Result<()> {
-        Ok(())
-    }
-}
+use crate::helpers::MockContext;
 
 /// Helper to set up a valid rootfs with /tmp and /bin/sh
 fn setup_valid_rootfs(temp_dir: &tempfile::TempDir) {
@@ -460,7 +333,7 @@ fn test_execute_inline_script_success() {
         script_arg
     );
 
-    // Verify the script file was cleaned up by ScriptGuard (RAII)
+    // Verify the script file was cleaned up by TempFileGuard (RAII)
     let tmp_dir = temp_dir.path().join("tmp");
     let remaining_scripts: Vec<_> = std::fs::read_dir(&tmp_dir)
         .expect("failed to read tmp dir")
@@ -509,7 +382,7 @@ fn test_execute_external_script_success() {
         script_arg
     );
 
-    // Verify the script file was cleaned up by ScriptGuard (RAII)
+    // Verify the script file was cleaned up by TempFileGuard (RAII)
     let tmp_dir = temp_dir.path().join("tmp");
     let remaining_scripts: Vec<_> = std::fs::read_dir(&tmp_dir)
         .expect("failed to read tmp dir")
@@ -736,9 +609,9 @@ fn test_execute_with_custom_shell() {
 }
 
 #[test]
-fn test_execute_with_no_exit_status_succeeds() {
-    // When a process returns no exit status (e.g., in dry-run mode),
-    // ExecutionResult::success() returns true, so ShellTask treats it as success.
+fn test_execute_with_no_exit_status_returns_error() {
+    // When a process returns no exit status in non-dry-run mode (e.g., killed by signal),
+    // this should be treated as an error rather than silently succeeding.
     let temp_dir = tempdir().expect("failed to create temp dir");
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
@@ -750,10 +623,25 @@ fn test_execute_with_no_exit_status_succeeds() {
     let context = MockContext::with_no_status(&rootfs);
     let result = task.execute(&context);
 
-    assert!(result.is_ok(), "status: None should be treated as success, got: {:?}", result);
-
-    let commands = context.executed_commands();
-    assert_eq!(commands.len(), 1, "Expected exactly one command executed");
+    assert!(result.is_err(), "status: None should be treated as error");
+    let anyhow_err = result.unwrap_err();
+    let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
+    assert!(
+        downcast.is_some(),
+        "Expected RsdebstrapError in error chain, got: {:#}",
+        anyhow_err,
+    );
+    assert!(
+        matches!(downcast.unwrap(), RsdebstrapError::Execution { .. }),
+        "Expected RsdebstrapError::Execution, got: {:?}",
+        downcast.unwrap(),
+    );
+    let err_msg = format!("{}", anyhow_err);
+    assert!(
+        err_msg.contains("process exited without status"),
+        "Expected 'process exited without status' in error, got: {}",
+        err_msg,
+    );
 }
 
 // =============================================================================
