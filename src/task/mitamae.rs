@@ -147,26 +147,8 @@ impl MitamaeTask {
             ));
         }
 
-        if binary
-            .components()
-            .any(|c| c == camino::Utf8Component::ParentDir)
-        {
-            return Err(RsdebstrapError::Validation(format!(
-                "mitamae binary path '{}' contains '..' components, \
-                which is not allowed for security reasons",
-                binary
-            )));
-        }
-
-        let metadata = fs::metadata(binary).map_err(|e| {
-            RsdebstrapError::io(format!("failed to read mitamae binary metadata: {}", binary), e)
-        })?;
-        if !metadata.is_file() {
-            return Err(RsdebstrapError::Validation(format!(
-                "mitamae binary is not a file: {}",
-                binary
-            )));
-        }
+        super::validate_no_parent_dirs(binary, "mitamae binary")?;
+        super::validate_host_file_exists(binary, "mitamae binary")?;
 
         // Validate recipe source
         self.source.validate("mitamae recipe")

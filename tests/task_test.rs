@@ -119,6 +119,78 @@ fn test_validate_script_is_directory() {
     assert!(err_msg.contains("is not a file"));
 }
 
+#[cfg(unix)]
+#[test]
+fn test_validate_script_symlink_rejected() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let real_file = temp_dir.path().join("real_script.sh");
+    std::fs::write(&real_file, "#!/bin/sh\necho test\n").expect("failed to write script");
+    let symlink_path = temp_dir.path().join("symlink_script.sh");
+    std::os::unix::fs::symlink(&real_file, &symlink_path).expect("failed to create symlink");
+    let task = ShellTask::new(ScriptSource::Script(
+        camino::Utf8PathBuf::from_path_buf(symlink_path).expect("path should be valid UTF-8"),
+    ));
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+    let msg = err.to_string();
+    assert!(msg.contains("symlink"), "Expected 'symlink' in error, got: {}", msg);
+    assert!(
+        msg.contains("security reasons"),
+        "Expected 'security reasons' in error, got: {}",
+        msg
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_validate_mitamae_binary_symlink_rejected() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let real_binary = temp_dir.path().join("real_mitamae");
+    std::fs::write(&real_binary, "fake binary").expect("failed to write binary");
+    let symlink_path = temp_dir.path().join("mitamae_link");
+    std::os::unix::fs::symlink(&real_binary, &symlink_path).expect("failed to create symlink");
+    let binary_utf8 =
+        camino::Utf8PathBuf::from_path_buf(symlink_path).expect("path should be valid UTF-8");
+    let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary_utf8);
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+    let msg = err.to_string();
+    assert!(msg.contains("symlink"), "Expected 'symlink' in error, got: {}", msg);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_validate_mitamae_recipe_symlink_rejected() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let real_binary = temp_dir.path().join("mitamae");
+    std::fs::write(&real_binary, "fake binary").expect("failed to write binary");
+    let binary_utf8 =
+        camino::Utf8PathBuf::from_path_buf(real_binary).expect("path should be valid UTF-8");
+    let real_recipe = temp_dir.path().join("real_recipe.rb");
+    std::fs::write(&real_recipe, "package 'vim'").expect("failed to write recipe");
+    let symlink_recipe = temp_dir.path().join("recipe_link.rb");
+    std::os::unix::fs::symlink(&real_recipe, &symlink_recipe).expect("failed to create symlink");
+    let recipe_utf8 =
+        camino::Utf8PathBuf::from_path_buf(symlink_recipe).expect("path should be valid UTF-8");
+    let task = MitamaeTask::new(ScriptSource::Script(recipe_utf8), binary_utf8);
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+    let msg = err.to_string();
+    assert!(msg.contains("symlink"), "Expected 'symlink' in error, got: {}", msg);
+}
+
 // =============================================================================
 // T1: TaskDefinition::resolve_paths unit tests
 // =============================================================================

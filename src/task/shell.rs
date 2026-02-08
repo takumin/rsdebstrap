@@ -202,17 +202,7 @@ impl ShellTask {
 
         // Validate shell path to prevent path traversal attacks
         let shell_path = self.shell.trim_start_matches('/');
-        if camino::Utf8Path::new(shell_path)
-            .components()
-            .any(|c| c == camino::Utf8Component::ParentDir)
-        {
-            return Err(RsdebstrapError::Validation(format!(
-                "shell path '{}' contains '..' components, \
-                which is not allowed for security reasons",
-                self.shell
-            ))
-            .into());
-        }
+        super::validate_no_parent_dirs(camino::Utf8Path::new(shell_path), "shell")?;
 
         // Check if the specified shell exists and is a file in rootfs
         let shell_in_rootfs = rootfs.join(shell_path);

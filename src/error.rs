@@ -80,6 +80,17 @@ pub enum RsdebstrapError {
     },
 }
 
+/// Formats OsString arguments into a space-separated, debug-quoted string.
+///
+/// Used by `RsdebstrapError::execution()` and `execution_in_isolation()`
+/// to consistently format command arguments in error messages.
+fn format_args_lossy(args: &[std::ffi::OsString]) -> String {
+    args.iter()
+        .map(|a| format!("{:?}", a.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl RsdebstrapError {
     /// Creates an `Io` variant from a context string and an I/O error.
     ///
@@ -103,13 +114,7 @@ impl RsdebstrapError {
         let command = if spec.args.is_empty() {
             spec.command.clone()
         } else {
-            let args = spec
-                .args
-                .iter()
-                .map(|a| format!("{:?}", a.to_string_lossy()))
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!("{} {}", spec.command, args)
+            format!("{} {}", spec.command, format_args_lossy(&spec.args))
         };
         Self::Execution {
             command,
@@ -127,12 +132,8 @@ impl RsdebstrapError {
         isolation_name: &str,
         status: impl Into<String>,
     ) -> Self {
-        let cmd_str = command
-            .iter()
-            .map(|a| format!("{:?}", a.to_string_lossy()))
-            .collect::<Vec<_>>();
         Self::Execution {
-            command: format!("{} (isolation: {})", cmd_str.join(" "), isolation_name),
+            command: format!("{} (isolation: {})", format_args_lossy(command), isolation_name),
             status: status.into(),
         }
     }
