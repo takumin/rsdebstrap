@@ -8,12 +8,11 @@ use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
 
 #[test]
 fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
-    let config = MmdebstrapConfig {
-        components: vec!["main".to_string(), "contrib".to_string()],
-        architectures: vec!["amd64".to_string()],
-        include: vec!["curl".to_string(), "ca-certificates".to_string()],
-        ..helpers::create_mmdebstrap("bookworm", "rootfs.tar.zst")
-    };
+    let config = helpers::MmdebstrapConfigBuilder::new("bookworm", "rootfs.tar.zst")
+        .components(["main", "contrib"])
+        .architectures(["amd64"])
+        .include(["curl", "ca-certificates"])
+        .build();
     let dir = Utf8PathBuf::from("/tmp/test-success");
 
     // Create a mock executor that will "succeed"
@@ -29,12 +28,11 @@ fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
 
 #[test]
 fn test_run_mmdebstrap_with_mock_failure() -> Result<()> {
-    let config = MmdebstrapConfig {
-        components: vec!["main".to_string(), "contrib".to_string()],
-        architectures: vec!["amd64".to_string()],
-        include: vec!["curl".to_string(), "ca-certificates".to_string()],
-        ..helpers::create_mmdebstrap("bookworm", "rootfs.tar.zst")
-    };
+    let config = helpers::MmdebstrapConfigBuilder::new("bookworm", "rootfs.tar.zst")
+        .components(["main", "contrib"])
+        .architectures(["amd64"])
+        .include(["curl", "ca-certificates"])
+        .build();
     let dir = Utf8PathBuf::from("/tmp/test-failure");
 
     // Create a mock executor that will "fail"
@@ -93,8 +91,8 @@ fn test_build_debootstrap_args() -> Result<()> {
     let config = helpers::DebootstrapConfigBuilder::new("trixie", "rootfs")
         .variant(Variant::Minbase)
         .arch("amd64")
-        .components(vec!["main".to_string(), "contrib".to_string()])
-        .include(vec!["curl".to_string()])
+        .components(["main", "contrib"])
+        .include(["curl"])
         .mirror("https://deb.debian.org/debian")
         .merged_usr(true)
         .build();

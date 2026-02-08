@@ -153,58 +153,102 @@ impl MmdebstrapConfigBuilder {
         self
     }
 
-    pub fn architectures(mut self, architectures: Vec<String>) -> Self {
-        self.architectures = architectures;
+    pub fn architectures<I, S>(mut self, architectures: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.architectures = architectures.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn components(mut self, components: Vec<String>) -> Self {
-        self.components = components;
+    pub fn components<I, S>(mut self, components: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.components = components.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn include(mut self, include: Vec<String>) -> Self {
-        self.include = include;
+    pub fn include<I, S>(mut self, include: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.include = include.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn keyring(mut self, keyring: Vec<String>) -> Self {
-        self.keyring = keyring;
+    pub fn keyring<I, S>(mut self, keyring: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.keyring = keyring.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn aptopt(mut self, aptopt: Vec<String>) -> Self {
-        self.aptopt = aptopt;
+    pub fn aptopt<I, S>(mut self, aptopt: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.aptopt = aptopt.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn dpkgopt(mut self, dpkgopt: Vec<String>) -> Self {
-        self.dpkgopt = dpkgopt;
+    pub fn dpkgopt<I, S>(mut self, dpkgopt: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.dpkgopt = dpkgopt.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn setup_hook(mut self, setup_hook: Vec<String>) -> Self {
-        self.setup_hook = setup_hook;
+    pub fn setup_hook<I, S>(mut self, setup_hook: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.setup_hook = setup_hook.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn extract_hook(mut self, extract_hook: Vec<String>) -> Self {
-        self.extract_hook = extract_hook;
+    pub fn extract_hook<I, S>(mut self, extract_hook: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extract_hook = extract_hook.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn essential_hook(mut self, essential_hook: Vec<String>) -> Self {
-        self.essential_hook = essential_hook;
+    pub fn essential_hook<I, S>(mut self, essential_hook: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.essential_hook = essential_hook.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn customize_hook(mut self, customize_hook: Vec<String>) -> Self {
-        self.customize_hook = customize_hook;
+    pub fn customize_hook<I, S>(mut self, customize_hook: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.customize_hook = customize_hook.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn mirrors(mut self, mirrors: Vec<String>) -> Self {
-        self.mirrors = mirrors;
+    pub fn mirrors<I, S>(mut self, mirrors: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.mirrors = mirrors.into_iter().map(Into::into).collect();
         self
     }
 
@@ -289,18 +333,30 @@ impl DebootstrapConfigBuilder {
         self
     }
 
-    pub fn components(mut self, components: Vec<String>) -> Self {
-        self.components = components;
+    pub fn components<I, S>(mut self, components: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.components = components.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn include(mut self, include: Vec<String>) -> Self {
-        self.include = include;
+    pub fn include<I, S>(mut self, include: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.include = include.into_iter().map(Into::into).collect();
         self
     }
 
-    pub fn exclude(mut self, exclude: Vec<String>) -> Self {
-        self.exclude = exclude;
+    pub fn exclude<I, S>(mut self, exclude: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.exclude = exclude.into_iter().map(Into::into).collect();
         self
     }
 
