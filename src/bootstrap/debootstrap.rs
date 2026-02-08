@@ -6,7 +6,6 @@ use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use strum::Display;
-use tracing::debug;
 
 /// Variant defines the package selection strategy for debootstrap
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
@@ -87,21 +86,9 @@ impl BootstrapBackend for DebootstrapConfig {
         // Only add --variant if it's not the default (Minbase)
         builder.push_if_not_default("--variant", &self.variant, FlagValueStyle::Equals);
 
-        if !self.components.is_empty() {
-            builder.push_flag_value(
-                "--components",
-                &self.components.join(","),
-                FlagValueStyle::Equals,
-            );
-        }
-
-        if !self.include.is_empty() {
-            builder.push_flag_value("--include", &self.include.join(","), FlagValueStyle::Equals);
-        }
-
-        if !self.exclude.is_empty() {
-            builder.push_flag_value("--exclude", &self.exclude.join(","), FlagValueStyle::Equals);
-        }
+        builder.push_comma_joined("--components", &self.components, FlagValueStyle::Equals);
+        builder.push_comma_joined("--include", &self.include, FlagValueStyle::Equals);
+        builder.push_comma_joined("--exclude", &self.exclude, FlagValueStyle::Equals);
 
         if self.foreign {
             builder.push_flag("--foreign");
@@ -139,14 +126,7 @@ impl BootstrapBackend for DebootstrapConfig {
             cmd_args.push(mirror.into());
         }
 
-        debug!(
-            "debootstrap would run: debootstrap {}",
-            cmd_args
-                .iter()
-                .map(|s| s.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
+        self.log_command_args(&cmd_args);
 
         Ok(cmd_args)
     }
