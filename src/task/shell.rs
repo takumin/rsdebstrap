@@ -9,9 +9,7 @@
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
-use serde::de::{self, MapAccess, Visitor};
 use std::ffi::OsString;
-use std::fmt;
 use std::fs;
 use tracing::{debug, info};
 
@@ -55,77 +53,20 @@ impl<'de> Deserialize<'de> for ShellTask {
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field {
-            Script,
-            Content,
-            Shell,
+        #[serde(deny_unknown_fields)]
+        struct RawShellTask {
+            script: Option<Utf8PathBuf>,
+            content: Option<String>,
+            #[serde(default = "default_shell")]
+            shell: String,
         }
 
-        struct ShellTaskVisitor;
-
-        impl<'de> Visitor<'de> for ShellTaskVisitor {
-            type Value = ShellTask;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a shell task with either 'script' or 'content'")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> std::result::Result<ShellTask, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut script: Option<Utf8PathBuf> = None;
-                let mut content: Option<String> = None;
-                let mut shell: Option<String> = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Script => {
-                            if script.is_some() {
-                                return Err(de::Error::duplicate_field("script"));
-                            }
-                            script = Some(map.next_value()?);
-                        }
-                        Field::Content => {
-                            if content.is_some() {
-                                return Err(de::Error::duplicate_field("content"));
-                            }
-                            content = Some(map.next_value()?);
-                        }
-                        Field::Shell => {
-                            if shell.is_some() {
-                                return Err(de::Error::duplicate_field("shell"));
-                            }
-                            shell = Some(map.next_value()?);
-                        }
-                    }
-                }
-
-                let source = match (script, content) {
-                    (Some(_), Some(_)) => {
-                        return Err(de::Error::custom(
-                            "'script' and 'content' are mutually exclusive",
-                        ));
-                    }
-                    (None, None) => {
-                        return Err(de::Error::custom(
-                            "either 'script' or 'content' must be specified",
-                        ));
-                    }
-                    (Some(s), None) => ScriptSource::Script(s),
-                    (None, Some(c)) => ScriptSource::Content(c),
-                };
-
-                Ok(ShellTask {
-                    source,
-                    shell: shell.unwrap_or_else(default_shell),
-                })
-            }
-        }
-
-        const FIELDS: &[&str] = &["script", "content", "shell"];
-        deserializer.deserialize_struct("ShellTask", FIELDS, ShellTaskVisitor)
+        let raw = RawShellTask::deserialize(deserializer)?;
+        let source = super::resolve_script_source::<D::Error>(raw.script, raw.content)?;
+        Ok(ShellTask {
+            source,
+            shell: raw.shell,
+        })
     }
 }
 
@@ -236,53 +177,20 @@ impl ShellTask {
         info!("running shell script: {} (isolation: {})", self.name(), context.name());
         debug!("rootfs: {}, shell: {}, dry_run: {}", rootfs, self.shell, dry_run);
 
-        // Generate unique script name in rootfs
         let script_name = format!("task-{}.sh", uuid::Uuid::new_v4());
         let target_script = rootfs.join("tmp").join(&script_name);
-
-        // RAII guard ensures cleanup even on error
         let _guard = TempFileGuard::new(target_script.clone(), dry_run);
 
-        if !dry_run {
-            // Re-validate /tmp immediately before use to mitigate TOCTOU race conditions
-            super::validate_tmp_directory(rootfs)
-                .context("TOCTOU check: /tmp validation failed before writing script")?;
+        super::prepare_files_with_toctou_check(rootfs, dry_run, || {
+            super::prepare_source_file(&self.source, &target_script, 0o700, "script")
+        })?;
 
-            super::prepare_source_file(&self.source, &target_script, 0o700, "script")?;
-        }
-
-        // Execute script using the configured isolation backend
         let script_path_in_isolation = format!("/tmp/{}", script_name);
         let command: Vec<OsString> =
             vec![self.shell.as_str().into(), script_path_in_isolation.into()];
 
-        let result =
-            context
-                .execute(&command)
-                .map_err(|e| match e.downcast::<RsdebstrapError>() {
-                    Ok(typed) => typed.into(),
-                    Err(e) => e.context("failed to execute script"),
-                })?;
-
-        if !result.success() {
-            let status_display = result
-                .status
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "unknown (no status available)".to_string());
-            return Err(RsdebstrapError::execution_in_isolation(
-                &command,
-                context.name(),
-                status_display,
-            )
-            .into());
-        } else if !dry_run && result.status.is_none() {
-            return Err(RsdebstrapError::execution_in_isolation(
-                &command,
-                context.name(),
-                "process exited without status (possibly killed by signal)",
-            )
-            .into());
-        }
+        let result = super::execute_in_context(context, &command, "script")?;
+        super::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("shell script completed successfully");
         Ok(())

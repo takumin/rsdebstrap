@@ -10,9 +10,7 @@
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
-use serde::de::{self, MapAccess, Visitor};
 use std::ffi::OsString;
-use std::fmt;
 use std::fs;
 use tracing::{debug, info};
 
@@ -48,76 +46,19 @@ impl<'de> Deserialize<'de> for MitamaeTask {
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field {
-            Script,
-            Content,
-            Binary,
+        #[serde(deny_unknown_fields)]
+        struct RawMitamaeTask {
+            script: Option<Utf8PathBuf>,
+            content: Option<String>,
+            binary: Option<Utf8PathBuf>,
         }
 
-        struct MitamaeTaskVisitor;
-
-        impl<'de> Visitor<'de> for MitamaeTaskVisitor {
-            type Value = MitamaeTask;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str(
-                    "a mitamae task with either 'script' or 'content' (and optional 'binary')",
-                )
-            }
-
-            fn visit_map<V>(self, mut map: V) -> std::result::Result<MitamaeTask, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut script: Option<Utf8PathBuf> = None;
-                let mut content: Option<String> = None;
-                let mut binary: Option<Utf8PathBuf> = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Script => {
-                            if script.is_some() {
-                                return Err(de::Error::duplicate_field("script"));
-                            }
-                            script = Some(map.next_value()?);
-                        }
-                        Field::Content => {
-                            if content.is_some() {
-                                return Err(de::Error::duplicate_field("content"));
-                            }
-                            content = Some(map.next_value()?);
-                        }
-                        Field::Binary => {
-                            if binary.is_some() {
-                                return Err(de::Error::duplicate_field("binary"));
-                            }
-                            binary = Some(map.next_value()?);
-                        }
-                    }
-                }
-
-                let source = match (script, content) {
-                    (Some(_), Some(_)) => {
-                        return Err(de::Error::custom(
-                            "'script' and 'content' are mutually exclusive",
-                        ));
-                    }
-                    (None, None) => {
-                        return Err(de::Error::custom(
-                            "either 'script' or 'content' must be specified",
-                        ));
-                    }
-                    (Some(s), None) => ScriptSource::Script(s),
-                    (None, Some(c)) => ScriptSource::Content(c),
-                };
-
-                Ok(MitamaeTask { source, binary })
-            }
-        }
-
-        const FIELDS: &[&str] = &["script", "content", "binary"];
-        deserializer.deserialize_struct("MitamaeTask", FIELDS, MitamaeTaskVisitor)
+        let raw = RawMitamaeTask::deserialize(deserializer)?;
+        let source = super::resolve_script_source::<D::Error>(raw.script, raw.content)?;
+        Ok(MitamaeTask {
+            source,
+            binary: raw.binary,
+        })
     }
 }
 
@@ -257,36 +198,25 @@ impl MitamaeTask {
         info!("running mitamae recipe: {} (isolation: {})", self.name(), context.name());
         debug!("rootfs: {}, binary: {}, dry_run: {}", rootfs, binary, dry_run);
 
-        // Generate unique names for binary and recipe in rootfs
         let uuid = uuid::Uuid::new_v4();
         let binary_name = format!("mitamae-{}", uuid);
         let recipe_name = format!("recipe-{}.rb", uuid);
         let target_binary = rootfs.join("tmp").join(&binary_name);
         let target_recipe = rootfs.join("tmp").join(&recipe_name);
 
-        // RAII guards ensure cleanup even on error
         let _binary_guard = TempFileGuard::new(target_binary.clone(), dry_run);
         let _recipe_guard = TempFileGuard::new(target_recipe.clone(), dry_run);
 
-        if !dry_run {
-            // Re-validate /tmp immediately before use to mitigate TOCTOU race conditions
-            super::validate_tmp_directory(rootfs)
-                .context("TOCTOU check: /tmp validation failed before writing files")?;
-
-            // Copy mitamae binary to rootfs
+        super::prepare_files_with_toctou_check(rootfs, dry_run, || {
             info!("copying mitamae binary from {} to rootfs", binary);
             fs::copy(binary, &target_binary).with_context(|| {
                 format!("failed to copy mitamae binary {} to {}", binary, target_binary)
             })?;
-
             #[cfg(unix)]
             super::set_file_mode(&target_binary, 0o700)?;
+            super::prepare_source_file(&self.source, &target_recipe, 0o600, "recipe")
+        })?;
 
-            // Copy or write recipe to rootfs (0o600: recipe is a data file, not executable)
-            super::prepare_source_file(&self.source, &target_recipe, 0o600, "recipe")?;
-        }
-
-        // Execute mitamae using the configured isolation backend
         let binary_path_in_isolation = format!("/tmp/{}", binary_name);
         let recipe_path_in_isolation = format!("/tmp/{}", recipe_name);
         let command: Vec<OsString> = vec![
@@ -295,33 +225,8 @@ impl MitamaeTask {
             recipe_path_in_isolation.into(),
         ];
 
-        let result =
-            context
-                .execute(&command)
-                .map_err(|e| match e.downcast::<RsdebstrapError>() {
-                    Ok(typed) => typed.into(),
-                    Err(e) => e.context("failed to execute mitamae"),
-                })?;
-
-        if !result.success() {
-            let status_display = result
-                .status
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "unknown (no status available)".to_string());
-            return Err(RsdebstrapError::execution_in_isolation(
-                &command,
-                context.name(),
-                status_display,
-            )
-            .into());
-        } else if !dry_run && result.status.is_none() {
-            return Err(RsdebstrapError::execution_in_isolation(
-                &command,
-                context.name(),
-                "process exited without status (possibly killed by signal)",
-            )
-            .into());
-        }
+        let result = super::execute_in_context(context, &command, "mitamae")?;
+        super::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("mitamae recipe completed successfully");
         Ok(())

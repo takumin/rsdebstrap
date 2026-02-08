@@ -16,6 +16,7 @@ pub mod mitamae;
 pub mod shell;
 
 use std::borrow::Cow;
+use std::ffi::OsString;
 use std::fs;
 
 use anyhow::{Context, Result};
@@ -27,7 +28,24 @@ pub use mitamae::MitamaeTask;
 pub use shell::ShellTask;
 
 use crate::error::RsdebstrapError;
+use crate::executor::ExecutionResult;
 use crate::isolation::IsolationContext;
+
+/// Resolves `script`/`content` mutual exclusivity and builds a [`ScriptSource`].
+///
+/// Used by task `Deserialize` impls to share the common validation logic:
+/// exactly one of `script` or `content` must be provided.
+pub(crate) fn resolve_script_source<E: serde::de::Error>(
+    script: Option<Utf8PathBuf>,
+    content: Option<String>,
+) -> std::result::Result<ScriptSource, E> {
+    match (script, content) {
+        (Some(_), Some(_)) => Err(E::custom("'script' and 'content' are mutually exclusive")),
+        (None, None) => Err(E::custom("either 'script' or 'content' must be specified")),
+        (Some(s), None) => Ok(ScriptSource::Script(s)),
+        (None, Some(c)) => Ok(ScriptSource::Content(c)),
+    }
+}
 
 /// Script source for task execution.
 ///
@@ -217,6 +235,68 @@ pub(crate) fn validate_tmp_directory(rootfs: &Utf8Path) -> Result<()> {
     Ok(())
 }
 
+/// Executes a command within an isolation context, preserving `RsdebstrapError` variants.
+///
+/// If the context returns an `anyhow::Error` that wraps a `RsdebstrapError`, the typed
+/// error is preserved. Otherwise, the error is wrapped with a descriptive context message.
+pub(crate) fn execute_in_context(
+    context: &dyn IsolationContext,
+    command: &[OsString],
+    task_label: &str,
+) -> Result<ExecutionResult> {
+    context
+        .execute(command)
+        .map_err(|e| match e.downcast::<RsdebstrapError>() {
+            Ok(typed) => typed.into(),
+            Err(e) => e.context(format!("failed to execute {}", task_label)),
+        })
+}
+
+/// Checks the execution result and returns an error if the command failed.
+///
+/// Handles three cases:
+/// - Non-zero exit status: returns `Execution` error with the status code
+/// - No exit status in non-dry-run mode: returns `Execution` error (e.g., killed by signal)
+/// - Success or dry-run with no status: returns `Ok(())`
+pub(crate) fn check_execution_result(
+    result: &ExecutionResult,
+    command: &[OsString],
+    context_name: &str,
+    dry_run: bool,
+) -> Result<()> {
+    match result.status {
+        Some(status) if !status.success() => {
+            Err(
+                RsdebstrapError::execution_in_isolation(command, context_name, status.to_string())
+                    .into(),
+            )
+        }
+        None if !dry_run => Err(RsdebstrapError::execution_in_isolation(
+            command,
+            context_name,
+            "process exited without status (possibly killed by signal)",
+        )
+        .into()),
+        _ => Ok(()),
+    }
+}
+
+/// Re-validates `/tmp` (TOCTOU mitigation) and runs the file preparation closure.
+///
+/// In dry-run mode, skips both validation and file preparation entirely.
+pub(crate) fn prepare_files_with_toctou_check(
+    rootfs: &Utf8Path,
+    dry_run: bool,
+    prepare_fn: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if !dry_run {
+        validate_tmp_directory(rootfs)
+            .context("TOCTOU check: /tmp validation failed before writing files")?;
+        prepare_fn()?;
+    }
+    Ok(())
+}
+
 /// Declarative task definition for pipeline steps.
 ///
 /// Each variant holds the data needed to configure and execute a specific
@@ -285,6 +365,60 @@ impl TaskDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    mod check_execution_result_tests {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::ExitStatus;
+
+        use super::*;
+        use crate::executor::ExecutionResult;
+
+        #[test]
+        fn success_returns_ok() {
+            let result = ExecutionResult {
+                status: Some(ExitStatus::from_raw(0)),
+            };
+            let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/test.sh".into()];
+            assert!(check_execution_result(&result, &command, "chroot", false).is_ok());
+        }
+
+        #[test]
+        fn nonzero_exit_returns_execution_error() {
+            let result = ExecutionResult {
+                status: Some(ExitStatus::from_raw(1 << 8)),
+            };
+            let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/test.sh".into()];
+            let err = check_execution_result(&result, &command, "chroot", false).unwrap_err();
+            let typed = err.downcast_ref::<RsdebstrapError>().unwrap();
+            assert!(
+                matches!(typed, RsdebstrapError::Execution { .. }),
+                "expected Execution error, got: {:?}",
+                typed
+            );
+        }
+
+        #[test]
+        fn no_status_in_non_dry_run_returns_error() {
+            let result = ExecutionResult { status: None };
+            let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/test.sh".into()];
+            let err = check_execution_result(&result, &command, "chroot", false).unwrap_err();
+            let typed = err.downcast_ref::<RsdebstrapError>().unwrap();
+            assert!(
+                matches!(typed, RsdebstrapError::Execution { .. }),
+                "expected Execution error, got: {:?}",
+                typed
+            );
+            assert!(err.to_string().contains("killed by signal"));
+        }
+
+        #[test]
+        fn no_status_in_dry_run_returns_ok() {
+            let result = ExecutionResult { status: None };
+            let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/test.sh".into()];
+            assert!(check_execution_result(&result, &command, "chroot", true).is_ok());
+        }
+    }
 
     #[test]
     fn test_temp_file_guard_removes_file_on_drop() {
