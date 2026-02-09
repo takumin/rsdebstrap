@@ -139,12 +139,7 @@ impl MitamaeTask {
         &mut self,
         defaults: Option<&PrivilegeDefaults>,
     ) -> Result<(), RsdebstrapError> {
-        let resolved = self.privilege.resolve(defaults)?;
-        self.privilege = match resolved {
-            Some(method) => Privilege::Method(method),
-            None => Privilege::Disabled,
-        };
-        Ok(())
+        self.privilege.resolve_in_place(defaults)
     }
 
     /// Validates the task configuration.

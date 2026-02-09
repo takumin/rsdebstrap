@@ -69,16 +69,10 @@ impl Bootstrap {
         &mut self,
         defaults: Option<&PrivilegeDefaults>,
     ) -> Result<(), RsdebstrapError> {
-        let privilege = match self {
-            Bootstrap::Mmdebstrap(cfg) => &mut cfg.privilege,
-            Bootstrap::Debootstrap(cfg) => &mut cfg.privilege,
-        };
-        let resolved = privilege.resolve(defaults)?;
-        *privilege = match resolved {
-            Some(method) => Privilege::Method(method),
-            None => Privilege::Disabled,
-        };
-        Ok(())
+        match self {
+            Bootstrap::Mmdebstrap(cfg) => cfg.privilege.resolve_in_place(defaults),
+            Bootstrap::Debootstrap(cfg) => cfg.privilege.resolve_in_place(defaults),
+        }
     }
 
     /// Returns the resolved privilege method for the bootstrap backend.

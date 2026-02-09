@@ -122,7 +122,8 @@ impl CommandExecutor for RealCommandExecutor {
         }
 
         let find_command = |cmd_name: &str, label: &str| -> Result<std::path::PathBuf> {
-            which(cmd_name).map_err(|_| {
+            which(cmd_name).map_err(|e| {
+                tracing::debug!("command lookup failed for '{}': {}", cmd_name, e);
                 crate::error::RsdebstrapError::command_not_found(cmd_name, label).into()
             })
         };

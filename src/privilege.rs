@@ -62,18 +62,10 @@ pub enum Privilege {
 }
 
 impl Privilege {
-    /// Resolves the privilege setting against the profile defaults.
-    ///
-    /// Returns `Some(method)` if privilege escalation should be applied,
-    /// or `None` if no escalation is needed.
-    ///
-    /// # Errors
-    ///
-    /// Returns `RsdebstrapError::Validation` if `UseDefault` is specified
-    /// but no defaults are configured.
     /// Returns the resolved privilege method.
     ///
-    /// Should only be called after [`resolve()`](Self::resolve) has been used to
+    /// Should only be called after [`resolve()`](Self::resolve) or
+    /// [`resolve_in_place()`](Self::resolve_in_place) has been used to
     /// collapse the privilege setting into `Method` or `Disabled`.
     ///
     /// Returns `Some(method)` for `Method`, `None` for `Disabled` and `Inherit`.
@@ -90,6 +82,28 @@ impl Privilege {
                 None
             }
         }
+    }
+
+    /// Resolves the privilege setting in place, replacing `self` with the
+    /// resolved variant (`Method` or `Disabled`).
+    ///
+    /// This is a convenience wrapper around [`resolve()`](Self::resolve)
+    /// that mutates `self` directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if `UseDefault` is specified
+    /// but no defaults are configured.
+    pub fn resolve_in_place(
+        &mut self,
+        defaults: Option<&PrivilegeDefaults>,
+    ) -> Result<(), RsdebstrapError> {
+        let resolved = self.resolve(defaults)?;
+        *self = match resolved {
+            Some(method) => Self::Method(method),
+            None => Self::Disabled,
+        };
+        Ok(())
     }
 
     /// Resolves the privilege setting against the profile defaults.
@@ -328,6 +342,36 @@ mod tests {
             .resolve(None)
             .unwrap();
         assert_eq!(result, Some(PrivilegeMethod::Sudo));
+    }
+
+    // =========================================================================
+    // Privilege::resolve_in_place tests
+    // =========================================================================
+
+    #[test]
+    fn resolve_in_place_inherit_with_defaults() {
+        let defaults = PrivilegeDefaults {
+            method: PrivilegeMethod::Sudo,
+        };
+        let mut p = Privilege::Inherit;
+        p.resolve_in_place(Some(&defaults)).unwrap();
+        assert_eq!(p, Privilege::Method(PrivilegeMethod::Sudo));
+    }
+
+    #[test]
+    fn resolve_in_place_inherit_without_defaults() {
+        let mut p = Privilege::Inherit;
+        p.resolve_in_place(None).unwrap();
+        assert_eq!(p, Privilege::Disabled);
+    }
+
+    #[test]
+    fn resolve_in_place_use_default_without_defaults_errors() {
+        let mut p = Privilege::UseDefault;
+        let result = p.resolve_in_place(None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
     }
 
     // =========================================================================

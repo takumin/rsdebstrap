@@ -13,6 +13,10 @@ defaults:
   # If omitted, defaults to 'chroot'
   isolation:
     type: chroot
+  # Privilege escalation for commands that require root access
+  # Supported methods: sudo, doas
+  privilege:
+    method: sudo
 
 bootstrap:
   type: mmdebstrap
