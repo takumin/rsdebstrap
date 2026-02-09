@@ -17,6 +17,7 @@ use tracing::{debug, info};
 use super::{ScriptSource, TempFileGuard};
 use crate::error::RsdebstrapError;
 use crate::isolation::IsolationContext;
+use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 
 /// Mitamae task data and execution logic.
 ///
@@ -38,6 +39,10 @@ pub struct MitamaeTask {
     source: ScriptSource,
     /// Host-side mitamae binary path (None when relying on defaults)
     binary: Option<Utf8PathBuf>,
+    /// Raw privilege setting from YAML (resolved during defaults application)
+    privilege_raw: Privilege,
+    /// Resolved privilege method (set by `resolve_privilege()`)
+    privilege: Option<PrivilegeMethod>,
 }
 
 impl<'de> Deserialize<'de> for MitamaeTask {
@@ -51,6 +56,8 @@ impl<'de> Deserialize<'de> for MitamaeTask {
             script: Option<Utf8PathBuf>,
             content: Option<String>,
             binary: Option<Utf8PathBuf>,
+            #[serde(default)]
+            privilege: Privilege,
         }
 
         let raw = RawMitamaeTask::deserialize(deserializer)?;
@@ -58,6 +65,8 @@ impl<'de> Deserialize<'de> for MitamaeTask {
         Ok(MitamaeTask {
             source,
             binary: raw.binary,
+            privilege_raw: raw.privilege,
+            privilege: None,
         })
     }
 }
@@ -68,6 +77,8 @@ impl MitamaeTask {
         Self {
             source,
             binary: Some(binary),
+            privilege_raw: Privilege::default(),
+            privilege: None,
         }
     }
 
@@ -76,6 +87,8 @@ impl MitamaeTask {
         Self {
             source,
             binary: None,
+            privilege_raw: Privilege::default(),
+            privilege: None,
         }
     }
 
@@ -119,6 +132,20 @@ impl MitamaeTask {
         {
             *path = base_dir.join(&*path);
         }
+    }
+
+    /// Resolves the privilege setting against profile defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if `privilege: true` is specified
+    /// but no `defaults.privilege.method` is configured in the profile.
+    pub fn resolve_privilege(
+        &mut self,
+        defaults: Option<&PrivilegeDefaults>,
+    ) -> Result<(), RsdebstrapError> {
+        self.privilege = self.privilege_raw.resolve(defaults)?;
+        Ok(())
     }
 
     /// Validates the task configuration.
@@ -207,7 +234,7 @@ impl MitamaeTask {
             recipe_path_in_isolation.into(),
         ];
 
-        let result = super::execute_in_context(context, &command, "mitamae")?;
+        let result = super::execute_in_context(context, &command, "mitamae", self.privilege)?;
         super::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("mitamae recipe completed successfully");

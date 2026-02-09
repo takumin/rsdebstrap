@@ -1,6 +1,7 @@
 //! mmdebstrap backend implementation.
 
 use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle, RootfsOutput};
+use crate::privilege::Privilege;
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
@@ -152,6 +153,9 @@ pub struct MmdebstrapConfig {
     /// APT mirror URLs to use as package sources
     #[serde(default)]
     pub mirrors: Vec<String>,
+    /// Privilege escalation setting
+    #[serde(default)]
+    pub privilege: Privilege,
 }
 
 impl BootstrapBackend for MmdebstrapConfig {

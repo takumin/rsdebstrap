@@ -20,6 +20,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 
 use crate::executor::{CommandExecutor, ExecutionResult};
+use crate::privilege::PrivilegeMethod;
 
 pub mod chroot;
 
@@ -79,10 +80,15 @@ pub trait IsolationContext: Send {
     ///
     /// # Arguments
     /// * `command` - The command and arguments to execute
+    /// * `privilege` - Optional privilege escalation method to wrap the command
     ///
     /// # Returns
     /// Result containing the execution result or an error.
-    fn execute(&self, command: &[OsString]) -> Result<ExecutionResult>;
+    fn execute(
+        &self,
+        command: &[OsString],
+        privilege: Option<PrivilegeMethod>,
+    ) -> Result<ExecutionResult>;
 
     /// Tears down the isolation environment and releases resources.
     ///

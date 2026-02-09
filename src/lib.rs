@@ -5,6 +5,7 @@ pub mod error;
 pub mod executor;
 pub mod isolation;
 pub mod pipeline;
+pub mod privilege;
 pub mod task;
 
 pub use error::RsdebstrapError;
@@ -45,7 +46,8 @@ fn run_bootstrap_phase(
         .build_args(&profile.dir)
         .with_context(|| format!("failed to build arguments for {}", command_name))?;
 
-    let spec = executor::CommandSpec::new(command_name, args);
+    let privilege = profile.bootstrap.resolved_privilege_method();
+    let spec = executor::CommandSpec::new(command_name, args).with_privilege(privilege);
     let result = executor
         .execute(&spec)
         .with_context(|| format!("failed to execute {}", command_name))?;

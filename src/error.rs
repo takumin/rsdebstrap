@@ -111,7 +111,18 @@ impl RsdebstrapError {
         spec: &crate::executor::CommandSpec,
         status: impl Into<String>,
     ) -> Self {
-        let command = if spec.args.is_empty() {
+        let command = if let Some(method) = &spec.privilege {
+            if spec.args.is_empty() {
+                format!("{} {}", method.command_name(), spec.command)
+            } else {
+                format!(
+                    "{} {} {}",
+                    method.command_name(),
+                    spec.command,
+                    format_args_lossy(&spec.args)
+                )
+            }
+        } else if spec.args.is_empty() {
             spec.command.clone()
         } else {
             format!("{} {}", spec.command, format_args_lossy(&spec.args))
@@ -187,6 +198,28 @@ mod tests {
         let spec = CommandSpec::new("mmdebstrap", vec![]);
         let err = RsdebstrapError::execution(&spec, "exit status: 1");
         assert_eq!(err.to_string(), "command execution failed: mmdebstrap: exit status: 1");
+    }
+
+    #[test]
+    fn test_execution_constructor_with_privilege_and_args() {
+        use crate::executor::CommandSpec;
+        use crate::privilege::PrivilegeMethod;
+        let spec = CommandSpec::new("chroot", vec!["/tmp/rootfs".into(), "/bin/sh".into()])
+            .with_privilege(Some(PrivilegeMethod::Sudo));
+        let err = RsdebstrapError::execution(&spec, "exit status: 1");
+        assert_eq!(
+            err.to_string(),
+            "command execution failed: sudo chroot \"/tmp/rootfs\" \"/bin/sh\": exit status: 1"
+        );
+    }
+
+    #[test]
+    fn test_execution_constructor_with_privilege_without_args() {
+        use crate::executor::CommandSpec;
+        use crate::privilege::PrivilegeMethod;
+        let spec = CommandSpec::new("chroot", vec![]).with_privilege(Some(PrivilegeMethod::Doas));
+        let err = RsdebstrapError::execution(&spec, "exit status: 1");
+        assert_eq!(err.to_string(), "command execution failed: doas chroot: exit status: 1");
     }
 
     #[test]

@@ -3,11 +3,12 @@
 //! This module provides [`RealCommandExecutor`], which executes commands
 //! using `std::process::Command` with real-time output streaming.
 
+use std::ffi::OsString;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::thread::JoinHandle;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use which::which;
 
 use super::pipe::{StreamType, panic_message, read_pipe_to_log};
@@ -94,16 +95,53 @@ pub struct RealCommandExecutor {
 impl CommandExecutor for RealCommandExecutor {
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
         if self.dry_run {
-            tracing::info!("dry run: {:?}", spec);
+            if let Some(method) = &spec.privilege {
+                tracing::info!("dry run (privilege: {}): {:?}", method, spec);
+            } else {
+                tracing::info!("dry run: {:?}", spec);
+            }
             return Ok(ExecutionResult { status: None });
         }
 
-        let cmd =
-            which(&spec.command).with_context(|| format!("command not found: {}", spec.command))?;
-        tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
+        // Resolve the actual command to execute, wrapping with privilege if needed
+        let (resolved_program, resolved_args) = if let Some(method) = &spec.privilege {
+            let privilege_cmd = which(method.command_name()).map_err(|_| {
+                crate::error::RsdebstrapError::execution(
+                    spec,
+                    format!("privilege command '{}' not found in PATH", method.command_name()),
+                )
+            })?;
+            let actual_cmd = which(&spec.command).map_err(|_| {
+                crate::error::RsdebstrapError::execution(
+                    spec,
+                    format!("command '{}' not found in PATH", spec.command),
+                )
+            })?;
 
-        let mut command = Command::new(cmd);
-        command.args(&spec.args);
+            tracing::trace!(
+                "privilege escalation: {} {}",
+                method.command_name(),
+                actual_cmd.to_string_lossy()
+            );
+
+            let mut args: Vec<OsString> = Vec::with_capacity(spec.args.len() + 1);
+            args.push(actual_cmd.into_os_string());
+            args.extend(spec.args.iter().cloned());
+
+            (privilege_cmd, args)
+        } else {
+            let cmd = which(&spec.command).map_err(|_| {
+                crate::error::RsdebstrapError::execution(
+                    spec,
+                    format!("command '{}' not found in PATH", spec.command),
+                )
+            })?;
+            tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
+            (cmd, spec.args.clone())
+        };
+
+        let mut command = Command::new(&resolved_program);
+        command.args(&resolved_args);
 
         if let Some(ref cwd) = spec.cwd {
             command.current_dir(cwd);

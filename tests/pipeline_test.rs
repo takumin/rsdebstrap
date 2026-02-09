@@ -144,8 +144,12 @@ impl IsolationContext for MockContext {
         self.dry_run
     }
 
-    fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
-        let spec = CommandSpec::new("mock", command.to_vec());
+    fn execute(
+        &self,
+        command: &[OsString],
+        privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
+    ) -> Result<ExecutionResult> {
+        let spec = CommandSpec::new("mock", command.to_vec()).with_privilege(privilege);
         self.executor.execute(&spec)
     }
 

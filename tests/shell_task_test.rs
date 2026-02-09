@@ -433,7 +433,11 @@ fn test_execute_inline_script_verifies_file_written() {
         fn dry_run(&self) -> bool {
             false
         }
-        fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+        fn execute(
+            &self,
+            command: &[OsString],
+            _privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
+        ) -> Result<ExecutionResult> {
             self.executed_commands.borrow_mut().push(command.to_vec());
             // Read the script file that was written to rootfs
             if command.len() >= 2 {
@@ -519,7 +523,11 @@ fn test_execute_external_script_verifies_file_copied() {
         fn dry_run(&self) -> bool {
             false
         }
-        fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+        fn execute(
+            &self,
+            command: &[OsString],
+            _privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
+        ) -> Result<ExecutionResult> {
             self.executed_commands.borrow_mut().push(command.to_vec());
             if command.len() >= 2 {
                 let script_path_in_isolation = command[1].to_string_lossy();

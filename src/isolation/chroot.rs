@@ -2,6 +2,7 @@
 
 use super::{IsolationContext, IsolationProvider};
 use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
+use crate::privilege::PrivilegeMethod;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use std::ffi::OsString;
@@ -61,7 +62,11 @@ impl IsolationContext for ChrootContext {
         self.dry_run
     }
 
-    fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+    fn execute(
+        &self,
+        command: &[OsString],
+        privilege: Option<PrivilegeMethod>,
+    ) -> Result<ExecutionResult> {
         if self.torn_down {
             return Err(crate::error::RsdebstrapError::Isolation(
                 "cannot execute command: chroot context has already been torn down".to_string(),
@@ -73,7 +78,7 @@ impl IsolationContext for ChrootContext {
         args.push(self.rootfs.as_str().into());
         args.extend(command.iter().cloned());
 
-        let spec = CommandSpec::new("chroot", args);
+        let spec = CommandSpec::new("chroot", args).with_privilege(privilege);
         self.executor.execute(&spec)
     }
 

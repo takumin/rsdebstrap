@@ -23,6 +23,7 @@ use crate::bootstrap::{
 use crate::error::RsdebstrapError;
 use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::pipeline::Pipeline;
+use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 use crate::task::TaskDefinition;
 
 /// Static regex for removing duplicate location info from serde_yaml error messages.
@@ -51,6 +52,48 @@ impl Bootstrap {
         match self {
             Bootstrap::Mmdebstrap(cfg) => cfg,
             Bootstrap::Debootstrap(cfg) => cfg,
+        }
+    }
+
+    /// Returns a reference to the privilege setting of the bootstrap backend.
+    pub fn privilege(&self) -> &Privilege {
+        match self {
+            Bootstrap::Mmdebstrap(cfg) => &cfg.privilege,
+            Bootstrap::Debootstrap(cfg) => &cfg.privilege,
+        }
+    }
+
+    /// Resolves the privilege setting against profile defaults, replacing
+    /// the stored `Privilege` with a fully resolved variant.
+    pub fn resolve_privilege(
+        &mut self,
+        defaults: Option<&PrivilegeDefaults>,
+    ) -> Result<(), RsdebstrapError> {
+        let privilege = match self {
+            Bootstrap::Mmdebstrap(cfg) => &mut cfg.privilege,
+            Bootstrap::Debootstrap(cfg) => &mut cfg.privilege,
+        };
+        let resolved = privilege.resolve(defaults)?;
+        *privilege = match resolved {
+            Some(method) => Privilege::Method(method),
+            None => Privilege::Disabled,
+        };
+        Ok(())
+    }
+
+    /// Returns the resolved privilege method for the bootstrap backend.
+    ///
+    /// Should only be called after `resolve_privilege()`.
+    pub fn resolved_privilege_method(&self) -> Option<PrivilegeMethod> {
+        match self.privilege() {
+            Privilege::Method(m) => Some(*m),
+            Privilege::Disabled => None,
+            Privilege::Inherit | Privilege::UseDefault => {
+                tracing::warn!(
+                    "resolved_privilege_method() called before resolve_privilege(); returning None"
+                );
+                None
+            }
         }
     }
 }
@@ -104,6 +147,9 @@ pub struct Defaults {
     /// Default settings for mitamae tasks
     #[serde(default)]
     pub mitamae: MitamaeDefaults,
+    /// Default privilege escalation settings
+    #[serde(default)]
+    pub privilege: Option<PrivilegeDefaults>,
 }
 
 /// Represents a bootstrap profile configuration.
@@ -216,9 +262,10 @@ fn parse_profile_yaml(
     serde_yaml::from_reader(reader).map_err(|e| format_yaml_parse_error(e, file_path))
 }
 
-fn apply_defaults_to_tasks(profile: &mut Profile) {
+fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError> {
     let arch = std::env::consts::ARCH;
     let default_binary = profile.defaults.mitamae.binary.get(arch);
+    let privilege_defaults = profile.defaults.privilege.as_ref();
 
     if default_binary.is_none() && !profile.defaults.mitamae.binary.is_empty() {
         let available: Vec<&String> = profile.defaults.mitamae.binary.keys().collect();
@@ -229,6 +276,9 @@ fn apply_defaults_to_tasks(profile: &mut Profile) {
             arch,
         );
     }
+
+    // Resolve privilege for bootstrap
+    profile.bootstrap.resolve_privilege(privilege_defaults)?;
 
     for task in profile
         .pre_processors
@@ -241,7 +291,10 @@ fn apply_defaults_to_tasks(profile: &mut Profile) {
         {
             mitamae_task.set_binary_if_absent(binary);
         }
+        task.resolve_privilege(privilege_defaults)?;
     }
+
+    Ok(())
 }
 
 fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
@@ -300,7 +353,7 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile, RsdebstrapError> {
         ))
     })?;
     resolve_profile_paths(&mut profile, profile_dir);
-    apply_defaults_to_tasks(&mut profile);
+    apply_defaults_to_tasks(&mut profile)?;
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
 }

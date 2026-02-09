@@ -15,6 +15,7 @@ use rsdebstrap::bootstrap::mmdebstrap::{self, MmdebstrapConfig};
 use rsdebstrap::config::{Bootstrap, Profile, load_profile};
 use rsdebstrap::executor::ExecutionResult;
 use rsdebstrap::isolation::IsolationContext;
+use rsdebstrap::privilege::Privilege;
 use tempfile::NamedTempFile;
 use tracing::warn;
 
@@ -87,6 +88,7 @@ pub struct MmdebstrapConfigBuilder {
     essential_hook: Vec<String>,
     customize_hook: Vec<String>,
     mirrors: Vec<String>,
+    privilege: Privilege,
 }
 
 impl MmdebstrapConfigBuilder {
@@ -108,6 +110,7 @@ impl MmdebstrapConfigBuilder {
             essential_hook: Default::default(),
             customize_hook: Default::default(),
             mirrors: Default::default(),
+            privilege: Default::default(),
         }
     }
 
@@ -225,6 +228,11 @@ impl MmdebstrapConfigBuilder {
         self
     }
 
+    pub fn privilege(mut self, privilege: Privilege) -> Self {
+        self.privilege = privilege;
+        self
+    }
+
     pub fn build(self) -> MmdebstrapConfig {
         MmdebstrapConfig {
             suite: self.suite,
@@ -243,6 +251,7 @@ impl MmdebstrapConfigBuilder {
             essential_hook: self.essential_hook,
             customize_hook: self.customize_hook,
             mirrors: self.mirrors,
+            privilege: self.privilege,
         }
     }
 }
@@ -272,6 +281,7 @@ pub struct DebootstrapConfigBuilder {
     no_resolve_deps: bool,
     verbose: bool,
     print_debs: bool,
+    privilege: Privilege,
 }
 
 impl DebootstrapConfigBuilder {
@@ -290,6 +300,7 @@ impl DebootstrapConfigBuilder {
             no_resolve_deps: Default::default(),
             verbose: Default::default(),
             print_debs: Default::default(),
+            privilege: Default::default(),
         }
     }
 
@@ -360,6 +371,11 @@ impl DebootstrapConfigBuilder {
         self
     }
 
+    pub fn privilege(mut self, privilege: Privilege) -> Self {
+        self.privilege = privilege;
+        self
+    }
+
     pub fn build(self) -> DebootstrapConfig {
         DebootstrapConfig {
             suite: self.suite,
@@ -375,6 +391,7 @@ impl DebootstrapConfigBuilder {
             no_resolve_deps: self.no_resolve_deps,
             verbose: self.verbose,
             print_debs: self.print_debs,
+            privilege: self.privilege,
         }
     }
 }
@@ -485,6 +502,7 @@ pub struct MockContext {
     should_error: bool,
     error_message: Option<String>,
     executed_commands: RefCell<Vec<Vec<OsString>>>,
+    executed_privileges: RefCell<Vec<Option<rsdebstrap::privilege::PrivilegeMethod>>>,
     return_no_status: bool,
 }
 
@@ -498,6 +516,7 @@ impl MockContext {
             should_error: false,
             error_message: None,
             executed_commands: RefCell::new(Vec::new()),
+            executed_privileges: RefCell::new(Vec::new()),
             return_no_status: false,
         }
     }
@@ -511,6 +530,7 @@ impl MockContext {
             should_error: false,
             error_message: None,
             executed_commands: RefCell::new(Vec::new()),
+            executed_privileges: RefCell::new(Vec::new()),
             return_no_status: false,
         }
     }
@@ -524,6 +544,7 @@ impl MockContext {
             should_error: false,
             error_message: None,
             executed_commands: RefCell::new(Vec::new()),
+            executed_privileges: RefCell::new(Vec::new()),
             return_no_status: false,
         }
     }
@@ -537,6 +558,7 @@ impl MockContext {
             should_error: true,
             error_message: Some(message.to_string()),
             executed_commands: RefCell::new(Vec::new()),
+            executed_privileges: RefCell::new(Vec::new()),
             return_no_status: false,
         }
     }
@@ -550,12 +572,17 @@ impl MockContext {
             should_error: false,
             error_message: None,
             executed_commands: RefCell::new(Vec::new()),
+            executed_privileges: RefCell::new(Vec::new()),
             return_no_status: true,
         }
     }
 
     pub fn executed_commands(&self) -> Vec<Vec<OsString>> {
         self.executed_commands.borrow().clone()
+    }
+
+    pub fn executed_privileges(&self) -> Vec<Option<rsdebstrap::privilege::PrivilegeMethod>> {
+        self.executed_privileges.borrow().clone()
     }
 }
 
@@ -572,8 +599,13 @@ impl IsolationContext for MockContext {
         self.dry_run
     }
 
-    fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
+    fn execute(
+        &self,
+        command: &[OsString],
+        privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
+    ) -> Result<ExecutionResult> {
         self.executed_commands.borrow_mut().push(command.to_vec());
+        self.executed_privileges.borrow_mut().push(privilege);
 
         if self.should_error {
             anyhow::bail!("{}", self.error_message.as_deref().unwrap_or("mock error"));

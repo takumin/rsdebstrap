@@ -20,6 +20,10 @@ fn non_dry_run_fails_for_nonexistent_command() {
 
     assert!(result.is_err());
     if let Err(e) = result {
-        assert!(e.to_string().contains("command not found"));
+        assert!(
+            e.to_string().contains("not found in PATH"),
+            "Expected 'not found in PATH' in error, got: {}",
+            e
+        );
     }
 }

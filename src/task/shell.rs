@@ -16,6 +16,7 @@ use tracing::{debug, info};
 use super::{ScriptSource, TempFileGuard};
 use crate::error::RsdebstrapError;
 use crate::isolation::IsolationContext;
+use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 
 /// Shell task data and execution logic.
 ///
@@ -41,6 +42,12 @@ pub struct ShellTask {
 
     /// Shell interpreter to use (default: /bin/sh)
     shell: String,
+
+    /// Raw privilege setting from YAML (resolved during defaults application)
+    privilege_raw: Privilege,
+
+    /// Resolved privilege method (set by `resolve_privilege()`)
+    privilege: Option<PrivilegeMethod>,
 }
 
 fn default_shell() -> String {
@@ -59,6 +66,8 @@ impl<'de> Deserialize<'de> for ShellTask {
             content: Option<String>,
             #[serde(default = "default_shell")]
             shell: String,
+            #[serde(default)]
+            privilege: Privilege,
         }
 
         let raw = RawShellTask::deserialize(deserializer)?;
@@ -66,6 +75,8 @@ impl<'de> Deserialize<'de> for ShellTask {
         Ok(ShellTask {
             source,
             shell: raw.shell,
+            privilege_raw: raw.privilege,
+            privilege: None,
         })
     }
 }
@@ -79,6 +90,8 @@ impl ShellTask {
         Self {
             source,
             shell: default_shell(),
+            privilege_raw: Privilege::default(),
+            privilege: None,
         }
     }
 
@@ -90,6 +103,8 @@ impl ShellTask {
         Self {
             source,
             shell: shell.into(),
+            privilege_raw: Privilege::default(),
+            privilege: None,
         }
     }
 
@@ -120,6 +135,20 @@ impl ShellTask {
         {
             *path = base_dir.join(&*path);
         }
+    }
+
+    /// Resolves the privilege setting against profile defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if `privilege: true` is specified
+    /// but no `defaults.privilege.method` is configured in the profile.
+    pub fn resolve_privilege(
+        &mut self,
+        defaults: Option<&PrivilegeDefaults>,
+    ) -> Result<(), RsdebstrapError> {
+        self.privilege = self.privilege_raw.resolve(defaults)?;
+        Ok(())
     }
 
     /// Validates the task configuration.
@@ -189,7 +218,7 @@ impl ShellTask {
         let command: Vec<OsString> =
             vec![self.shell.as_str().into(), script_path_in_isolation.into()];
 
-        let result = super::execute_in_context(context, &command, "script")?;
+        let result = super::execute_in_context(context, &command, "script", self.privilege)?;
         super::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("shell script completed successfully");
