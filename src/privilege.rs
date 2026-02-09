@@ -72,20 +72,18 @@ impl Privilege {
     /// If called on `Inherit` or `UseDefault`, logs a warning and returns `None`
     /// as a safe fallback.
     pub fn resolved_method(&self) -> Option<PrivilegeMethod> {
+        debug_assert!(
+            !matches!(self, Self::Inherit | Self::UseDefault),
+            "resolved_method() called on an unresolved Privilege state. This is a logic error."
+        );
         match self {
             Self::Method(m) => Some(*m),
             Self::Disabled => None,
-            Self::Inherit => {
+            unresolved @ (Self::Inherit | Self::UseDefault) => {
                 tracing::warn!(
-                    "resolved_method() called on Inherit; this likely indicates \
-                    resolve() was not called. Returning None as fallback."
-                );
-                None
-            }
-            Self::UseDefault => {
-                tracing::warn!(
-                    "resolved_method() called on UseDefault; this likely indicates \
-                    resolve() was not called. Returning None as fallback."
+                    "resolved_method() called on unresolved state ({:?}); this likely indicates \
+                    a logic error where resolve() was not called. Returning None as fallback.",
+                    unresolved
                 );
                 None
             }

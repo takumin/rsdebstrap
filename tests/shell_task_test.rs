@@ -157,7 +157,8 @@ fn test_run_fails_when_script_execution_fails() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
+    let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
+    task.resolve_privilege(None).unwrap();
 
     let context = MockContext::with_failure(&rootfs, 1);
     let result = task.execute(&context);
@@ -179,7 +180,8 @@ fn test_run_dry_run_skips_rootfs_validation() {
 
     // Do NOT create /tmp or /bin/sh - this would fail without dry_run
 
-    let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
+    let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
+    task.resolve_privilege(None).unwrap();
 
     let context = MockContext::new_dry_run(&rootfs);
     let result = task.execute(&context);
@@ -202,7 +204,8 @@ fn test_run_with_external_script_dry_run() {
     let script_path_utf8 =
         camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
 
-    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+    let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+    task.resolve_privilege(None).unwrap();
 
     let context = MockContext::new_dry_run(&rootfs);
     let result = task.execute(&context);
@@ -248,7 +251,8 @@ fn test_run_fails_when_context_execute_errors() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
+    let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
+    task.resolve_privilege(None).unwrap();
 
     let context = MockContext::with_error(&rootfs, "connection to isolation backend lost");
     let result = task.execute(&context);
@@ -286,7 +290,8 @@ fn test_run_fails_when_script_copy_fails() {
     perms.set_mode(0o555);
     std::fs::set_permissions(&tmp_path, perms).expect("failed to set tmp permissions");
 
-    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+    let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+    task.resolve_privilege(None).unwrap();
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -315,7 +320,8 @@ fn test_execute_inline_script_success() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
+    let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
+    task.resolve_privilege(None).unwrap();
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -364,7 +370,8 @@ fn test_execute_external_script_success() {
     let script_path_utf8 =
         camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
 
-    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+    let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+    task.resolve_privilege(None).unwrap();
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -411,7 +418,8 @@ fn test_execute_inline_script_verifies_file_written() {
     setup_valid_rootfs(&temp_dir);
 
     let script_content = "#!/bin/sh\necho hello world\n";
-    let task = ShellTask::new(ScriptSource::Content(script_content.to_string()));
+    let mut task = ShellTask::new(ScriptSource::Content(script_content.to_string()));
+    task.resolve_privilege(None).unwrap();
 
     // Use a custom mock that captures the script content at execution time
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -502,7 +510,8 @@ fn test_execute_external_script_verifies_file_copied() {
     let script_path_utf8 =
         camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
 
-    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+    let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+    task.resolve_privilege(None).unwrap();
 
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured_content);
@@ -591,8 +600,9 @@ fn test_execute_with_custom_shell() {
     std::fs::write(temp_dir.path().join("bin/bash"), "#!/bin/bash\n")
         .expect("failed to write /bin/bash");
 
-    let task =
+    let mut task =
         ShellTask::with_shell(ScriptSource::Content("echo custom shell".to_string()), "/bin/bash");
+    task.resolve_privilege(None).unwrap();
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -626,7 +636,8 @@ fn test_execute_with_no_exit_status_returns_error() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
+    let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
+    task.resolve_privilege(None).unwrap();
 
     let context = MockContext::with_no_status(&rootfs);
     let result = task.execute(&context);
@@ -664,7 +675,8 @@ fn test_execute_nonzero_exit_returns_execution_error() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
+    let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
+    task.resolve_privilege(None).unwrap();
     let context = MockContext::with_failure(&rootfs, 1);
     let result = task.execute(&context);
 
