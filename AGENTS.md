@@ -1,30 +1,24 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository.
 
 ## Build and Development Commands
 
 ```bash
 # Build
-cargo build
+cargo build --quiet
 
 # Run tests
-cargo test
-
-# Run a single test
-cargo test <test_name>
-
-# Run tests with output
-cargo test -- --nocapture
+cargo test --quiet
 
 # Check for errors without building
-cargo check
+cargo check --all-targets --all-features --quiet
 
 # Lint
-cargo clippy
+cargo clippy --all-targets --all-features --quiet
 
 # Format
-cargo fmt
+cargo fmt --all --quiet
 
 # Run the CLI
 cargo run -- <command>
@@ -36,25 +30,55 @@ cargo run -- validate -f examples/debian_trixie_mmdebstrap.yml
 
 ## Architecture Overview
 
-rsdebstrap is a declarative CLI tool for building Debian-based rootfs images using YAML manifest files. It wraps bootstrap tools (mmdebstrap, debootstrap) and provides post-bootstrap provisioning.
+rsdebstrap is a declarative CLI tool for building Debian-based rootfs images using YAML manifest files. It wraps bootstrap tools (mmdebstrap, debootstrap) and provides post-bootstrap provisioning with privilege escalation support.
 
 ### Core Flow
 
 1. **CLI** (`src/cli.rs`) - Parses arguments using clap, provides `apply`, `validate`, and `completions` subcommands
-2. **Config** (`src/config.rs`) - Loads and validates YAML profiles, resolves relative paths
-3. **Bootstrap** (`src/bootstrap/`) - Executes bootstrap backends to create the rootfs
-4. **Pipeline** (`src/pipeline.rs`) - Orchestrates pre-processors, provisioners, and post-processors in order
+2. **Config** (`src/config.rs`) - Loads and validates YAML profiles, resolves relative paths, applies defaults
+3. **Privilege** (`src/privilege.rs`) - Privilege escalation configuration and resolution (sudo/doas)
+4. **Error** (`src/error.rs`) - Typed error handling with `RsdebstrapError`
+5. **Bootstrap** (`src/bootstrap/`) - Executes bootstrap backends to create the rootfs
+6. **Pipeline** (`src/pipeline.rs`) - Orchestrates pre-processors, provisioners, and post-processors in order
 
 ### Key Abstractions
+
+- **`Privilege`** enum (`src/privilege.rs`) - Privilege escalation configuration
+  - `PrivilegeMethod` enum: `Sudo`, `Doas` — the actual escalation command
+  - `PrivilegeDefaults` struct — default privilege settings for the profile
+  - `Privilege` enum: `Inherit` (use defaults if available), `UseDefault` (require defaults), `Disabled`, `Method(PrivilegeMethod)` (explicit)
+  - `resolve()` collapses against profile defaults to `Option<PrivilegeMethod>`
+  - `resolve_in_place()` mutates self to `Method` or `Disabled`
+  - `resolved_method()` returns `Option<PrivilegeMethod>` for already-resolved states
+  - Custom Serialize/Deserialize: `true` → UseDefault, `false` → Disabled, `{ method: sudo }` → Method, absent → Inherit
+
+- **`RsdebstrapError`** enum (`src/error.rs`) - Domain-specific typed errors
+  - `#[non_exhaustive]` enum using `thiserror`, with `anyhow` at trait boundaries
+  - Variants: `Validation`, `Execution`, `Isolation`, `Config`, `CommandNotFound`, `Io`
+  - Factory methods: `execution(spec, status)`, `execution_in_isolation(command, name, status)`, `io(context, source)`, `command_not_found(command, label)`
+  - `Io` variant uses `io_error_kind_message()` for human-readable display
 
 - **`BootstrapBackend`** trait (`src/bootstrap/mod.rs`) - Interface for bootstrap tools
   - `MmdebstrapConfig` - mmdebstrap implementation
   - `DebootstrapConfig` - debootstrap implementation
   - Each backend builds command arguments and determines output type (directory vs archive)
 
+- **`Bootstrap`** enum (`src/config.rs`) - Bootstrap backend wrapper
+  - `resolve_privilege()` resolves privilege settings against profile defaults
+  - `resolved_privilege_method()` returns the resolved `Option<PrivilegeMethod>`
+
 - **`TaskDefinition`** enum (`src/task/mod.rs`) - Declarative task definition for pipeline steps
-  - `ShellTask` (`src/task/shell.rs`) - Runs shell scripts within an isolation context
+  - `Shell` variant (`src/task/shell.rs`) - Runs shell scripts within an isolation context
+  - `Mitamae` variant (`src/task/mitamae.rs`) - Runs mitamae recipes within an isolation context
+  - Each task has a `privilege: Privilege` field resolved during defaults application
   - Enum-based dispatch with compile-time exhaustive matching
+  - Shared utilities in `src/task/mod.rs`: `ScriptSource`, `TempFileGuard`, `validate_tmp_directory()`
+  - Helper functions: `execute_in_context()`, `check_execution_result()`, `prepare_files_with_toctou_check()`
+
+- **`MitamaeTask`** (`src/task/mitamae.rs`) - Mitamae recipe execution
+  - `binary` field: `Option<Utf8PathBuf>` — can be omitted and resolved from `defaults.mitamae`
+  - Copies binary to rootfs /tmp with 0o700 permissions, runs `mitamae local <recipe>`
+  - RAII cleanup of both binary and recipe temp files via `TempFileGuard`
 
 - **`Pipeline`** struct (`src/pipeline.rs`) - Orchestrates task execution in three phases
   - Manages isolation context lifecycle (setup/teardown)
@@ -63,9 +87,13 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
 
 - **`IsolationProvider`** / **`IsolationContext`** traits (`src/isolation/mod.rs`) - Isolation backends
   - `ChrootProvider` / `ChrootContext` - chroot-based isolation
+  - `IsolationContext::execute()` takes `privilege: Option<PrivilegeMethod>` parameter
 
-- **`CommandExecutor`** trait (`src/executor/mod.rs`) - Abstracts command execution
+- **`CommandExecutor`** trait / **`CommandSpec`** struct (`src/executor/mod.rs`) - Command execution
   - `RealCommandExecutor` - Actual execution with dry-run support
+  - `CommandSpec` fields: `command`, `args`, `cwd`, `env`, `privilege: Option<PrivilegeMethod>`
+  - Builder methods: `with_privilege()`, `with_cwd()`, `with_env()`, `with_envs()`
+  - `format_args_lossy()` utility for consistent argument formatting in errors and dry-run output
   - Tests use mock executors to verify command construction without running real commands
 
 ### Profile Structure (YAML)
@@ -75,6 +103,8 @@ dir: /output/path           # Base output directory
 defaults:                   # Optional default settings
   isolation:
     type: chroot            # Isolation backend: chroot (default)
+  privilege:                # Optional default privilege escalation
+    method: sudo            # Method: sudo | doas
   mitamae:                  # Optional mitamae defaults
     binary:
       x86_64: /path/to/mitamae-x86_64
@@ -83,20 +113,41 @@ bootstrap:
   type: mmdebstrap          # Backend type: mmdebstrap | debootstrap
   suite: trixie             # Debian suite
   target: rootfs            # Output name (directory or archive)
+  privilege: true           # Use default privilege method
   # Backend-specific options...
 pre_processors:             # Optional pre-provisioning steps
   - type: shell
     content: "..."
+    privilege: false         # Disable privilege escalation for this task
 provisioners:               # Optional main provisioning steps
   - type: shell
     content: "..."          # Inline script
     # OR
     script: ./script.sh     # External script path
+  - type: mitamae
+    script: ./recipe.rb     # Mitamae recipe file
+    # OR
+    content: "..."          # Inline recipe
+    binary: /path/to/mitamae  # Optional: override defaults.mitamae
+    privilege:               # Optional: override defaults.privilege
+      method: doas
 post_processors:            # Optional post-provisioning steps
   - type: shell
     script: ./cleanup.sh
 ```
 
+#### Privilege field values
+
+- Absent (field not specified) → `Inherit`: use defaults if available, no escalation otherwise
+- `privilege: true` → `UseDefault`: require `defaults.privilege.method` (error if not configured)
+- `privilege: false` → `Disabled`: no privilege escalation
+- `privilege: { method: sudo }` → `Method`: use the specified method explicitly
+
 ### Testing Pattern
 
-Tests use a mock executor pattern defined in `tests/helpers/mod.rs`. Tests verify that the correct command arguments are generated without executing actual bootstrap commands.
+Tests use a mock executor pattern defined in `tests/helpers/mod.rs`:
+- `MockContext` - Shared mock isolation context (used by shell_task_test.rs and mitamae_task_test.rs) with configurable failure modes (`should_fail`, `should_error`, `return_no_status`)
+- `MockContext` tracks `executed_commands` and `executed_privileges` for assertion
+- `helpers::load_profile_from_yaml()` / `load_profile_from_yaml_typed()` - Load profiles from YAML strings in temp files
+- Test builders: `MmdebstrapConfigBuilder`, `DebootstrapConfigBuilder` with fluent API
+- Privilege-related tests verify resolution, inheritance, and error handling across tasks and bootstrap backends
