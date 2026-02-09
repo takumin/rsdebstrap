@@ -35,7 +35,7 @@ impl std::fmt::Display for PrivilegeMethod {
 }
 
 /// Default privilege settings for the profile.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PrivilegeDefaults {
     /// The default privilege escalation method.
     pub method: PrivilegeMethod,
@@ -68,12 +68,20 @@ impl Privilege {
     /// [`resolve_in_place()`](Self::resolve_in_place) has been used to
     /// collapse the privilege setting into `Method` or `Disabled`.
     ///
-    /// Returns `Some(method)` for `Method`, `None` for `Disabled` and `Inherit`.
-    /// If called on `UseDefault`, logs a warning and returns `None` as a safe fallback.
+    /// Returns `Some(method)` for `Method`, `None` for `Disabled`.
+    /// If called on `Inherit` or `UseDefault`, logs a warning and returns `None`
+    /// as a safe fallback.
     pub fn resolved_method(&self) -> Option<PrivilegeMethod> {
         match self {
             Self::Method(m) => Some(*m),
-            Self::Disabled | Self::Inherit => None,
+            Self::Disabled => None,
+            Self::Inherit => {
+                tracing::warn!(
+                    "resolved_method() called on Inherit; this likely indicates \
+                    resolve() was not called. Returning None as fallback."
+                );
+                None
+            }
             Self::UseDefault => {
                 tracing::warn!(
                     "resolved_method() called on UseDefault; this likely indicates \

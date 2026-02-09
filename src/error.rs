@@ -11,6 +11,8 @@
 
 use std::io;
 
+use crate::executor::format_args_lossy;
+
 /// Formats an IO error kind into a human-readable message.
 ///
 /// Provides consistent, user-friendly messages for common IO error kinds
@@ -88,17 +90,6 @@ pub enum RsdebstrapError {
         #[source]
         source: std::io::Error,
     },
-}
-
-/// Formats OsString arguments into a space-separated, debug-quoted string.
-///
-/// Used by `RsdebstrapError::execution()` and `execution_in_isolation()`
-/// to consistently format command arguments in error messages.
-fn format_args_lossy(args: &[std::ffi::OsString]) -> String {
-    args.iter()
-        .map(|a| format!("{:?}", a.to_string_lossy()))
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 impl RsdebstrapError {

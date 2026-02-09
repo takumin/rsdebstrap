@@ -95,24 +95,19 @@ pub struct RealCommandExecutor {
 impl CommandExecutor for RealCommandExecutor {
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
         if self.dry_run {
-            let args_display: Vec<_> = spec
-                .args
-                .iter()
-                .map(|a| format!("{:?}", a.to_string_lossy()))
-                .collect();
             let privilege_prefix = spec
                 .privilege
                 .as_ref()
                 .map(|m| format!("{} ", m.command_name()))
                 .unwrap_or_default();
-            if args_display.is_empty() {
+            if spec.args.is_empty() {
                 tracing::info!("dry run: {}{}", privilege_prefix, spec.command);
             } else {
                 tracing::info!(
                     "dry run: {}{} {}",
                     privilege_prefix,
                     spec.command,
-                    args_display.join(" ")
+                    super::format_args_lossy(&spec.args)
                 );
             }
             if let Some(ref cwd) = spec.cwd {

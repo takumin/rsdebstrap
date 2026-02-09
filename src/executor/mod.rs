@@ -19,6 +19,17 @@ use crate::privilege::PrivilegeMethod;
 
 pub use real::RealCommandExecutor;
 
+/// Formats OsString arguments into a space-separated, debug-quoted string.
+///
+/// Used by error messages and dry-run output to consistently format
+/// command arguments (e.g., `"--variant=debootstrap" "/tmp/rootfs"`).
+pub(crate) fn format_args_lossy(args: &[OsString]) -> String {
+    args.iter()
+        .map(|a| format!("{:?}", a.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Specification for a command to be executed
 #[derive(Debug, Clone)]
 pub struct CommandSpec {
