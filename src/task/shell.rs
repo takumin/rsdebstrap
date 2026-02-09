@@ -16,6 +16,7 @@ use tracing::{debug, info};
 use super::{ScriptSource, TempFileGuard};
 use crate::error::RsdebstrapError;
 use crate::isolation::IsolationContext;
+use crate::privilege::{Privilege, PrivilegeDefaults};
 
 /// Shell task data and execution logic.
 ///
@@ -41,6 +42,9 @@ pub struct ShellTask {
 
     /// Shell interpreter to use (default: /bin/sh)
     shell: String,
+
+    /// Privilege escalation setting (resolved during defaults application)
+    privilege: Privilege,
 }
 
 fn default_shell() -> String {
@@ -59,6 +63,8 @@ impl<'de> Deserialize<'de> for ShellTask {
             content: Option<String>,
             #[serde(default = "default_shell")]
             shell: String,
+            #[serde(default)]
+            privilege: Privilege,
         }
 
         let raw = RawShellTask::deserialize(deserializer)?;
@@ -66,6 +72,7 @@ impl<'de> Deserialize<'de> for ShellTask {
         Ok(ShellTask {
             source,
             shell: raw.shell,
+            privilege: raw.privilege,
         })
     }
 }
@@ -79,6 +86,7 @@ impl ShellTask {
         Self {
             source,
             shell: default_shell(),
+            privilege: Privilege::default(),
         }
     }
 
@@ -90,6 +98,7 @@ impl ShellTask {
         Self {
             source,
             shell: shell.into(),
+            privilege: Privilege::default(),
         }
     }
 
@@ -120,6 +129,19 @@ impl ShellTask {
         {
             *path = base_dir.join(&*path);
         }
+    }
+
+    /// Resolves the privilege setting against profile defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if `privilege: true` is specified
+    /// but no `defaults.privilege.method` is configured in the profile.
+    pub fn resolve_privilege(
+        &mut self,
+        defaults: Option<&PrivilegeDefaults>,
+    ) -> Result<(), RsdebstrapError> {
+        self.privilege.resolve_in_place(defaults)
     }
 
     /// Validates the task configuration.
@@ -189,7 +211,12 @@ impl ShellTask {
         let command: Vec<OsString> =
             vec![self.shell.as_str().into(), script_path_in_isolation.into()];
 
-        let result = super::execute_in_context(context, &command, "script")?;
+        let result = super::execute_in_context(
+            context,
+            &command,
+            "script",
+            self.privilege.resolved_method(),
+        )?;
         super::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("shell script completed successfully");

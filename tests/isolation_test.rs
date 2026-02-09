@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use rsdebstrap::isolation::{ChrootProvider, IsolationProvider};
+use rsdebstrap::privilege::PrivilegeMethod;
 
-type CommandCalls = Arc<Mutex<Vec<(String, Vec<OsString>)>>>;
+type CommandCalls = Arc<Mutex<Vec<(String, Vec<OsString>, Option<PrivilegeMethod>)>>>;
 
 #[derive(Default)]
 struct RecordingExecutor {
@@ -17,7 +18,7 @@ impl CommandExecutor for RecordingExecutor {
         self.calls
             .lock()
             .unwrap()
-            .push((spec.command.clone(), spec.args.clone()));
+            .push((spec.command.clone(), spec.args.clone(), spec.privilege));
         Ok(ExecutionResult { status: None })
     }
 }
@@ -61,17 +62,18 @@ fn test_chroot_context_execute_builds_correct_args() {
     let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/script.sh".into()];
 
     let context = provider.setup(rootfs, executor, false).unwrap();
-    let result = context.execute(&command);
+    let result = context.execute(&command, None);
     assert!(result.is_ok());
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
-    let (cmd, args) = &calls[0];
+    let (cmd, args, privilege) = &calls[0];
     assert_eq!(cmd, "chroot");
     assert_eq!(args.len(), 3);
     assert_eq!(args[0], "/tmp/rootfs");
     assert_eq!(args[1], "/bin/sh");
     assert_eq!(args[2], "/tmp/script.sh");
+    assert_eq!(*privilege, None);
 }
 
 #[test]
@@ -85,12 +87,12 @@ fn test_chroot_context_execute_empty_command() {
     let command: Vec<OsString> = vec![];
 
     let context = provider.setup(rootfs, executor, false).unwrap();
-    let result = context.execute(&command);
+    let result = context.execute(&command, None);
     assert!(result.is_ok());
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
-    let (cmd, args) = &calls[0];
+    let (cmd, args, _privilege) = &calls[0];
     assert_eq!(cmd, "chroot");
     assert_eq!(args.len(), 1);
     assert_eq!(args[0], "/tmp/rootfs");
@@ -126,8 +128,8 @@ fn test_chroot_context_multiple_executions() {
     let cmd1: Vec<OsString> = vec!["/bin/echo".into(), "hello".into()];
     let cmd2: Vec<OsString> = vec!["/bin/ls".into(), "-la".into()];
 
-    assert!(context.execute(&cmd1).is_ok());
-    assert!(context.execute(&cmd2).is_ok());
+    assert!(context.execute(&cmd1, None).is_ok());
+    assert!(context.execute(&cmd2, None).is_ok());
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
@@ -153,7 +155,7 @@ fn test_chroot_context_execute_after_teardown_returns_isolation_error() {
     context.teardown().unwrap();
 
     let command: Vec<OsString> = vec!["/bin/sh".into()];
-    let err = context.execute(&command).unwrap_err();
+    let err = context.execute(&command, None).unwrap_err();
     let downcast = err.downcast_ref::<RsdebstrapError>();
     assert!(downcast.is_some(), "Expected RsdebstrapError in error chain, got: {:#}", err,);
     assert!(
@@ -161,4 +163,72 @@ fn test_chroot_context_execute_after_teardown_returns_isolation_error() {
         "Expected RsdebstrapError::Isolation, got: {:?}",
         downcast.unwrap(),
     );
+}
+
+// =============================================================================
+// Privilege propagation tests
+// =============================================================================
+
+#[test]
+fn test_chroot_context_propagates_sudo_privilege() {
+    let provider = ChrootProvider;
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
+    let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/script.sh".into()];
+
+    let context = provider.setup(rootfs, executor, false).unwrap();
+    let result = context.execute(&command, Some(PrivilegeMethod::Sudo));
+    assert!(result.is_ok());
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let (cmd, args, privilege) = &calls[0];
+    assert_eq!(cmd, "chroot");
+    assert_eq!(args[0], "/tmp/rootfs");
+    assert_eq!(args[1], "/bin/sh");
+    assert_eq!(args[2], "/tmp/script.sh");
+    assert_eq!(*privilege, Some(PrivilegeMethod::Sudo));
+}
+
+#[test]
+fn test_chroot_context_propagates_doas_privilege() {
+    let provider = ChrootProvider;
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
+    let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/script.sh".into()];
+
+    let context = provider.setup(rootfs, executor, false).unwrap();
+    let result = context.execute(&command, Some(PrivilegeMethod::Doas));
+    assert!(result.is_ok());
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let (_, _, privilege) = &calls[0];
+    assert_eq!(*privilege, Some(PrivilegeMethod::Doas));
+}
+
+#[test]
+fn test_chroot_context_propagates_none_privilege() {
+    let provider = ChrootProvider;
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
+    let command: Vec<OsString> = vec!["/bin/sh".into()];
+
+    let context = provider.setup(rootfs, executor, false).unwrap();
+    let result = context.execute(&command, None);
+    assert!(result.is_ok());
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let (_, _, privilege) = &calls[0];
+    assert_eq!(*privilege, None);
 }

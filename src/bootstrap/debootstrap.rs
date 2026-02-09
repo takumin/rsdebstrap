@@ -1,6 +1,7 @@
 //! debootstrap backend implementation.
 
 use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle, RootfsOutput};
+use crate::privilege::Privilege;
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,9 @@ pub struct DebootstrapConfig {
     /// Print packages to be installed and exit
     #[serde(default)]
     pub print_debs: bool,
+    /// Privilege escalation setting
+    #[serde(default)]
+    pub privilege: Privilege,
 }
 
 impl BootstrapBackend for DebootstrapConfig {

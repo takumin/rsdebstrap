@@ -17,6 +17,7 @@ use tracing::{debug, info};
 use super::{ScriptSource, TempFileGuard};
 use crate::error::RsdebstrapError;
 use crate::isolation::IsolationContext;
+use crate::privilege::{Privilege, PrivilegeDefaults};
 
 /// Mitamae task data and execution logic.
 ///
@@ -38,6 +39,8 @@ pub struct MitamaeTask {
     source: ScriptSource,
     /// Host-side mitamae binary path (None when relying on defaults)
     binary: Option<Utf8PathBuf>,
+    /// Privilege escalation setting (resolved during defaults application)
+    privilege: Privilege,
 }
 
 impl<'de> Deserialize<'de> for MitamaeTask {
@@ -51,6 +54,8 @@ impl<'de> Deserialize<'de> for MitamaeTask {
             script: Option<Utf8PathBuf>,
             content: Option<String>,
             binary: Option<Utf8PathBuf>,
+            #[serde(default)]
+            privilege: Privilege,
         }
 
         let raw = RawMitamaeTask::deserialize(deserializer)?;
@@ -58,6 +63,7 @@ impl<'de> Deserialize<'de> for MitamaeTask {
         Ok(MitamaeTask {
             source,
             binary: raw.binary,
+            privilege: raw.privilege,
         })
     }
 }
@@ -68,6 +74,7 @@ impl MitamaeTask {
         Self {
             source,
             binary: Some(binary),
+            privilege: Privilege::default(),
         }
     }
 
@@ -76,6 +83,7 @@ impl MitamaeTask {
         Self {
             source,
             binary: None,
+            privilege: Privilege::default(),
         }
     }
 
@@ -119,6 +127,19 @@ impl MitamaeTask {
         {
             *path = base_dir.join(&*path);
         }
+    }
+
+    /// Resolves the privilege setting against profile defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if `privilege: true` is specified
+    /// but no `defaults.privilege.method` is configured in the profile.
+    pub fn resolve_privilege(
+        &mut self,
+        defaults: Option<&PrivilegeDefaults>,
+    ) -> Result<(), RsdebstrapError> {
+        self.privilege.resolve_in_place(defaults)
     }
 
     /// Validates the task configuration.
@@ -207,7 +228,12 @@ impl MitamaeTask {
             recipe_path_in_isolation.into(),
         ];
 
-        let result = super::execute_in_context(context, &command, "mitamae")?;
+        let result = super::execute_in_context(
+            context,
+            &command,
+            "mitamae",
+            self.privilege.resolved_method(),
+        )?;
         super::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("mitamae recipe completed successfully");

@@ -11,6 +11,8 @@
 
 use std::io;
 
+use crate::executor::format_args_lossy;
+
 /// Formats an IO error kind into a human-readable message.
 ///
 /// Provides consistent, user-friendly messages for common IO error kinds
@@ -60,6 +62,16 @@ pub enum RsdebstrapError {
     #[error("configuration error: {0}")]
     Config(String),
 
+    /// A required command was not found in PATH.
+    #[error("command not found: {label} '{command}' not found in PATH")]
+    CommandNotFound {
+        /// The command that was not found.
+        command: String,
+        /// Human-readable label describing the command's role
+        /// (e.g., "privilege escalation command", "command").
+        label: String,
+    },
+
     /// An I/O operation failed with contextual information.
     ///
     /// The `Display` implementation formats as `"{context}: {io_error_kind_message}"`,
@@ -80,17 +92,6 @@ pub enum RsdebstrapError {
     },
 }
 
-/// Formats OsString arguments into a space-separated, debug-quoted string.
-///
-/// Used by `RsdebstrapError::execution()` and `execution_in_isolation()`
-/// to consistently format command arguments in error messages.
-fn format_args_lossy(args: &[std::ffi::OsString]) -> String {
-    args.iter()
-        .map(|a| format!("{:?}", a.to_string_lossy()))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 impl RsdebstrapError {
     /// Creates an `Io` variant from a context string and an I/O error.
     ///
@@ -99,6 +100,14 @@ impl RsdebstrapError {
         Self::Io {
             context: context.into(),
             source,
+        }
+    }
+
+    /// Creates a `CommandNotFound` variant for a missing command.
+    pub(crate) fn command_not_found(command: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::CommandNotFound {
+            command: command.into(),
+            label: label.into(),
         }
     }
 
@@ -111,7 +120,18 @@ impl RsdebstrapError {
         spec: &crate::executor::CommandSpec,
         status: impl Into<String>,
     ) -> Self {
-        let command = if spec.args.is_empty() {
+        let command = if let Some(method) = &spec.privilege {
+            if spec.args.is_empty() {
+                format!("{} {}", method.command_name(), spec.command)
+            } else {
+                format!(
+                    "{} {} {}",
+                    method.command_name(),
+                    spec.command,
+                    format_args_lossy(&spec.args)
+                )
+            }
+        } else if spec.args.is_empty() {
             spec.command.clone()
         } else {
             format!("{} {}", spec.command, format_args_lossy(&spec.args))
@@ -187,6 +207,52 @@ mod tests {
         let spec = CommandSpec::new("mmdebstrap", vec![]);
         let err = RsdebstrapError::execution(&spec, "exit status: 1");
         assert_eq!(err.to_string(), "command execution failed: mmdebstrap: exit status: 1");
+    }
+
+    #[test]
+    fn test_execution_constructor_with_privilege_and_args() {
+        use crate::executor::CommandSpec;
+        use crate::privilege::PrivilegeMethod;
+        let spec = CommandSpec::new("chroot", vec!["/tmp/rootfs".into(), "/bin/sh".into()])
+            .with_privilege(Some(PrivilegeMethod::Sudo));
+        let err = RsdebstrapError::execution(&spec, "exit status: 1");
+        assert_eq!(
+            err.to_string(),
+            "command execution failed: sudo chroot \"/tmp/rootfs\" \"/bin/sh\": exit status: 1"
+        );
+    }
+
+    #[test]
+    fn test_execution_constructor_with_privilege_without_args() {
+        use crate::executor::CommandSpec;
+        use crate::privilege::PrivilegeMethod;
+        let spec = CommandSpec::new("chroot", vec![]).with_privilege(Some(PrivilegeMethod::Doas));
+        let err = RsdebstrapError::execution(&spec, "exit status: 1");
+        assert_eq!(err.to_string(), "command execution failed: doas chroot: exit status: 1");
+    }
+
+    #[test]
+    fn test_command_not_found_display() {
+        let err = RsdebstrapError::command_not_found("sudo", "privilege escalation command");
+        assert_eq!(
+            err.to_string(),
+            "command not found: privilege escalation command 'sudo' not found in PATH"
+        );
+    }
+
+    #[test]
+    fn test_command_not_found_display_regular_command() {
+        let err = RsdebstrapError::command_not_found("mmdebstrap", "command");
+        assert_eq!(err.to_string(), "command not found: command 'mmdebstrap' not found in PATH");
+    }
+
+    #[test]
+    fn test_into_anyhow_error_command_not_found() {
+        let err = RsdebstrapError::command_not_found("doas", "privilege escalation command");
+        let anyhow_err: anyhow::Error = err.into();
+        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
+        assert!(downcast.is_some());
+        assert!(matches!(downcast.unwrap(), RsdebstrapError::CommandNotFound { .. }));
     }
 
     #[test]

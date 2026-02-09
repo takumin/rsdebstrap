@@ -144,8 +144,12 @@ impl IsolationContext for MockContext {
         self.dry_run
     }
 
-    fn execute(&self, command: &[OsString]) -> Result<ExecutionResult> {
-        let spec = CommandSpec::new("mock", command.to_vec());
+    fn execute(
+        &self,
+        command: &[OsString],
+        privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
+    ) -> Result<ExecutionResult> {
+        let spec = CommandSpec::new("mock", command.to_vec()).with_privilege(privilege);
         self.executor.execute(&spec)
     }
 
@@ -162,9 +166,11 @@ impl IsolationContext for MockContext {
     }
 }
 
-/// Helper to create a simple inline shell task.
+/// Helper to create a simple inline shell task with privilege resolved.
 fn inline_task(content: &str) -> TaskDefinition {
-    TaskDefinition::Shell(ShellTask::new(ScriptSource::Content(content.to_string())))
+    let mut task = ShellTask::new(ScriptSource::Content(content.to_string()));
+    task.resolve_privilege(None).unwrap();
+    TaskDefinition::Shell(task)
 }
 
 // =============================================================================
@@ -500,18 +506,18 @@ fn test_pipeline_run_skips_empty_phases() {
 #[test]
 fn test_pipeline_run_phase_order_is_strictly_pre_prov_post() {
     // Use distinct shell paths per phase to verify strict ordering
-    let pre = [TaskDefinition::Shell(ShellTask::with_shell(
-        ScriptSource::Content("echo pre".to_string()),
-        "/bin/sh-pre",
-    ))];
-    let prov = [TaskDefinition::Shell(ShellTask::with_shell(
-        ScriptSource::Content("echo prov".to_string()),
-        "/bin/sh-prov",
-    ))];
-    let post = [TaskDefinition::Shell(ShellTask::with_shell(
-        ScriptSource::Content("echo post".to_string()),
-        "/bin/sh-post",
-    ))];
+    let mut pre_task =
+        ShellTask::with_shell(ScriptSource::Content("echo pre".to_string()), "/bin/sh-pre");
+    pre_task.resolve_privilege(None).unwrap();
+    let pre = [TaskDefinition::Shell(pre_task)];
+    let mut prov_task =
+        ShellTask::with_shell(ScriptSource::Content("echo prov".to_string()), "/bin/sh-prov");
+    prov_task.resolve_privilege(None).unwrap();
+    let prov = [TaskDefinition::Shell(prov_task)];
+    let mut post_task =
+        ShellTask::with_shell(ScriptSource::Content("echo post".to_string()), "/bin/sh-post");
+    post_task.resolve_privilege(None).unwrap();
+    let post = [TaskDefinition::Shell(post_task)];
     let pipeline = Pipeline::new(&pre, &prov, &post);
 
     let mock_executor = Arc::new(MockExecutor::new());

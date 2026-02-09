@@ -3,11 +3,12 @@
 //! This module provides [`RealCommandExecutor`], which executes commands
 //! using `std::process::Command` with real-time output streaming.
 
+use std::ffi::OsString;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::thread::JoinHandle;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use which::which;
 
 use super::pipe::{StreamType, panic_message, read_pipe_to_log};
@@ -94,16 +95,59 @@ pub struct RealCommandExecutor {
 impl CommandExecutor for RealCommandExecutor {
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
         if self.dry_run {
-            tracing::info!("dry run: {:?}", spec);
+            let privilege_prefix = spec
+                .privilege
+                .as_ref()
+                .map(|m| format!("{} ", m.command_name()))
+                .unwrap_or_default();
+            if spec.args.is_empty() {
+                tracing::info!("dry run: {}{}", privilege_prefix, spec.command);
+            } else {
+                tracing::info!(
+                    "dry run: {}{} {}",
+                    privilege_prefix,
+                    spec.command,
+                    super::format_args_lossy(&spec.args)
+                );
+            }
+            if let Some(ref cwd) = spec.cwd {
+                tracing::info!("dry run cwd: {}", cwd.display());
+            }
             return Ok(ExecutionResult { status: None });
         }
 
-        let cmd =
-            which(&spec.command).with_context(|| format!("command not found: {}", spec.command))?;
-        tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
+        let find_command = |cmd_name: &str, label: &str| -> Result<std::path::PathBuf> {
+            which(cmd_name).map_err(|e| {
+                tracing::debug!("command lookup failed for '{}': {}", cmd_name, e);
+                crate::error::RsdebstrapError::command_not_found(cmd_name, label).into()
+            })
+        };
 
-        let mut command = Command::new(cmd);
-        command.args(&spec.args);
+        // Resolve the actual command to execute, wrapping with privilege if needed
+        let (resolved_program, resolved_args) = if let Some(method) = &spec.privilege {
+            let privilege_cmd =
+                find_command(method.command_name(), "privilege escalation command")?;
+            let actual_cmd = find_command(&spec.command, "command")?;
+
+            tracing::trace!(
+                "privilege escalation: {} {}",
+                method.command_name(),
+                actual_cmd.to_string_lossy()
+            );
+
+            let mut args: Vec<OsString> = Vec::with_capacity(spec.args.len() + 1);
+            args.push(actual_cmd.into_os_string());
+            args.extend(spec.args.iter().cloned());
+
+            (privilege_cmd, args)
+        } else {
+            let cmd = find_command(&spec.command, "command")?;
+            tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
+            (cmd, spec.args.clone())
+        };
+
+        let mut command = Command::new(&resolved_program);
+        command.args(&resolved_args);
 
         if let Some(ref cwd) = spec.cwd {
             command.current_dir(cwd);

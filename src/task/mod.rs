@@ -8,7 +8,8 @@
 //! 1. Adding a new variant to `TaskDefinition`
 //! 2. Creating a corresponding data struct (e.g., `MitamaeTask`)
 //! 3. Implementing the match arms in all methods on `TaskDefinition`
-//!    (`name`, `validate`, `execute`, `script_path`, `resolve_paths`, `binary_path`)
+//!    (`name`, `validate`, `execute`, `script_path`, `resolve_paths`, `binary_path`,
+//!    `resolve_privilege`)
 //!
 //! The compiler enforces exhaustiveness, ensuring all task types are handled.
 
@@ -30,6 +31,7 @@ pub use shell::ShellTask;
 use crate::error::RsdebstrapError;
 use crate::executor::ExecutionResult;
 use crate::isolation::IsolationContext;
+use crate::privilege::{PrivilegeDefaults, PrivilegeMethod};
 
 /// Validates that a path contains no `..` components.
 ///
@@ -266,13 +268,21 @@ pub(crate) fn validate_tmp_directory(rootfs: &Utf8Path) -> Result<()> {
 ///
 /// If the context returns an `anyhow::Error` that wraps a `RsdebstrapError`, the typed
 /// error is preserved. Otherwise, the error is wrapped with a descriptive context message.
+///
+/// # Arguments
+///
+/// * `context` - The isolation context to execute within
+/// * `command` - The command and arguments to execute
+/// * `task_label` - Human-readable label used in error messages
+/// * `privilege` - Optional privilege escalation method (`sudo`/`doas`) to wrap the command
 pub(crate) fn execute_in_context(
     context: &dyn IsolationContext,
     command: &[OsString],
     task_label: &str,
+    privilege: Option<PrivilegeMethod>,
 ) -> Result<ExecutionResult> {
     context
-        .execute(command)
+        .execute(command, privilege)
         .map_err(|e| match e.downcast::<RsdebstrapError>() {
             Ok(typed) => typed.into(),
             Err(e) => e.context(format!("failed to execute {}", task_label)),
@@ -385,6 +395,17 @@ impl TaskDefinition {
         match self {
             Self::Shell(_) => None,
             Self::Mitamae(task) => task.binary(),
+        }
+    }
+
+    /// Resolves the privilege setting against profile defaults.
+    pub fn resolve_privilege(
+        &mut self,
+        defaults: Option<&PrivilegeDefaults>,
+    ) -> Result<(), RsdebstrapError> {
+        match self {
+            Self::Shell(task) => task.resolve_privilege(defaults),
+            Self::Mitamae(task) => task.resolve_privilege(defaults),
         }
     }
 }

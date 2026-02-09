@@ -15,7 +15,20 @@ use std::process::ExitStatus;
 
 use anyhow::Result;
 
+use crate::privilege::PrivilegeMethod;
+
 pub use real::RealCommandExecutor;
+
+/// Formats OsString arguments into a space-separated, debug-quoted string.
+///
+/// Used by error messages and dry-run output to consistently format
+/// command arguments (e.g., `"--variant=debootstrap" "/tmp/rootfs"`).
+pub(crate) fn format_args_lossy(args: &[OsString]) -> String {
+    args.iter()
+        .map(|a| format!("{:?}", a.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 /// Specification for a command to be executed
 #[derive(Debug, Clone)]
@@ -28,6 +41,8 @@ pub struct CommandSpec {
     pub cwd: Option<PathBuf>,
     /// Environment variables to set (in addition to inherited environment)
     pub env: Vec<(String, String)>,
+    /// Privilege escalation method to wrap the command
+    pub privilege: Option<PrivilegeMethod>,
 }
 
 impl CommandSpec {
@@ -39,7 +54,15 @@ impl CommandSpec {
             args,
             cwd: None,
             env: Vec::new(),
+            privilege: None,
         }
+    }
+
+    /// Sets the privilege escalation method
+    #[must_use]
+    pub fn with_privilege(mut self, privilege: Option<PrivilegeMethod>) -> Self {
+        self.privilege = privilege;
+        self
     }
 
     /// Sets the working directory
