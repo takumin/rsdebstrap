@@ -71,6 +71,36 @@ impl Privilege {
     ///
     /// Returns `RsdebstrapError::Validation` if `UseDefault` is specified
     /// but no defaults are configured.
+    /// Returns the resolved privilege method.
+    ///
+    /// Should only be called after [`resolve()`](Self::resolve) has been used to
+    /// collapse the privilege setting into `Method` or `Disabled`.
+    ///
+    /// Returns `Some(method)` for `Method`, `None` for `Disabled` and `Inherit`.
+    /// If called on `UseDefault`, logs a warning and returns `None` as a safe fallback.
+    pub fn resolved_method(&self) -> Option<PrivilegeMethod> {
+        match self {
+            Self::Method(m) => Some(*m),
+            Self::Disabled | Self::Inherit => None,
+            Self::UseDefault => {
+                tracing::warn!(
+                    "resolved_method() called on UseDefault; this likely indicates \
+                    resolve() was not called. Returning None as fallback."
+                );
+                None
+            }
+        }
+    }
+
+    /// Resolves the privilege setting against the profile defaults.
+    ///
+    /// Returns `Some(method)` if privilege escalation should be applied,
+    /// or `None` if no escalation is needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if `UseDefault` is specified
+    /// but no defaults are configured.
     pub fn resolve(
         &self,
         defaults: Option<&PrivilegeDefaults>,
@@ -298,6 +328,27 @@ mod tests {
             .resolve(None)
             .unwrap();
         assert_eq!(result, Some(PrivilegeMethod::Sudo));
+    }
+
+    // =========================================================================
+    // Privilege::resolved_method tests
+    // =========================================================================
+
+    #[test]
+    fn resolved_method_returns_some_for_method() {
+        assert_eq!(
+            Privilege::Method(PrivilegeMethod::Sudo).resolved_method(),
+            Some(PrivilegeMethod::Sudo)
+        );
+        assert_eq!(
+            Privilege::Method(PrivilegeMethod::Doas).resolved_method(),
+            Some(PrivilegeMethod::Doas)
+        );
+    }
+
+    #[test]
+    fn resolved_method_returns_none_for_disabled() {
+        assert_eq!(Privilege::Disabled.resolved_method(), None);
     }
 
     // =========================================================================

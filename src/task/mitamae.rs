@@ -17,7 +17,7 @@ use tracing::{debug, info};
 use super::{ScriptSource, TempFileGuard};
 use crate::error::RsdebstrapError;
 use crate::isolation::IsolationContext;
-use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
+use crate::privilege::{Privilege, PrivilegeDefaults};
 
 /// Mitamae task data and execution logic.
 ///
@@ -39,10 +39,8 @@ pub struct MitamaeTask {
     source: ScriptSource,
     /// Host-side mitamae binary path (None when relying on defaults)
     binary: Option<Utf8PathBuf>,
-    /// Raw privilege setting from YAML (resolved during defaults application)
-    privilege_raw: Privilege,
-    /// Resolved privilege method (set by `resolve_privilege()`)
-    privilege: Option<PrivilegeMethod>,
+    /// Privilege escalation setting (resolved during defaults application)
+    privilege: Privilege,
 }
 
 impl<'de> Deserialize<'de> for MitamaeTask {
@@ -65,8 +63,7 @@ impl<'de> Deserialize<'de> for MitamaeTask {
         Ok(MitamaeTask {
             source,
             binary: raw.binary,
-            privilege_raw: raw.privilege,
-            privilege: None,
+            privilege: raw.privilege,
         })
     }
 }
@@ -77,8 +74,7 @@ impl MitamaeTask {
         Self {
             source,
             binary: Some(binary),
-            privilege_raw: Privilege::default(),
-            privilege: None,
+            privilege: Privilege::default(),
         }
     }
 
@@ -87,8 +83,7 @@ impl MitamaeTask {
         Self {
             source,
             binary: None,
-            privilege_raw: Privilege::default(),
-            privilege: None,
+            privilege: Privilege::default(),
         }
     }
 
@@ -144,7 +139,11 @@ impl MitamaeTask {
         &mut self,
         defaults: Option<&PrivilegeDefaults>,
     ) -> Result<(), RsdebstrapError> {
-        self.privilege = self.privilege_raw.resolve(defaults)?;
+        let resolved = self.privilege.resolve(defaults)?;
+        self.privilege = match resolved {
+            Some(method) => Privilege::Method(method),
+            None => Privilege::Disabled,
+        };
         Ok(())
     }
 
@@ -234,7 +233,12 @@ impl MitamaeTask {
             recipe_path_in_isolation.into(),
         ];
 
-        let result = super::execute_in_context(context, &command, "mitamae", self.privilege)?;
+        let result = super::execute_in_context(
+            context,
+            &command,
+            "mitamae",
+            self.privilege.resolved_method(),
+        )?;
         super::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("mitamae recipe completed successfully");

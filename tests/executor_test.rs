@@ -20,10 +20,19 @@ fn non_dry_run_fails_for_nonexistent_command() {
 
     assert!(result.is_err());
     if let Err(e) = result {
+        let msg = e.to_string();
         assert!(
-            e.to_string().contains("not found in PATH"),
+            msg.contains("not found in PATH"),
             "Expected 'not found in PATH' in error, got: {}",
-            e
+            msg
+        );
+        // Verify it's a CommandNotFound variant
+        let typed = e.downcast_ref::<rsdebstrap::RsdebstrapError>();
+        assert!(typed.is_some(), "Expected RsdebstrapError, got: {:#}", e);
+        assert!(
+            matches!(typed.unwrap(), rsdebstrap::RsdebstrapError::CommandNotFound { .. }),
+            "Expected CommandNotFound variant, got: {:?}",
+            typed.unwrap()
         );
     }
 }

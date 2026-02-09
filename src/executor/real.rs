@@ -121,20 +121,17 @@ impl CommandExecutor for RealCommandExecutor {
             return Ok(ExecutionResult { status: None });
         }
 
-        let find_command = |cmd_name: &str| -> Result<std::path::PathBuf> {
+        let find_command = |cmd_name: &str, label: &str| -> Result<std::path::PathBuf> {
             which(cmd_name).map_err(|_| {
-                crate::error::RsdebstrapError::execution(
-                    spec,
-                    format!("command '{}' not found in PATH", cmd_name),
-                )
-                .into()
+                crate::error::RsdebstrapError::command_not_found(cmd_name, label).into()
             })
         };
 
         // Resolve the actual command to execute, wrapping with privilege if needed
         let (resolved_program, resolved_args) = if let Some(method) = &spec.privilege {
-            let privilege_cmd = find_command(method.command_name())?;
-            let actual_cmd = find_command(&spec.command)?;
+            let privilege_cmd =
+                find_command(method.command_name(), "privilege escalation command")?;
+            let actual_cmd = find_command(&spec.command, "command")?;
 
             tracing::trace!(
                 "privilege escalation: {} {}",
@@ -148,7 +145,7 @@ impl CommandExecutor for RealCommandExecutor {
 
             (privilege_cmd, args)
         } else {
-            let cmd = find_command(&spec.command)?;
+            let cmd = find_command(&spec.command, "command")?;
             tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
             (cmd, spec.args.clone())
         };

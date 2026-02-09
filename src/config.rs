@@ -85,16 +85,7 @@ impl Bootstrap {
     ///
     /// Should only be called after `resolve_privilege()`.
     pub fn resolved_privilege_method(&self) -> Option<PrivilegeMethod> {
-        match self.privilege() {
-            Privilege::Method(m) => Some(*m),
-            Privilege::Disabled => None,
-            Privilege::Inherit | Privilege::UseDefault => {
-                tracing::warn!(
-                    "resolved_privilege_method() called before resolve_privilege(); returning None"
-                );
-                None
-            }
-        }
+        self.privilege().resolved_method()
     }
 }
 
