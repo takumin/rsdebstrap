@@ -121,6 +121,18 @@ impl ScriptSource {
         }
     }
 
+    /// Resolves relative script paths relative to the given base directory.
+    ///
+    /// If the source is an external script file with a relative path,
+    /// it is resolved against `base_dir`. Content sources are unchanged.
+    pub fn resolve_paths(&mut self, base_dir: &Utf8Path) {
+        if let Self::Script(path) = self
+            && path.is_relative()
+        {
+            *path = base_dir.join(&*path);
+        }
+    }
+
     /// Validates the script source.
     ///
     /// The `label` parameter is used in error messages to distinguish between
