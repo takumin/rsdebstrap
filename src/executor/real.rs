@@ -3,7 +3,6 @@
 //! This module provides [`RealCommandExecutor`], which executes commands
 //! using `std::process::Command` with real-time output streaming.
 
-use std::ffi::OsString;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::thread::JoinHandle;
@@ -107,11 +106,11 @@ impl CommandExecutor for RealCommandExecutor {
                     "dry run: {}{} {}",
                     privilege_prefix,
                     spec.command,
-                    super::format_args_lossy(&spec.args)
+                    super::format_command_args(&spec.args)
                 );
             }
             if let Some(ref cwd) = spec.cwd {
-                tracing::info!("dry run cwd: {}", cwd.display());
+                tracing::info!("dry run cwd: {}", cwd);
             }
             return Ok(ExecutionResult { status: None });
         }
@@ -132,17 +131,17 @@ impl CommandExecutor for RealCommandExecutor {
             tracing::trace!(
                 "privilege escalation: {} {}",
                 method.command_name(),
-                actual_cmd.to_string_lossy()
+                actual_cmd.display()
             );
 
-            let mut args: Vec<OsString> = Vec::with_capacity(spec.args.len() + 1);
-            args.push(actual_cmd.into_os_string());
+            let mut args: Vec<String> = Vec::with_capacity(spec.args.len() + 1);
+            args.push(actual_cmd.display().to_string());
             args.extend(spec.args.iter().cloned());
 
             (privilege_cmd, args)
         } else {
             let cmd = find_command(&spec.command, "command")?;
-            tracing::trace!("command found: {}: {}", spec.command, cmd.to_string_lossy());
+            tracing::trace!("command found: {}: {}", spec.command, cmd.display());
             (cmd, spec.args.clone())
         };
 
@@ -150,7 +149,7 @@ impl CommandExecutor for RealCommandExecutor {
         command.args(&resolved_args);
 
         if let Some(ref cwd) = spec.cwd {
-            command.current_dir(cwd);
+            command.current_dir(cwd.as_std_path());
         }
 
         for (key, value) in &spec.env {

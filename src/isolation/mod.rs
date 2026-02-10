@@ -17,12 +17,16 @@
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsString;
 use std::sync::Arc;
 
 use crate::config::IsolationConfig;
 use crate::executor::{CommandExecutor, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
+
+/// Fallback isolation config for unresolved states.
+/// Used by `resolved_config()` to fail-closed (use isolation) rather than
+/// fail-open (bypass isolation) when called before resolution.
+static DEFAULT_ISOLATION_CONFIG: IsolationConfig = IsolationConfig::Chroot;
 
 pub mod chroot;
 pub mod direct;
@@ -90,7 +94,7 @@ pub trait IsolationContext: Send {
     /// Result containing the execution result or an error.
     fn execute(
         &self,
-        command: &[OsString],
+        command: &[String],
         privilege: Option<PrivilegeMethod>,
     ) -> Result<ExecutionResult>;
 
@@ -132,8 +136,8 @@ impl TaskIsolation {
     /// Should only be called after [`resolve_in_place()`](Self::resolve_in_place).
     ///
     /// Returns `Some(&config)` for `Config`, `None` for `Disabled`.
-    /// If called on `Inherit` or `UseDefault`, logs a warning and returns `None`
-    /// as a safe fallback.
+    /// If called on `Inherit` or `UseDefault`, logs a warning and returns
+    /// the default isolation config as a safe fallback (fail-closed).
     pub fn resolved_config(&self) -> Option<&IsolationConfig> {
         debug_assert!(
             !matches!(self, Self::Inherit | Self::UseDefault),
@@ -145,10 +149,11 @@ impl TaskIsolation {
             unresolved @ (Self::Inherit | Self::UseDefault) => {
                 tracing::warn!(
                     "resolved_config() called on unresolved state ({:?}); this likely indicates \
-                    a logic error where resolve was not called. Returning None as fallback.",
+                    a logic error where resolve was not called. \
+                    Falling back to default isolation config (fail-closed).",
                     unresolved
                 );
-                None
+                Some(&DEFAULT_ISOLATION_CONFIG)
             }
         }
     }

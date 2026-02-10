@@ -11,7 +11,7 @@
 
 use std::io;
 
-use crate::executor::format_args_lossy;
+use crate::executor::format_command_args;
 
 /// Formats an IO error kind into a human-readable message.
 ///
@@ -138,13 +138,13 @@ impl RsdebstrapError {
                     "{} {} {}",
                     method.command_name(),
                     spec.command,
-                    format_args_lossy(&spec.args)
+                    format_command_args(&spec.args)
                 )
             }
         } else if spec.args.is_empty() {
             spec.command.clone()
         } else {
-            format!("{} {}", spec.command, format_args_lossy(&spec.args))
+            format!("{} {}", spec.command, format_command_args(&spec.args))
         };
         Self::Execution {
             command,
@@ -158,12 +158,12 @@ impl RsdebstrapError {
     /// executed through an isolation context, formatting the command consistently
     /// as `"arg1 arg2 ... (isolation: context_name)"`.
     pub(crate) fn execution_in_isolation(
-        command: &[std::ffi::OsString],
+        command: &[String],
         isolation_name: &str,
         status: impl Into<String>,
     ) -> Self {
         Self::Execution {
-            command: format!("{} (isolation: {})", format_args_lossy(command), isolation_name),
+            command: format!("{} (isolation: {})", format_command_args(command), isolation_name),
             status: status.into(),
         }
     }
@@ -349,8 +349,7 @@ mod tests {
 
     #[test]
     fn test_execution_in_isolation_constructor() {
-        use std::ffi::OsString;
-        let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/task-abc.sh".into()];
+        let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/task-abc.sh".to_string()];
         let err = RsdebstrapError::execution_in_isolation(&command, "chroot", "exit status: 1");
         assert_eq!(
             err.to_string(),
@@ -361,8 +360,7 @@ mod tests {
 
     #[test]
     fn test_execution_in_isolation_constructor_empty_command() {
-        use std::ffi::OsString;
-        let command: Vec<OsString> = vec![];
+        let command: Vec<String> = vec![];
         let err = RsdebstrapError::execution_in_isolation(&command, "mock", "exit status: 2");
         assert_eq!(err.to_string(), "command execution failed:  (isolation: mock): exit status: 2");
     }

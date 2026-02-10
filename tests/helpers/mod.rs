@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
-use std::ffi::OsString;
 use std::io::Write;
 use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
@@ -501,7 +500,7 @@ pub struct MockContext {
     exit_code: Option<i32>,
     should_error: bool,
     error_message: Option<String>,
-    executed_commands: RefCell<Vec<Vec<OsString>>>,
+    executed_commands: RefCell<Vec<Vec<String>>>,
     executed_privileges: RefCell<Vec<Option<rsdebstrap::privilege::PrivilegeMethod>>>,
     return_no_status: bool,
 }
@@ -577,7 +576,7 @@ impl MockContext {
         }
     }
 
-    pub fn executed_commands(&self) -> Vec<Vec<OsString>> {
+    pub fn executed_commands(&self) -> Vec<Vec<String>> {
         self.executed_commands.borrow().clone()
     }
 
@@ -601,7 +600,7 @@ impl IsolationContext for MockContext {
 
     fn execute(
         &self,
-        command: &[OsString],
+        command: &[String],
         privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
     ) -> Result<ExecutionResult> {
         self.executed_commands.borrow_mut().push(command.to_vec());

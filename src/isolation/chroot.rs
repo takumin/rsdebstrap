@@ -5,7 +5,6 @@ use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use std::ffi::OsString;
 use std::sync::Arc;
 
 /// Chroot-based isolation provider.
@@ -64,7 +63,7 @@ impl IsolationContext for ChrootContext {
 
     fn execute(
         &self,
-        command: &[OsString],
+        command: &[String],
         privilege: Option<PrivilegeMethod>,
     ) -> Result<ExecutionResult> {
         if self.torn_down {
@@ -74,8 +73,8 @@ impl IsolationContext for ChrootContext {
             .into());
         }
 
-        let mut args: Vec<OsString> = Vec::with_capacity(command.len() + 1);
-        args.push(self.rootfs.as_str().into());
+        let mut args: Vec<String> = Vec::with_capacity(command.len() + 1);
+        args.push(self.rootfs.to_string());
         args.extend(command.iter().cloned());
 
         let spec = CommandSpec::new("chroot", args).with_privilege(privilege);

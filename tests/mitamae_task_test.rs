@@ -2,8 +2,6 @@
 
 mod helpers;
 
-use std::ffi::OsString;
-
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::task::{MitamaeTask, ScriptSource};
@@ -49,14 +47,14 @@ fn test_execute_inline_recipe_success() {
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
     assert_eq!(commands[0].len(), 3, "Expected 3 command elements");
 
-    let binary_arg = commands[0][0].to_string_lossy();
+    let binary_arg = &commands[0][0];
     assert!(
         binary_arg.starts_with("/tmp/mitamae-"),
         "Expected binary in /tmp/mitamae-*, got: {}",
         binary_arg
     );
-    assert_eq!(commands[0][1], OsString::from("local"));
-    let recipe_arg = commands[0][2].to_string_lossy();
+    assert_eq!(commands[0][1], "local");
+    let recipe_arg = &commands[0][2];
     assert!(
         recipe_arg.starts_with("/tmp/recipe-") && recipe_arg.ends_with(".rb"),
         "Expected recipe in /tmp/recipe-*.rb, got: {}",
@@ -91,7 +89,7 @@ fn test_execute_external_recipe_success() {
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].len(), 3);
-    assert_eq!(commands[0][1], OsString::from("local"));
+    assert_eq!(commands[0][1], "local");
 }
 
 #[test]
@@ -116,13 +114,13 @@ fn test_execute_dry_run_skips_file_operations() {
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
     assert_eq!(commands[0].len(), 3);
-    let binary_arg = commands[0][0].to_string_lossy();
+    let binary_arg = &commands[0][0];
     assert!(
         binary_arg.starts_with("/tmp/mitamae-"),
         "Expected binary path in /tmp, got: {}",
         binary_arg
     );
-    assert_eq!(commands[0][1], OsString::from("local"));
+    assert_eq!(commands[0][1], "local");
 }
 
 #[test]
@@ -179,16 +177,16 @@ fn test_execute_command_construction() {
     let cmd = &commands[0];
     assert_eq!(cmd.len(), 3, "Command should have exactly 3 elements");
 
-    let binary_arg = cmd[0].to_string_lossy();
+    let binary_arg = &cmd[0];
     assert!(
         binary_arg.starts_with("/tmp/mitamae-"),
         "First element should be mitamae binary, got: {}",
         binary_arg
     );
 
-    assert_eq!(cmd[1], OsString::from("local"), "Second element should be 'local'");
+    assert_eq!(cmd[1], "local", "Second element should be 'local'");
 
-    let recipe_arg = cmd[2].to_string_lossy();
+    let recipe_arg = &cmd[2];
     assert!(
         recipe_arg.starts_with("/tmp/recipe-") && recipe_arg.ends_with(".rb"),
         "Third element should be recipe path, got: {}",
@@ -218,7 +216,7 @@ fn test_execute_cleans_up_files() {
         .expect("failed to read tmp dir")
         .filter_map(|e| e.ok())
         .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
+            let name = e.file_name().to_str().unwrap().to_string();
             name.starts_with("mitamae-") || name.starts_with("recipe-")
         })
         .collect();

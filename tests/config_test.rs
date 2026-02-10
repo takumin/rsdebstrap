@@ -797,7 +797,7 @@ dir: /tmp/test
     );
     // Should contain the file path
     assert!(
-        err_msg.contains(&profile_path.to_string_lossy().to_string()),
+        err_msg.contains(path.as_str()),
         "Expected error message to contain file path, got: {}",
         err_msg
     );

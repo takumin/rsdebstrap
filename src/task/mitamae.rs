@@ -10,7 +10,6 @@
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
-use std::ffi::OsString;
 use std::fs;
 use tracing::{debug, info};
 
@@ -238,10 +237,10 @@ impl MitamaeTask {
 
         let binary_path_in_isolation = format!("/tmp/{}", binary_name);
         let recipe_path_in_isolation = format!("/tmp/{}", recipe_name);
-        let command: Vec<OsString> = vec![
-            binary_path_in_isolation.into(),
-            "local".into(),
-            recipe_path_in_isolation.into(),
+        let command: Vec<String> = vec![
+            binary_path_in_isolation,
+            "local".to_string(),
+            recipe_path_in_isolation,
         ];
 
         let result = super::execute_in_context(

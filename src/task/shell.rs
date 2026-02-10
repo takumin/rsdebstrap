@@ -9,7 +9,6 @@
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
-use std::ffi::OsString;
 use std::fs;
 use tracing::{debug, info};
 
@@ -225,8 +224,7 @@ impl ShellTask {
         })?;
 
         let script_path_in_isolation = format!("/tmp/{}", script_name);
-        let command: Vec<OsString> =
-            vec![self.shell.as_str().into(), script_path_in_isolation.into()];
+        let command: Vec<String> = vec![self.shell.clone(), script_path_in_isolation];
 
         let result = super::execute_in_context(
             context,

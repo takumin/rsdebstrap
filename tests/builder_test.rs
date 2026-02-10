@@ -61,11 +61,7 @@ fn test_build_mmdebstrap_args_with_mirrors() -> Result<()> {
 
     let args = config.build_args(&dir)?;
 
-    // Convert to Vec<String> for easier comparison
-    let args_str: Vec<String> = args
-        .iter()
-        .map(|s| s.to_string_lossy().to_string())
-        .collect();
+    let args_str = args;
 
     // Expected arguments in exact order
     // Note: --mode, --format, and --variant are omitted as they are all default values
@@ -100,11 +96,7 @@ fn test_build_debootstrap_args() -> Result<()> {
 
     let args = config.build_args(&dir)?;
 
-    // Convert to Vec<String> for easier comparison
-    let args_str: Vec<String> = args
-        .iter()
-        .map(|s| s.to_string_lossy().to_string())
-        .collect();
+    let args_str = args;
 
     // Expected arguments
     // Note: --variant is omitted as it's the default value (minbase)
@@ -136,11 +128,7 @@ fn test_build_mmdebstrap_args_with_non_default_values() -> Result<()> {
 
     let args = config.build_args(&dir)?;
 
-    // Convert to Vec<String> for easier comparison
-    let args_str: Vec<String> = args
-        .iter()
-        .map(|s| s.to_string_lossy().to_string())
-        .collect();
+    let args_str = args;
 
     // Expected arguments - non-default values should be included
     let expected = vec![
@@ -170,11 +158,7 @@ fn test_build_debootstrap_args_with_non_default_variant() -> Result<()> {
 
     let args = config.build_args(&dir)?;
 
-    // Convert to Vec<String> for easier comparison
-    let args_str: Vec<String> = args
-        .iter()
-        .map(|s| s.to_string_lossy().to_string())
-        .collect();
+    let args_str = args;
 
     // Expected arguments - non-default variant should be included
     let expected = vec!["--variant=buildd", "bookworm", "/tmp/test/rootfs"];

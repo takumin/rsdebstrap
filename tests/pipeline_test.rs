@@ -1,6 +1,5 @@
 //! Tests for the Pipeline orchestrator.
 
-use std::ffi::OsString;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -17,7 +16,7 @@ use rsdebstrap::task::{ScriptSource, ShellTask, TaskDefinition};
 
 /// Records executed commands in order, optionally failing on specific calls.
 struct MockExecutor {
-    calls: Mutex<Vec<Vec<OsString>>>,
+    calls: Mutex<Vec<Vec<String>>>,
     /// If set, the Nth call (0-indexed) will return an error.
     fail_on_call: Option<usize>,
 }
@@ -41,7 +40,7 @@ impl MockExecutor {
         self.calls.lock().unwrap().len()
     }
 
-    fn calls(&self) -> Vec<Vec<OsString>> {
+    fn calls(&self) -> Vec<Vec<String>> {
         self.calls.lock().unwrap().clone()
     }
 }
@@ -50,7 +49,7 @@ impl CommandExecutor for MockExecutor {
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
         let mut calls = self.calls.lock().unwrap();
         let index = calls.len();
-        let mut args = vec![OsString::from(&spec.command)];
+        let mut args = vec![spec.command.clone()];
         args.extend(spec.args.iter().cloned());
         calls.push(args);
         drop(calls);
@@ -263,9 +262,9 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
     // ["chroot", rootfs_path, shell_path, script_path]
     let calls = mock_executor.calls();
     for call in &calls {
-        assert_eq!(call[0], OsString::from("chroot"));
-        assert_eq!(call[1], OsString::from("/tmp/rootfs"));
-        assert_eq!(call[2], OsString::from("/bin/sh"));
+        assert_eq!(call[0], String::from("chroot"));
+        assert_eq!(call[1], String::from("/tmp/rootfs"));
+        assert_eq!(call[2], String::from("/bin/sh"));
     }
 }
 
@@ -328,10 +327,11 @@ fn test_pipeline_run_phase_order_is_strictly_pre_prov_post() {
     let calls = mock_executor.calls();
     assert_eq!(calls.len(), 3);
 
-    // ChrootContext wraps: ["chroot", rootfs, ...command], so call[0]="chroot", call[1]=rootfs, call[2]=shell
-    assert_eq!(calls[0][2], OsString::from("/bin/sh-pre"));
-    assert_eq!(calls[1][2], OsString::from("/bin/sh-prov"));
-    assert_eq!(calls[2][2], OsString::from("/bin/sh-post"));
+    // ChrootContext wraps: ["chroot", rootfs, ...command],
+    // so call[0]="chroot", call[1]=rootfs, call[2]=shell
+    assert_eq!(calls[0][2], String::from("/bin/sh-pre"));
+    assert_eq!(calls[1][2], String::from("/bin/sh-prov"));
+    assert_eq!(calls[2][2], String::from("/bin/sh-post"));
 }
 
 #[test]
@@ -343,7 +343,8 @@ fn test_pipeline_run_stops_within_phase_on_error() {
     ];
     let pipeline = Pipeline::new(&[], &prov, &[]);
 
-    // failing_on(1): 2nd call (0-indexed) fails, so task 1 succeeds, task 2 fails, task 3 never runs
+    // failing_on(1): 2nd call (0-indexed) fails,
+    // so task 1 succeeds, task 2 fails, task 3 never runs
     let mock_executor = Arc::new(MockExecutor::failing_on(1));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
@@ -413,7 +414,7 @@ fn test_pipeline_run_task_isolation_disabled_uses_direct() {
     // so /bin/sh becomes /tmp/rootfs/bin/sh (no "chroot" wrapper command)
     let first_call = &calls[0];
     assert!(
-        first_call[0].to_string_lossy().starts_with("/tmp/rootfs/"),
+        first_call[0].starts_with("/tmp/rootfs/"),
         "Expected rootfs-prefixed path (direct execution), got: {:?}",
         first_call[0]
     );
@@ -442,11 +443,11 @@ fn test_pipeline_run_task_isolation_enabled_uses_chroot() {
     let first_call = &calls[0];
     assert_eq!(
         first_call[0],
-        OsString::from("chroot"),
+        String::from("chroot"),
         "Expected 'chroot' as first argument, got: {:?}",
         first_call[0]
     );
-    assert_eq!(first_call[1], OsString::from("/tmp/rootfs"));
+    assert_eq!(first_call[1], String::from("/tmp/rootfs"));
 }
 
 // =============================================================================

@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::sync::{Arc, Mutex};
 
 use rsdebstrap::RsdebstrapError;
@@ -6,7 +5,7 @@ use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use rsdebstrap::isolation::{ChrootProvider, IsolationProvider};
 use rsdebstrap::privilege::PrivilegeMethod;
 
-type CommandCalls = Arc<Mutex<Vec<(String, Vec<OsString>, Option<PrivilegeMethod>)>>>;
+type CommandCalls = Arc<Mutex<Vec<(String, Vec<String>, Option<PrivilegeMethod>)>>>;
 
 #[derive(Default)]
 struct RecordingExecutor {
@@ -59,7 +58,7 @@ fn test_chroot_context_execute_builds_correct_args() {
         calls: Arc::clone(&calls),
     });
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
-    let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/script.sh".into()];
+    let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
     let context = provider.setup(rootfs, executor, false).unwrap();
     let result = context.execute(&command, None);
@@ -84,7 +83,7 @@ fn test_chroot_context_execute_empty_command() {
         calls: Arc::clone(&calls),
     });
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
-    let command: Vec<OsString> = vec![];
+    let command: Vec<String> = vec![];
 
     let context = provider.setup(rootfs, executor, false).unwrap();
     let result = context.execute(&command, None);
@@ -125,8 +124,8 @@ fn test_chroot_context_multiple_executions() {
     let context = provider.setup(rootfs, executor, false).unwrap();
 
     // Execute multiple commands
-    let cmd1: Vec<OsString> = vec!["/bin/echo".into(), "hello".into()];
-    let cmd2: Vec<OsString> = vec!["/bin/ls".into(), "-la".into()];
+    let cmd1: Vec<String> = vec!["/bin/echo".to_string(), "hello".to_string()];
+    let cmd2: Vec<String> = vec!["/bin/ls".to_string(), "-la".to_string()];
 
     assert!(context.execute(&cmd1, None).is_ok());
     assert!(context.execute(&cmd2, None).is_ok());
@@ -154,7 +153,7 @@ fn test_chroot_context_execute_after_teardown_returns_isolation_error() {
     let mut context = provider.setup(rootfs, executor, false).unwrap();
     context.teardown().unwrap();
 
-    let command: Vec<OsString> = vec!["/bin/sh".into()];
+    let command: Vec<String> = vec!["/bin/sh".to_string()];
     let err = context.execute(&command, None).unwrap_err();
     let downcast = err.downcast_ref::<RsdebstrapError>();
     assert!(downcast.is_some(), "Expected RsdebstrapError in error chain, got: {:#}", err,);
@@ -177,7 +176,7 @@ fn test_chroot_context_propagates_sudo_privilege() {
         calls: Arc::clone(&calls),
     });
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
-    let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/script.sh".into()];
+    let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
     let context = provider.setup(rootfs, executor, false).unwrap();
     let result = context.execute(&command, Some(PrivilegeMethod::Sudo));
@@ -201,7 +200,7 @@ fn test_chroot_context_propagates_doas_privilege() {
         calls: Arc::clone(&calls),
     });
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
-    let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/script.sh".into()];
+    let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
     let context = provider.setup(rootfs, executor, false).unwrap();
     let result = context.execute(&command, Some(PrivilegeMethod::Doas));
@@ -221,7 +220,7 @@ fn test_chroot_context_propagates_none_privilege() {
         calls: Arc::clone(&calls),
     });
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
-    let command: Vec<OsString> = vec!["/bin/sh".into()];
+    let command: Vec<String> = vec!["/bin/sh".to_string()];
 
     let context = provider.setup(rootfs, executor, false).unwrap();
     let result = context.execute(&command, None);

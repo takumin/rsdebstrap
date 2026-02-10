@@ -17,7 +17,6 @@ pub mod mitamae;
 pub mod shell;
 
 use std::borrow::Cow;
-use std::ffi::OsString;
 use std::fs;
 
 use anyhow::{Context, Result};
@@ -290,7 +289,7 @@ pub(crate) fn validate_tmp_directory(rootfs: &Utf8Path) -> Result<()> {
 /// * `privilege` - Optional privilege escalation method (`sudo`/`doas`) to wrap the command
 pub(crate) fn execute_in_context(
     context: &dyn IsolationContext,
-    command: &[OsString],
+    command: &[String],
     task_label: &str,
     privilege: Option<PrivilegeMethod>,
 ) -> Result<ExecutionResult> {
@@ -310,7 +309,7 @@ pub(crate) fn execute_in_context(
 /// - Success or dry-run with no status: returns `Ok(())`
 pub(crate) fn check_execution_result(
     result: &ExecutionResult,
-    command: &[OsString],
+    command: &[String],
     context_name: &str,
     dry_run: bool,
 ) -> Result<()> {
@@ -458,7 +457,7 @@ mod tests {
             let result = ExecutionResult {
                 status: Some(ExitStatus::from_raw(0)),
             };
-            let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/test.sh".into()];
+            let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/test.sh".to_string()];
             assert!(check_execution_result(&result, &command, "chroot", false).is_ok());
         }
 
@@ -467,7 +466,7 @@ mod tests {
             let result = ExecutionResult {
                 status: Some(ExitStatus::from_raw(1 << 8)),
             };
-            let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/test.sh".into()];
+            let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/test.sh".to_string()];
             let err = check_execution_result(&result, &command, "chroot", false).unwrap_err();
             let typed = err.downcast_ref::<RsdebstrapError>().unwrap();
             assert!(
@@ -480,7 +479,7 @@ mod tests {
         #[test]
         fn no_status_in_non_dry_run_returns_error() {
             let result = ExecutionResult { status: None };
-            let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/test.sh".into()];
+            let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/test.sh".to_string()];
             let err = check_execution_result(&result, &command, "chroot", false).unwrap_err();
             let typed = err.downcast_ref::<RsdebstrapError>().unwrap();
             assert!(
@@ -494,7 +493,7 @@ mod tests {
         #[test]
         fn no_status_in_dry_run_returns_ok() {
             let result = ExecutionResult { status: None };
-            let command: Vec<OsString> = vec!["/bin/sh".into(), "/tmp/test.sh".into()];
+            let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/test.sh".to_string()];
             assert!(check_execution_result(&result, &command, "chroot", true).is_ok());
         }
     }

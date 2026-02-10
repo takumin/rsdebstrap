@@ -5,7 +5,6 @@ use crate::privilege::Privilege;
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsString;
 use strum::Display;
 
 /// Known archive file extensions that indicate non-directory output formats.
@@ -164,7 +163,7 @@ impl BootstrapBackend for MmdebstrapConfig {
     }
 
     #[tracing::instrument(skip(self, output_dir))]
-    fn build_args(&self, output_dir: &Utf8Path) -> Result<Vec<OsString>> {
+    fn build_args(&self, output_dir: &Utf8Path) -> Result<Vec<String>> {
         let mut builder = CommandArgsBuilder::new();
 
         // Only add flags if they differ from defaults
@@ -195,7 +194,7 @@ impl BootstrapBackend for MmdebstrapConfig {
 
         builder.push_arg(self.suite.clone());
 
-        builder.push_arg(output_dir.join(&self.target).into_os_string());
+        builder.push_arg(output_dir.join(&self.target).to_string());
 
         let mut cmd_args = builder.into_args();
 
@@ -204,7 +203,7 @@ impl BootstrapBackend for MmdebstrapConfig {
             self.mirrors
                 .iter()
                 .filter(|m| !m.trim().is_empty())
-                .map(|m| m.into()),
+                .cloned(),
         );
 
         self.log_command_args(&cmd_args);

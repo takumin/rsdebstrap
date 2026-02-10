@@ -9,7 +9,6 @@ use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use std::ffi::OsString;
 use std::sync::Arc;
 
 /// Direct execution provider (no isolation).
@@ -72,7 +71,7 @@ impl IsolationContext for DirectContext {
     /// arguments to the isolation context.
     fn execute(
         &self,
-        command: &[OsString],
+        command: &[String],
         privilege: Option<PrivilegeMethod>,
     ) -> Result<ExecutionResult> {
         if self.torn_down {
@@ -83,21 +82,23 @@ impl IsolationContext for DirectContext {
         }
 
         // Translate absolute paths to rootfs-prefixed paths
-        let translated: Vec<OsString> = command
+        let translated: Vec<String> = command
             .iter()
             .map(|arg| {
-                let s = arg.to_string_lossy();
-                if s.starts_with('/') {
-                    OsString::from(self.rootfs.join(s.trim_start_matches('/')).as_str())
+                let path = Utf8Path::new(arg);
+                if path.is_absolute() {
+                    match path.strip_prefix("/") {
+                        Ok(relative) => self.rootfs.join(relative).to_string(),
+                        Err(_) => arg.clone(),
+                    }
                 } else {
                     arg.clone()
                 }
             })
             .collect();
 
-        let spec =
-            CommandSpec::new(translated[0].to_string_lossy().to_string(), translated[1..].to_vec())
-                .with_privilege(privilege);
+        let spec = CommandSpec::new(translated[0].clone(), translated[1..].to_vec())
+            .with_privilege(privilege);
         self.executor.execute(&spec)
     }
 
