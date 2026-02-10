@@ -19,10 +19,26 @@ use crate::executor::CommandExecutor;
 use crate::isolation::{DirectProvider, IsolationProvider};
 use crate::task::TaskDefinition;
 
-// Phase name constants to avoid duplication between validate() and run_phases()
-const PHASE_PRE_PROCESSOR: &str = "pre-processor";
-const PHASE_PROVISIONER: &str = "provisioner";
-const PHASE_POST_PROCESSOR: &str = "post-processor";
+/// Pipeline execution phase.
+///
+/// Represents the three ordered phases that tasks are grouped into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    PreProcessor,
+    Provisioner,
+    PostProcessor,
+}
+
+impl Phase {
+    /// Returns the human-readable name for this phase.
+    fn name(self) -> &'static str {
+        match self {
+            Self::PreProcessor => "pre-processor",
+            Self::Provisioner => "provisioner",
+            Self::PostProcessor => "post-processor",
+        }
+    }
+}
 
 /// Pipeline orchestrator for executing tasks in phases.
 ///
@@ -51,12 +67,12 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    /// Returns the ordered list of phases with their names and task slices.
-    fn phases(&self) -> [(&'static str, &'a [TaskDefinition]); 3] {
+    /// Returns the ordered list of phases with their phase type and task slices.
+    fn phases(&self) -> [(Phase, &'a [TaskDefinition]); 3] {
         [
-            (PHASE_PRE_PROCESSOR, self.pre_processors),
-            (PHASE_PROVISIONER, self.provisioners),
-            (PHASE_POST_PROCESSOR, self.post_processors),
+            (Phase::PreProcessor, self.pre_processors),
+            (Phase::Provisioner, self.provisioners),
+            (Phase::PostProcessor, self.post_processors),
         ]
     }
 
@@ -75,8 +91,8 @@ impl<'a> Pipeline<'a> {
 
     /// Validates all tasks in the pipeline.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        for (phase_name, tasks) in self.phases() {
-            self.validate_phase(phase_name, tasks)?;
+        for (phase, tasks) in self.phases() {
+            self.validate_phase(phase, tasks)?;
         }
         Ok(())
     }
@@ -108,20 +124,21 @@ impl<'a> Pipeline<'a> {
         executor: &Arc<dyn CommandExecutor>,
         dry_run: bool,
     ) -> Result<()> {
-        for (phase_name, tasks) in self.phases() {
-            self.run_phase(phase_name, tasks, rootfs, executor, dry_run)?;
+        for (phase, tasks) in self.phases() {
+            self.run_phase(phase, tasks, rootfs, executor, dry_run)?;
         }
         Ok(())
     }
 
     fn run_phase(
         &self,
-        phase_name: &str,
+        phase: Phase,
         tasks: &[TaskDefinition],
         rootfs: &Utf8Path,
         executor: &Arc<dyn CommandExecutor>,
         dry_run: bool,
     ) -> Result<()> {
+        let phase_name = phase.name();
         if tasks.is_empty() {
             debug!("skipping empty {} phase", phase_name);
             return Ok(());
@@ -180,9 +197,10 @@ impl<'a> Pipeline<'a> {
     /// forward-compatibility, ensuring no future variant loses phase information.
     fn validate_phase(
         &self,
-        phase_name: &str,
+        phase: Phase,
         tasks: &[TaskDefinition],
     ) -> Result<(), RsdebstrapError> {
+        let phase_name = phase.name();
         for (index, task) in tasks.iter().enumerate() {
             task.validate().map_err(|e| match e {
                 RsdebstrapError::Validation(msg) => RsdebstrapError::Validation(format!(

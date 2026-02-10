@@ -244,14 +244,7 @@ provisioners:
     ));
     // editorconfig-checker-enable
 
-    assert!(result.is_err());
-    // The error message should indicate that neither 'script' nor 'content' was found
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("either 'script' or 'content' must be specified"),
-        "Expected error about missing script/content, got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "either 'script' or 'content' must be specified");
 
     Ok(())
 }
@@ -274,13 +267,7 @@ provisioners:
     ));
     // editorconfig-checker-enable
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("mutually exclusive"),
-        "Expected error about mutually exclusive, got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "mutually exclusive");
 
     Ok(())
 }
@@ -607,67 +594,31 @@ bootstrap:
     Ok(())
 }
 
+/// Helper to test mmdebstrap format parsing with the given format name and expected value.
+fn test_load_profile_format(format_name: &str, expected: Format) -> Result<()> {
+    let profile = helpers::load_profile_from_yaml(format!(
+        "---\ndir: /tmp/test\nbootstrap:\n  type: mmdebstrap\n  suite: bookworm\n  \
+        target: rootfs.{0}\n  format: {0}\n",
+        format_name
+    ))?;
+    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
+    assert_eq!(cfg.format, expected);
+    Ok(())
+}
+
 #[test]
 fn test_load_profile_format_tar_xz() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs.tar.xz
-  format: tar.xz
-"#
-    ))?;
-    // editorconfig-checker-enable
-
-    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
-    assert_eq!(cfg.format, Format::TarXz);
-
-    Ok(())
+    test_load_profile_format("tar.xz", Format::TarXz)
 }
 
 #[test]
 fn test_load_profile_format_tar_gz() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs.tar.gz
-  format: tar.gz
-"#
-    ))?;
-    // editorconfig-checker-enable
-
-    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
-    assert_eq!(cfg.format, Format::TarGz);
-
-    Ok(())
+    test_load_profile_format("tar.gz", Format::TarGz)
 }
 
 #[test]
 fn test_load_profile_format_tar_zst() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs.tar.zst
-  format: tar.zst
-"#
-    ))?;
-    // editorconfig-checker-enable
-
-    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
-    assert_eq!(cfg.format, Format::TarZst);
-
-    Ok(())
+    test_load_profile_format("tar.zst", Format::TarZst)
 }
 
 #[test]
@@ -925,52 +876,28 @@ fn test_load_profile_phases_default_to_empty() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_profile_validation_rejects_pre_processors_with_tar_output() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-        dir: /tmp/test
-        bootstrap:
-          type: mmdebstrap
-          suite: bookworm
-          target: rootfs.tar.zst
-        pre_processors:
-          - type: shell
-            content: echo "pre"
-        "#
+/// Helper to test that a phase rejects non-directory (tar) bootstrap output.
+fn test_phase_rejects_tar_output(phase_key: &str) -> Result<()> {
+    let profile = helpers::load_profile_from_yaml(format!(
+        "---\ndir: /tmp/test\nbootstrap:\n  type: mmdebstrap\n  suite: bookworm\n  \
+        target: rootfs.tar.zst\n{}:\n  - type: shell\n    \
+        content: echo \"test\"\n",
+        phase_key
     ))?;
-    // editorconfig-checker-enable
-
     let result = profile.validate();
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("pipeline tasks require directory output"));
-
     Ok(())
 }
 
 #[test]
+fn test_profile_validation_rejects_pre_processors_with_tar_output() -> Result<()> {
+    test_phase_rejects_tar_output("pre_processors")
+}
+
+#[test]
 fn test_profile_validation_rejects_post_processors_with_tar_output() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-        dir: /tmp/test
-        bootstrap:
-          type: mmdebstrap
-          suite: bookworm
-          target: rootfs.tar.zst
-        post_processors:
-          - type: shell
-            content: echo "post"
-        "#
-    ))?;
-    // editorconfig-checker-enable
-
-    let result = profile.validate();
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("pipeline tasks require directory output"));
-
-    Ok(())
+    test_phase_rejects_tar_output("post_processors")
 }
 
 #[test]

@@ -63,7 +63,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - `DebootstrapConfig` - debootstrap implementation
   - Each backend builds command arguments and determines output type (directory vs archive)
 
-- **`Bootstrap`** enum (`src/config.rs`) - Bootstrap backend wrapper
+- **`Bootstrap`** enum (`src/bootstrap/config.rs`, re-exported from `src/config.rs`) - Bootstrap backend wrapper
   - `resolve_privilege()` resolves privilege settings against profile defaults
   - `resolved_privilege_method()` returns the resolved `Option<PrivilegeMethod>`
 
@@ -74,8 +74,8 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - Each task has an `isolation: TaskIsolation` field resolved via `resolve_isolation()`
   - `resolved_isolation_config()` returns `Option<&IsolationConfig>` after resolution
   - Enum-based dispatch with compile-time exhaustive matching
-  - Shared utilities in `src/task/mod.rs`: `ScriptSource`, `TempFileGuard`, `validate_tmp_directory()`
-  - Helper functions: `execute_in_context()`, `check_execution_result()`, `prepare_files_with_toctou_check()`
+  - Shared types in `src/task/mod.rs`: `ScriptSource`; utilities split into `src/task/{execution,file_ops,validation}.rs`
+  - Helper functions in submodules: `execute_and_check()` (`execution.rs`), `prepare_files_with_toctou_check()` (`file_ops.rs`), `validate_tmp_directory()` (`validation.rs`)
 
 - **`MitamaeTask`** (`src/task/mitamae.rs`) - Mitamae recipe execution
   - `binary` field: `Option<Utf8PathBuf>` — can be omitted and resolved from `defaults.mitamae`
@@ -99,8 +99,8 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - Note: `UseDefault` and `Inherit` produce identical behavior because `IsolationConfig` always has a default (`Chroot`). Both exist for API symmetry with `Privilege` enum.
 
 - **`IsolationProvider`** / **`IsolationContext`** traits (`src/isolation/mod.rs`) - Isolation backends
-  - `ChrootProvider` / `ChrootContext` - chroot-based isolation
-  - `DirectProvider` / `DirectContext` (`src/isolation/direct.rs`) - No isolation, direct execution on host
+  - `ChrootProvider` (`src/isolation/chroot.rs`) - chroot-based isolation; `ChrootContext` is an implementation detail accessed via `dyn IsolationContext`
+  - `DirectProvider` (`src/isolation/direct.rs`) - No isolation, direct execution on host; `DirectContext` is an implementation detail accessed via `dyn IsolationContext`
     - Translates absolute paths to rootfs-prefixed paths (e.g., `/bin/sh` → `<rootfs>/bin/sh`)
     - Guards against empty commands and post-teardown execution
   - `IsolationContext::execute()` takes `privilege: Option<PrivilegeMethod>` parameter

@@ -1,5 +1,7 @@
 //! Tests for the Pipeline orchestrator.
 
+mod helpers;
+
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -150,13 +152,7 @@ fn test_pipeline_validate_fails_for_invalid_pre_processor() {
         "../../../etc/passwd".into(),
     )))];
     let pipeline = Pipeline::new(&bad_task, &[], &[]);
-    let err = pipeline.validate().unwrap_err();
-    let err_msg = format!("{:#}", err);
-    assert!(
-        err_msg.contains("pre-processor 1 validation failed"),
-        "Expected 'pre-processor 1 validation failed' in error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(pipeline.validate(), "pre-processor 1 validation failed");
 }
 
 #[test]
@@ -165,13 +161,7 @@ fn test_pipeline_validate_fails_for_invalid_provisioner() {
         "../../../etc/passwd".into(),
     )))];
     let pipeline = Pipeline::new(&[], &bad_task, &[]);
-    let err = pipeline.validate().unwrap_err();
-    let err_msg = format!("{:#}", err);
-    assert!(
-        err_msg.contains("provisioner 1 validation failed"),
-        "Expected 'provisioner 1 validation failed' in error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(pipeline.validate(), "provisioner 1 validation failed");
 }
 
 #[test]
@@ -180,13 +170,7 @@ fn test_pipeline_validate_fails_for_invalid_post_processor() {
         "../../../etc/passwd".into(),
     )))];
     let pipeline = Pipeline::new(&[], &[], &bad_task);
-    let err = pipeline.validate().unwrap_err();
-    let err_msg = format!("{:#}", err);
-    assert!(
-        err_msg.contains("post-processor 1 validation failed"),
-        "Expected 'post-processor 1 validation failed' in error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(pipeline.validate(), "post-processor 1 validation failed");
 }
 
 #[test]
@@ -196,13 +180,7 @@ fn test_pipeline_validate_reports_correct_index() {
         TaskDefinition::Shell(ShellTask::new(ScriptSource::Script("../../../etc/passwd".into())));
     let tasks = [good, bad];
     let pipeline = Pipeline::new(&[], &tasks, &[]);
-    let err = pipeline.validate().unwrap_err();
-    let err_msg = format!("{:#}", err);
-    assert!(
-        err_msg.contains("provisioner 2 validation failed"),
-        "Expected 'provisioner 2 validation failed' in error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(pipeline.validate(), "provisioner 2 validation failed");
 }
 
 #[test]
@@ -277,13 +255,7 @@ fn test_pipeline_run_phase_error_with_successful_teardown() {
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("failed to run pre-processor 1"),
-        "Expected phase error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "failed to run pre-processor 1");
 }
 
 #[test]
@@ -380,14 +352,7 @@ fn test_pipeline_run_provisioner_failure_skips_post_processors() {
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
-    assert!(result.is_err());
-
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("failed to run provisioner 1"),
-        "Expected provisioner failure error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "failed to run provisioner 1");
 
     assert_eq!(mock_executor.call_count(), 2);
 }

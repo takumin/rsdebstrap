@@ -140,74 +140,27 @@ impl Privilege {
     }
 }
 
-impl<'de> Deserialize<'de> for Privilege {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de;
-
-        struct PrivilegeVisitor;
-
-        impl<'de> de::Visitor<'de> for PrivilegeVisitor {
-            type Value = Privilege;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a boolean or a map with a 'method' field")
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(Privilege::Inherit)
-            }
-
-            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if v {
-                    Ok(Privilege::UseDefault)
-                } else {
-                    Ok(Privilege::Disabled)
-                }
-            }
-
-            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::MapAccess<'de>,
-            {
-                #[derive(Deserialize)]
-                #[serde(deny_unknown_fields)]
-                struct PrivilegeMap {
-                    method: PrivilegeMethod,
-                }
-                let pm = PrivilegeMap::deserialize(de::value::MapAccessDeserializer::new(map))?;
-                Ok(Privilege::Method(pm.method))
-            }
+crate::serde_helpers::impl_inherit_or_explicit_serde! {
+    Privilege,
+    explicit: Method,
+    expecting: "a boolean or a map with a 'method' field",
+    deserialize_map(map) {
+        use serde::Deserialize as _;
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PrivilegeMap {
+            method: PrivilegeMethod,
         }
-
-        deserializer.deserialize_any(PrivilegeVisitor)
-    }
-}
-
-impl Serialize for Privilege {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Inherit => serializer.serialize_none(),
-            Self::UseDefault => serializer.serialize_bool(true),
-            Self::Disabled => serializer.serialize_bool(false),
-            Self::Method(method) => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("method", method)?;
-                map.end()
-            }
-        }
+        let pm = PrivilegeMap::deserialize(
+            serde::de::value::MapAccessDeserializer::new(map),
+        )?;
+        Ok(Privilege::Method(pm.method))
+    },
+    serialize_explicit(method, serializer) {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("method", method)?;
+        map.end()
     }
 }
 

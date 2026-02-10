@@ -7,20 +7,7 @@ use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::task::{MitamaeTask, ScriptSource};
 use tempfile::tempdir;
 
-use crate::helpers::MockContext;
-
-/// Helper to set up a valid rootfs with /tmp
-fn setup_rootfs_with_tmp(temp_dir: &tempfile::TempDir) {
-    let rootfs = temp_dir.path();
-    std::fs::create_dir(rootfs.join("tmp")).expect("failed to create tmp dir");
-}
-
-/// Helper to create a fake mitamae binary in the temp dir
-fn create_fake_binary(temp_dir: &tempfile::TempDir) -> camino::Utf8PathBuf {
-    let binary_path = temp_dir.path().join("mitamae");
-    std::fs::write(&binary_path, "fake mitamae binary").expect("failed to write binary");
-    camino::Utf8PathBuf::from_path_buf(binary_path).expect("path should be valid UTF-8")
-}
+use crate::helpers::{MockContext, create_fake_binary, setup_rootfs_with_tmp};
 
 #[test]
 fn test_execute_inline_recipe_success() {
@@ -29,7 +16,7 @@ fn test_execute_inline_recipe_success() {
         .expect("path should be valid UTF-8");
 
     setup_rootfs_with_tmp(&temp_dir);
-    let binary = create_fake_binary(&temp_dir);
+    let binary = create_fake_binary(&temp_dir, "mitamae");
 
     let mut task = MitamaeTask::new(
         ScriptSource::Content("package 'vim' do\n  action :install\nend\n".to_string()),
@@ -69,7 +56,7 @@ fn test_execute_external_recipe_success() {
         .expect("path should be valid UTF-8");
 
     setup_rootfs_with_tmp(&temp_dir);
-    let binary = create_fake_binary(&temp_dir);
+    let binary = create_fake_binary(&temp_dir, "mitamae");
 
     // Create an external recipe file
     let recipe_path = temp_dir.path().join("default.rb");
@@ -130,7 +117,7 @@ fn test_execute_failure_returns_error() {
         .expect("path should be valid UTF-8");
 
     setup_rootfs_with_tmp(&temp_dir);
-    let binary = create_fake_binary(&temp_dir);
+    let binary = create_fake_binary(&temp_dir, "mitamae");
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
@@ -161,7 +148,7 @@ fn test_execute_command_construction() {
         .expect("path should be valid UTF-8");
 
     setup_rootfs_with_tmp(&temp_dir);
-    let binary = create_fake_binary(&temp_dir);
+    let binary = create_fake_binary(&temp_dir, "mitamae");
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
@@ -201,7 +188,7 @@ fn test_execute_cleans_up_files() {
         .expect("path should be valid UTF-8");
 
     setup_rootfs_with_tmp(&temp_dir);
-    let binary = create_fake_binary(&temp_dir);
+    let binary = create_fake_binary(&temp_dir, "mitamae");
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
@@ -234,7 +221,7 @@ fn test_execute_fails_when_context_execute_errors() {
         .expect("path should be valid UTF-8");
 
     setup_rootfs_with_tmp(&temp_dir);
-    let binary = create_fake_binary(&temp_dir);
+    let binary = create_fake_binary(&temp_dir, "mitamae");
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
@@ -243,13 +230,7 @@ fn test_execute_fails_when_context_execute_errors() {
     let context = MockContext::with_error(&rootfs, "connection to isolation backend lost");
     let result = task.execute(&context);
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("connection to isolation backend lost"),
-        "Expected error message to contain 'connection to isolation backend lost', got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "connection to isolation backend lost");
 }
 
 #[test]
@@ -261,7 +242,7 @@ fn test_execute_with_no_exit_status_returns_error() {
         .expect("path should be valid UTF-8");
 
     setup_rootfs_with_tmp(&temp_dir);
-    let binary = create_fake_binary(&temp_dir);
+    let binary = create_fake_binary(&temp_dir, "mitamae");
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
@@ -298,7 +279,7 @@ fn test_execute_without_tmp_directory() {
         .expect("path should be valid UTF-8");
 
     // Do NOT create /tmp
-    let binary = create_fake_binary(&temp_dir);
+    let binary = create_fake_binary(&temp_dir, "mitamae");
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
@@ -307,11 +288,5 @@ fn test_execute_without_tmp_directory() {
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("/tmp directory not found"),
-        "Expected '/tmp directory not found' in error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "/tmp directory not found");
 }

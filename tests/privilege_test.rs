@@ -249,13 +249,7 @@ fn test_default_privilege_doas_inherited() {
 // MockContext-based privilege propagation tests
 // =============================================================================
 
-/// Helper to set up a valid rootfs with /tmp and /bin/sh
-fn setup_valid_rootfs(temp_dir: &tempfile::TempDir) {
-    let rootfs = temp_dir.path();
-    std::fs::create_dir(rootfs.join("tmp")).expect("failed to create tmp dir");
-    std::fs::create_dir_all(rootfs.join("bin")).expect("failed to create bin dir");
-    std::fs::write(rootfs.join("bin/sh"), "#!/bin/sh\n").expect("failed to write /bin/sh");
-}
+use crate::helpers::setup_rootfs_with_shell;
 
 #[test]
 fn test_shell_task_propagates_sudo_privilege_to_mock_context() {
@@ -263,7 +257,7 @@ fn test_shell_task_propagates_sudo_privilege_to_mock_context() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
     let defaults = PrivilegeDefaults {
@@ -291,7 +285,7 @@ fn test_shell_task_propagates_none_privilege_to_mock_context() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
     // No defaults → privilege resolves to None

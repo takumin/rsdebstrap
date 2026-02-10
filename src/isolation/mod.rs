@@ -16,23 +16,40 @@
 
 use anyhow::Result;
 use camino::Utf8Path;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::config::IsolationConfig;
 use crate::executor::{CommandExecutor, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
+
+pub mod chroot;
+pub mod config;
+pub mod direct;
+
+// Only providers and config are re-exported; Context types are implementation details
+// accessed via the IsolationContext trait object.
+pub use chroot::ChrootProvider;
+pub use config::IsolationConfig;
+pub use direct::DirectProvider;
+
+/// Checks that the isolation context has not been torn down.
+///
+/// Returns `RsdebstrapError::Isolation` if `torn_down` is true.
+/// The `backend` parameter identifies the isolation backend in error messages.
+pub(crate) fn check_not_torn_down(torn_down: bool, backend: &str) -> Result<()> {
+    if torn_down {
+        return Err(crate::error::RsdebstrapError::Isolation(format!(
+            "cannot execute command: {} context has already been torn down",
+            backend
+        ))
+        .into());
+    }
+    Ok(())
+}
 
 /// Fallback isolation config for unresolved states.
 /// Used by `resolved_config()` to fail-closed (use isolation) rather than
 /// fail-open (bypass isolation) when called before resolution.
 static DEFAULT_ISOLATION_CONFIG: IsolationConfig = IsolationConfig::Chroot;
-
-pub mod chroot;
-pub mod direct;
-
-pub use chroot::{ChrootContext, ChrootProvider};
-pub use direct::{DirectContext, DirectProvider};
 
 /// Provider trait for creating isolation contexts.
 ///
@@ -185,65 +202,19 @@ impl TaskIsolation {
     }
 }
 
-impl<'de> Deserialize<'de> for TaskIsolation {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de;
-
-        struct TaskIsolationVisitor;
-
-        impl<'de> de::Visitor<'de> for TaskIsolationVisitor {
-            type Value = TaskIsolation;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a boolean or a map with a 'type' field")
-            }
-
-            fn visit_unit<E>(self) -> std::result::Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(TaskIsolation::Inherit)
-            }
-
-            fn visit_bool<E>(self, v: bool) -> std::result::Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if v {
-                    Ok(TaskIsolation::UseDefault)
-                } else {
-                    Ok(TaskIsolation::Disabled)
-                }
-            }
-
-            fn visit_map<A>(self, map: A) -> std::result::Result<Self::Value, A::Error>
-            where
-                A: de::MapAccess<'de>,
-            {
-                let config =
-                    IsolationConfig::deserialize(de::value::MapAccessDeserializer::new(map))?;
-                Ok(TaskIsolation::Config(config))
-            }
-        }
-
-        deserializer.deserialize_any(TaskIsolationVisitor)
-    }
-}
-
-impl Serialize for TaskIsolation {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Inherit => serializer.serialize_none(),
-            Self::UseDefault => serializer.serialize_bool(true),
-            Self::Disabled => serializer.serialize_bool(false),
-            Self::Config(c) => c.serialize(serializer),
-        }
+crate::serde_helpers::impl_inherit_or_explicit_serde! {
+    TaskIsolation,
+    explicit: Config,
+    expecting: "a boolean or a map with a 'type' field",
+    deserialize_map(map) {
+        use serde::Deserialize as _;
+        let config = IsolationConfig::deserialize(
+            serde::de::value::MapAccessDeserializer::new(map),
+        )?;
+        Ok(TaskIsolation::Config(config))
+    },
+    serialize_explicit(c, serializer) {
+        serde::Serialize::serialize(c, serializer)
     }
 }
 

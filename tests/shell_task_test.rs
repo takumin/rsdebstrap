@@ -15,15 +15,7 @@ use rsdebstrap::isolation::IsolationContext;
 use rsdebstrap::task::{ScriptSource, ShellTask};
 use tempfile::tempdir;
 
-use crate::helpers::MockContext;
-
-/// Helper to set up a valid rootfs with /tmp and /bin/sh
-fn setup_valid_rootfs(temp_dir: &tempfile::TempDir) {
-    let rootfs = temp_dir.path();
-    std::fs::create_dir(rootfs.join("tmp")).expect("failed to create tmp dir");
-    std::fs::create_dir_all(rootfs.join("bin")).expect("failed to create bin dir");
-    std::fs::write(rootfs.join("bin/sh"), "#!/bin/sh\n").expect("failed to write /bin/sh");
-}
+use crate::helpers::{MockContext, setup_rootfs_with_shell};
 
 #[test]
 fn test_run_fails_when_tmp_missing() {
@@ -36,13 +28,7 @@ fn test_run_fails_when_tmp_missing() {
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("/tmp directory not found"),
-        "Expected '/tmp directory not found' in error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "/tmp directory not found");
 }
 
 #[test]
@@ -61,9 +47,7 @@ fn test_run_fails_when_tmp_is_symlink() {
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(err_msg.contains("symlink"), "Expected 'symlink' in error, got: {}", err_msg);
+    assert_error_contains!(result, "symlink");
 }
 
 #[test]
@@ -80,13 +64,7 @@ fn test_run_fails_when_tmp_is_file() {
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("not a directory"),
-        "Expected 'not a directory' in error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "not a directory");
 }
 
 #[test]
@@ -103,9 +81,7 @@ fn test_run_fails_when_shell_has_path_traversal() {
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(err_msg.contains(".."), "Expected '..' in error, got: {}", err_msg);
+    assert_error_contains!(result, "..");
 }
 
 #[test]
@@ -121,13 +97,7 @@ fn test_run_fails_when_shell_not_exists() {
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("does not exist"),
-        "Expected 'does not exist' in error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "does not exist");
 }
 
 #[test]
@@ -144,9 +114,7 @@ fn test_run_fails_when_shell_is_directory() {
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(err_msg.contains("directory"), "Expected 'directory' in error, got: {}", err_msg);
+    assert_error_contains!(result, "directory");
 }
 
 #[test]
@@ -155,7 +123,7 @@ fn test_run_fails_when_script_execution_fails() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
     task.resolve_privilege(None).unwrap();
@@ -252,7 +220,7 @@ fn test_run_fails_when_context_execute_errors() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
     task.resolve_privilege(None).unwrap();
@@ -261,13 +229,7 @@ fn test_run_fails_when_context_execute_errors() {
     let context = MockContext::with_error(&rootfs, "connection to isolation backend lost");
     let result = task.execute(&context);
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("connection to isolation backend lost"),
-        "Expected error message to contain 'connection to isolation backend lost', got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "connection to isolation backend lost");
 }
 
 #[test]
@@ -279,7 +241,7 @@ fn test_run_fails_when_script_copy_fails() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let script_path = temp_dir.path().join("external_script.sh");
     std::fs::write(&script_path, "#!/bin/sh\necho external\n").expect("failed to write script");
@@ -308,13 +270,7 @@ fn test_run_fails_when_script_copy_fails() {
     perms.set_mode(0o755);
     std::fs::set_permissions(&tmp_path, perms).expect("failed to restore tmp permissions");
 
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("failed to copy script"),
-        "Expected 'failed to copy script' in error, got: {}",
-        err_msg
-    );
+    assert_error_contains!(result, "failed to copy script");
 }
 
 #[test]
@@ -323,7 +279,7 @@ fn test_execute_inline_script_success() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
     task.resolve_privilege(None).unwrap();
@@ -368,7 +324,7 @@ fn test_execute_external_script_success() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     // Create an external script file
     let script_path = temp_dir.path().join("external_script.sh");
@@ -422,7 +378,7 @@ fn test_execute_inline_script_verifies_file_written() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let script_content = "#!/bin/sh\necho hello world\n";
     let mut task = ShellTask::new(ScriptSource::Content(script_content.to_string()));
@@ -510,7 +466,7 @@ fn test_execute_external_script_verifies_file_copied() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let original_content = "#!/bin/sh\necho copied script\n";
     let script_path = temp_dir.path().join("my_script.sh");
@@ -643,7 +599,7 @@ fn test_execute_with_no_exit_status_returns_error() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
     task.resolve_privilege(None).unwrap();
@@ -683,7 +639,7 @@ fn test_execute_nonzero_exit_returns_execution_error() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    setup_valid_rootfs(&temp_dir);
+    setup_rootfs_with_shell(&temp_dir);
 
     let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
     task.resolve_privilege(None).unwrap();

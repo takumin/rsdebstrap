@@ -14,8 +14,8 @@ use std::fs;
 use tracing::{debug, info};
 
 use super::{ScriptSource, TempFileGuard};
-use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
+use crate::isolation::IsolationConfig;
 use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::privilege::{Privilege, PrivilegeDefaults};
 
@@ -204,7 +204,9 @@ impl MitamaeTask {
         let rootfs = context.rootfs();
         let dry_run = context.dry_run();
 
-        let binary = self.binary.as_ref().unwrap();
+        let binary = self.binary.as_ref().ok_or_else(|| {
+            RsdebstrapError::Validation("mitamae binary path not set".to_string())
+        })?;
 
         // Unlike ShellTask, no validate_rootfs() is needed here because the mitamae
         // binary is copied from the host side — there is no rootfs-resident binary
@@ -243,13 +245,7 @@ impl MitamaeTask {
             recipe_path_in_isolation,
         ];
 
-        let result = super::execute_in_context(
-            context,
-            &command,
-            "mitamae",
-            self.privilege.resolved_method(),
-        )?;
-        super::check_execution_result(&result, &command, context.name(), dry_run)?;
+        super::execute_and_check(context, &command, "mitamae", self.privilege.resolved_method())?;
 
         info!("mitamae recipe completed successfully");
         Ok(())

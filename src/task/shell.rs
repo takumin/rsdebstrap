@@ -9,12 +9,11 @@
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
-use std::fs;
 use tracing::{debug, info};
 
 use super::{ScriptSource, TempFileGuard};
-use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
+use crate::isolation::IsolationConfig;
 use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::privilege::{Privilege, PrivilegeDefaults};
 
@@ -226,13 +225,7 @@ impl ShellTask {
         let script_path_in_isolation = format!("/tmp/{}", script_name);
         let command: Vec<String> = vec![self.shell.clone(), script_path_in_isolation];
 
-        let result = super::execute_in_context(
-            context,
-            &command,
-            "script",
-            self.privilege.resolved_method(),
-        )?;
-        super::check_execution_result(&result, &command, context.name(), dry_run)?;
+        super::execute_and_check(context, &command, "script", self.privilege.resolved_method())?;
 
         info!("shell script completed successfully");
         Ok(())
@@ -241,50 +234,6 @@ impl ShellTask {
     /// Validates that the rootfs is ready for isolated command execution.
     fn validate_rootfs(&self, rootfs: &Utf8Path) -> Result<()> {
         super::validate_tmp_directory(rootfs)?;
-
-        // Validate shell path to prevent path traversal attacks
-        let shell_path = self.shell.trim_start_matches('/');
-        super::validate_no_parent_dirs(camino::Utf8Path::new(shell_path), "shell")?;
-
-        // Check if the specified shell exists and is a file in rootfs
-        let shell_in_rootfs = rootfs.join(shell_path);
-        let metadata = match fs::metadata(&shell_in_rootfs) {
-            Ok(metadata) => metadata,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(RsdebstrapError::Validation(format!(
-                    "shell '{}' does not exist in rootfs at {}",
-                    self.shell, shell_in_rootfs
-                ))
-                .into());
-            }
-            Err(e) => {
-                return Err(RsdebstrapError::io(
-                    format!(
-                        "failed to read shell metadata for '{}' at {}",
-                        self.shell, shell_in_rootfs
-                    ),
-                    e,
-                )
-                .into());
-            }
-        };
-
-        if metadata.is_dir() {
-            return Err(RsdebstrapError::Validation(format!(
-                "shell path '{}' points to a directory, not a file: {}",
-                self.shell, shell_in_rootfs
-            ))
-            .into());
-        }
-
-        if !metadata.is_file() {
-            return Err(RsdebstrapError::Validation(format!(
-                "shell '{}' is not a regular file in rootfs at {}",
-                self.shell, shell_in_rootfs
-            ))
-            .into());
-        }
-
-        Ok(())
+        super::validate_shell_in_rootfs(&self.shell, rootfs)
     }
 }

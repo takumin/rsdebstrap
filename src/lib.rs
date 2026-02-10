@@ -6,6 +6,7 @@ pub mod executor;
 pub mod isolation;
 pub mod pipeline;
 pub mod privilege;
+pub(crate) mod serde_helpers;
 pub mod task;
 
 pub use error::RsdebstrapError;
@@ -19,14 +20,20 @@ use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
 use crate::executor::CommandExecutor;
 
+impl From<cli::LogLevel> for LevelFilter {
+    fn from(level: cli::LogLevel) -> Self {
+        match level {
+            cli::LogLevel::Trace => LevelFilter::TRACE,
+            cli::LogLevel::Debug => LevelFilter::DEBUG,
+            cli::LogLevel::Info => LevelFilter::INFO,
+            cli::LogLevel::Warn => LevelFilter::WARN,
+            cli::LogLevel::Error => LevelFilter::ERROR,
+        }
+    }
+}
+
 pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
-    let filter = match log_level {
-        cli::LogLevel::Trace => LevelFilter::TRACE,
-        cli::LogLevel::Debug => LevelFilter::DEBUG,
-        cli::LogLevel::Info => LevelFilter::INFO,
-        cli::LogLevel::Warn => LevelFilter::WARN,
-        cli::LogLevel::Error => LevelFilter::ERROR,
-    };
+    let filter = LevelFilter::from(log_level);
 
     tracing::subscriber::set_global_default(
         FmtSubscriber::builder().with_max_level(filter).finish(),

@@ -7,10 +7,12 @@ use anyhow::Result;
 use url::Url;
 
 mod args;
+pub mod config;
 pub mod debootstrap;
 pub mod mmdebstrap;
 
 pub use args::{CommandArgsBuilder, FlagValueStyle};
+pub use config::Bootstrap;
 
 /// Output classification for pipeline task rootfs usage.
 #[derive(Debug)]

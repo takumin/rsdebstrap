@@ -14,100 +14,22 @@ use std::sync::LazyLock;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::debug;
 
-use crate::bootstrap::{
-    BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
-};
+use crate::bootstrap::RootfsOutput;
 use crate::error::RsdebstrapError;
-use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::pipeline::Pipeline;
-use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
+use crate::privilege::PrivilegeDefaults;
 use crate::task::TaskDefinition;
+
+// Re-export types moved to their own modules to avoid updating all import sites
+pub use crate::bootstrap::Bootstrap;
+pub use crate::isolation::IsolationConfig;
 
 /// Static regex for removing duplicate location info from serde_yaml error messages.
 static YAML_LOCATION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r" at line \d+ column \d+").unwrap());
-
-/// Bootstrap backend configuration.
-///
-/// This enum represents the different bootstrap tools that can be used.
-/// The `type` field in YAML determines which variant is used.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum Bootstrap {
-    /// mmdebstrap backend
-    Mmdebstrap(MmdebstrapConfig),
-    /// debootstrap backend
-    Debootstrap(DebootstrapConfig),
-}
-
-impl Bootstrap {
-    /// Returns a reference to the underlying backend as a trait object.
-    ///
-    /// This allows calling `BootstrapBackend` methods without matching
-    /// on each variant explicitly.
-    pub fn as_backend(&self) -> &dyn BootstrapBackend {
-        match self {
-            Bootstrap::Mmdebstrap(cfg) => cfg,
-            Bootstrap::Debootstrap(cfg) => cfg,
-        }
-    }
-
-    /// Returns a reference to the privilege setting of the bootstrap backend.
-    pub fn privilege(&self) -> &Privilege {
-        match self {
-            Bootstrap::Mmdebstrap(cfg) => &cfg.privilege,
-            Bootstrap::Debootstrap(cfg) => &cfg.privilege,
-        }
-    }
-
-    /// Resolves the privilege setting against profile defaults, replacing
-    /// the stored `Privilege` with a fully resolved variant.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        match self {
-            Bootstrap::Mmdebstrap(cfg) => cfg.privilege.resolve_in_place(defaults),
-            Bootstrap::Debootstrap(cfg) => cfg.privilege.resolve_in_place(defaults),
-        }
-    }
-
-    /// Returns the resolved privilege method for the bootstrap backend.
-    ///
-    /// Should only be called after `resolve_privilege()`.
-    pub fn resolved_privilege_method(&self) -> Option<PrivilegeMethod> {
-        self.privilege().resolved_method()
-    }
-}
-
-/// Isolation backend configuration.
-///
-/// This enum represents the different isolation mechanisms that can be used
-/// to execute commands within a rootfs. The `type` field in YAML determines
-/// which variant is used. If not specified, defaults to chroot.
-#[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum IsolationConfig {
-    /// chroot isolation (default)
-    #[default]
-    Chroot,
-    // Future: Bwrap(BwrapConfig), Nspawn(NspawnConfig)
-}
-
-impl IsolationConfig {
-    /// Returns a boxed isolation provider instance.
-    ///
-    /// This allows calling `IsolationProvider` methods without matching
-    /// on each variant explicitly.
-    pub fn as_provider(&self) -> Box<dyn IsolationProvider> {
-        match self {
-            IsolationConfig::Chroot => Box::new(ChrootProvider),
-        }
-    }
-}
 
 /// Default settings for mitamae tasks.
 ///

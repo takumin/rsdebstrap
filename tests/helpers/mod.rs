@@ -22,6 +22,23 @@ use tracing::warn;
 /// This prevents parallel tests from interfering with each other.
 pub static CWD_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+/// Asserts that a `Result` is an error whose display message contains the expected text.
+///
+/// Uses `{:#}` formatting to include the full anyhow error chain.
+#[macro_export]
+macro_rules! assert_error_contains {
+    ($result:expr, $expected:expr) => {{
+        let err = $result.expect_err(&format!("expected error containing {:?}", $expected));
+        let err_msg = format!("{:#}", err);
+        assert!(
+            err_msg.contains($expected),
+            "error message {:?} does not contain {:?}",
+            err_msg,
+            $expected
+        );
+    }};
+}
+
 #[macro_export]
 macro_rules! yaml {
     ($content:literal) => {
@@ -492,6 +509,27 @@ impl Drop for CwdGuard {
     }
 }
 
+/// Sets up a valid rootfs with /tmp and /bin/sh for shell task tests.
+pub fn setup_rootfs_with_shell(temp_dir: &tempfile::TempDir) {
+    let rootfs = temp_dir.path();
+    std::fs::create_dir(rootfs.join("tmp")).expect("failed to create tmp dir");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("failed to create bin dir");
+    std::fs::write(rootfs.join("bin/sh"), "#!/bin/sh\n").expect("failed to write /bin/sh");
+}
+
+/// Sets up a valid rootfs with /tmp only (for mitamae tests).
+pub fn setup_rootfs_with_tmp(temp_dir: &tempfile::TempDir) {
+    let rootfs = temp_dir.path();
+    std::fs::create_dir(rootfs.join("tmp")).expect("failed to create tmp dir");
+}
+
+/// Creates a fake binary file in the temp dir and returns its path.
+pub fn create_fake_binary(temp_dir: &tempfile::TempDir, name: &str) -> Utf8PathBuf {
+    let binary_path = temp_dir.path().join(name);
+    std::fs::write(&binary_path, "fake binary").expect("failed to write binary");
+    Utf8PathBuf::from_path_buf(binary_path).expect("path should be valid UTF-8")
+}
+
 /// Mock isolation context for testing task execution.
 pub struct MockContext {
     rootfs: Utf8PathBuf,
@@ -505,7 +543,21 @@ pub struct MockContext {
     return_no_status: bool,
 }
 
-impl MockContext {
+/// Builder for constructing `MockContext` in tests.
+///
+/// Provides a fluent API to configure mock behavior, reducing boilerplate
+/// compared to multiple constructors with repeated field initialization.
+pub struct MockContextBuilder {
+    rootfs: Utf8PathBuf,
+    dry_run: bool,
+    should_fail: bool,
+    exit_code: Option<i32>,
+    should_error: bool,
+    error_message: Option<String>,
+    return_no_status: bool,
+}
+
+impl MockContextBuilder {
     pub fn new(rootfs: &Utf8Path) -> Self {
         Self {
             rootfs: rootfs.to_owned(),
@@ -514,66 +566,66 @@ impl MockContext {
             exit_code: None,
             should_error: false,
             error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
             return_no_status: false,
         }
+    }
+
+    pub fn dry_run(mut self) -> Self {
+        self.dry_run = true;
+        self
+    }
+
+    pub fn failure(mut self, exit_code: i32) -> Self {
+        self.should_fail = true;
+        self.exit_code = Some(exit_code);
+        self
+    }
+
+    pub fn error(mut self, message: impl Into<String>) -> Self {
+        self.should_error = true;
+        self.error_message = Some(message.into());
+        self
+    }
+
+    pub fn no_status(mut self) -> Self {
+        self.return_no_status = true;
+        self
+    }
+
+    pub fn build(self) -> MockContext {
+        MockContext {
+            rootfs: self.rootfs,
+            dry_run: self.dry_run,
+            should_fail: self.should_fail,
+            exit_code: self.exit_code,
+            should_error: self.should_error,
+            error_message: self.error_message,
+            executed_commands: RefCell::new(Vec::new()),
+            executed_privileges: RefCell::new(Vec::new()),
+            return_no_status: self.return_no_status,
+        }
+    }
+}
+
+impl MockContext {
+    pub fn new(rootfs: &Utf8Path) -> Self {
+        MockContextBuilder::new(rootfs).build()
     }
 
     pub fn new_dry_run(rootfs: &Utf8Path) -> Self {
-        Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: true,
-            should_fail: false,
-            exit_code: None,
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: false,
-        }
+        MockContextBuilder::new(rootfs).dry_run().build()
     }
 
     pub fn with_failure(rootfs: &Utf8Path, exit_code: i32) -> Self {
-        Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
-            should_fail: true,
-            exit_code: Some(exit_code),
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: false,
-        }
+        MockContextBuilder::new(rootfs).failure(exit_code).build()
     }
 
     pub fn with_error(rootfs: &Utf8Path, message: &str) -> Self {
-        Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
-            should_fail: false,
-            exit_code: None,
-            should_error: true,
-            error_message: Some(message.to_string()),
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: false,
-        }
+        MockContextBuilder::new(rootfs).error(message).build()
     }
 
     pub fn with_no_status(rootfs: &Utf8Path) -> Self {
-        Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
-            should_fail: false,
-            exit_code: None,
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: true,
-        }
+        MockContextBuilder::new(rootfs).no_status().build()
     }
 
     pub fn executed_commands(&self) -> Vec<Vec<String>> {
