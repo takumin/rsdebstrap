@@ -81,6 +81,13 @@ impl IsolationContext for DirectContext {
             .into());
         }
 
+        if command.is_empty() {
+            return Err(crate::error::RsdebstrapError::Isolation(
+                "cannot execute command: empty command provided".to_string(),
+            )
+            .into());
+        }
+
         // Translate absolute paths to rootfs-prefixed paths
         let translated: Vec<String> = command
             .iter()

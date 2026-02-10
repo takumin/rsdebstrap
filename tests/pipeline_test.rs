@@ -450,6 +450,57 @@ fn test_pipeline_run_task_isolation_enabled_uses_chroot() {
     assert_eq!(first_call[1], String::from("/tmp/rootfs"));
 }
 
+#[test]
+fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
+    // Create 3 tasks: chroot → direct → chroot
+    // Use custom shell paths to distinguish each call
+    let mut chroot1 =
+        ShellTask::with_shell(ScriptSource::Content("echo chroot1".to_string()), "/bin/sh-chroot1");
+    chroot1.resolve_privilege(None).unwrap();
+    chroot1.resolve_isolation(&IsolationConfig::default());
+    let task1 = TaskDefinition::Shell(chroot1);
+
+    let task2 = inline_task_direct("echo direct");
+
+    let mut chroot2 =
+        ShellTask::with_shell(ScriptSource::Content("echo chroot2".to_string()), "/bin/sh-chroot2");
+    chroot2.resolve_privilege(None).unwrap();
+    chroot2.resolve_isolation(&IsolationConfig::default());
+    let task3 = TaskDefinition::Shell(chroot2);
+
+    let tasks = [task1, task2, task3];
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
+
+    let mock_executor = Arc::new(MockExecutor::new());
+    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
+
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    assert!(result.is_ok(), "pipeline run failed: {:?}", result);
+
+    let calls = mock_executor.calls();
+    assert_eq!(calls.len(), 3, "Expected 3 calls, got: {}", calls.len());
+
+    // Call 0: chroot task — first arg is "chroot", shell is /bin/sh-chroot1
+    assert_eq!(calls[0][0], "chroot", "Expected first task to use chroot, got: {:?}", calls[0]);
+    assert_eq!(calls[0][2], "/bin/sh-chroot1");
+
+    // Call 1: direct task — first arg is rootfs-prefixed (no "chroot")
+    assert!(
+        calls[1][0].starts_with("/tmp/rootfs/"),
+        "Expected direct task with rootfs-prefixed path, got: {:?}",
+        calls[1][0]
+    );
+    assert!(
+        !calls[1].iter().any(|arg| arg == "chroot"),
+        "Direct task should not contain 'chroot', got: {:?}",
+        calls[1]
+    );
+
+    // Call 2: chroot task — first arg is "chroot", shell is /bin/sh-chroot2
+    assert_eq!(calls[2][0], "chroot", "Expected third task to use chroot, got: {:?}", calls[2]);
+    assert_eq!(calls[2][2], "/bin/sh-chroot2");
+}
+
 // =============================================================================
 // validate() variant preservation tests
 // =============================================================================
