@@ -87,8 +87,7 @@ fn run_pipeline_phase(
         .into());
     };
 
-    let provider = profile.defaults.isolation.as_provider();
-    pipeline.run(&rootfs, provider.as_ref(), executor, dry_run)
+    pipeline.run(&rootfs, executor, dry_run)
 }
 
 pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {

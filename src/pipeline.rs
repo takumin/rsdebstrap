@@ -89,7 +89,6 @@ impl<'a> Pipeline<'a> {
     pub fn run(
         &self,
         rootfs: &Utf8Path,
-        _provider: &dyn IsolationProvider,
         executor: Arc<dyn CommandExecutor>,
         dry_run: bool,
     ) -> Result<()> {

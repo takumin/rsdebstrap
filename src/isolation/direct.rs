@@ -63,6 +63,13 @@ impl IsolationContext for DirectContext {
         self.dry_run
     }
 
+    /// Executes a command directly on the host filesystem.
+    ///
+    /// All arguments that start with '/' are translated to rootfs-prefixed paths.
+    /// For example, `/bin/sh` becomes `<rootfs>/bin/sh` and `/tmp/task.sh` becomes
+    /// `<rootfs>/tmp/task.sh`. This matches the current usage pattern where tasks
+    /// pass isolation-relative absolute paths (e.g., shell path, script path) as
+    /// arguments to the isolation context.
     fn execute(
         &self,
         command: &[OsString],

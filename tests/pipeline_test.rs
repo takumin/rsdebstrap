@@ -8,7 +8,6 @@ use camino::Utf8Path;
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
-use rsdebstrap::isolation::{IsolationContext, IsolationProvider};
 use rsdebstrap::pipeline::Pipeline;
 use rsdebstrap::task::{ScriptSource, ShellTask, TaskDefinition};
 
@@ -63,31 +62,20 @@ impl CommandExecutor for MockExecutor {
     }
 }
 
-/// Stub isolation provider (pipeline no longer uses the passed-in provider
-/// for task execution, but the signature still requires one).
-struct StubProvider;
-
-impl IsolationProvider for StubProvider {
-    fn name(&self) -> &'static str {
-        "stub"
-    }
-
-    fn setup(
-        &self,
-        _rootfs: &Utf8Path,
-        _executor: Arc<dyn CommandExecutor>,
-        _dry_run: bool,
-    ) -> Result<Box<dyn IsolationContext>> {
-        // This should never be called in per-task isolation mode
-        unreachable!("StubProvider::setup should not be called")
-    }
-}
-
 /// Helper to create a simple inline shell task with privilege and isolation resolved.
 fn inline_task(content: &str) -> TaskDefinition {
     let mut task = ShellTask::new(ScriptSource::Content(content.to_string()));
     task.resolve_privilege(None).unwrap();
     task.resolve_isolation(&IsolationConfig::default());
+    TaskDefinition::Shell(task)
+}
+
+/// Helper to create an inline shell task with isolation disabled (direct execution).
+fn inline_task_direct(content: &str) -> TaskDefinition {
+    let yaml = format!("content: \"{}\"\nisolation: false\n", content);
+    let mut task: ShellTask = serde_yaml::from_str(&yaml).unwrap();
+    task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::Chroot); // Disabled stays Disabled
     TaskDefinition::Shell(task)
 }
 
@@ -248,11 +236,10 @@ fn test_pipeline_validate_stops_at_first_failing_phase() {
 #[test]
 fn test_pipeline_run_empty_returns_ok_without_setup() {
     let pipeline = Pipeline::new(&[], &[], &[]);
-    let provider = StubProvider;
     let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
 
     // Empty pipeline should return Ok without any setup
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
     assert!(result.is_ok());
 }
 
@@ -265,9 +252,8 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = StubProvider;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     // All 3 tasks should have been executed
@@ -290,9 +276,8 @@ fn test_pipeline_run_phase_error_with_successful_teardown() {
 
     let mock_executor = Arc::new(MockExecutor::failing_on(0));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = StubProvider;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
     assert!(
@@ -309,9 +294,8 @@ fn test_pipeline_run_skips_empty_phases() {
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = StubProvider;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
     assert!(result.is_ok());
     assert_eq!(mock_executor.call_count(), 1);
 }
@@ -337,16 +321,14 @@ fn test_pipeline_run_phase_order_is_strictly_pre_prov_post() {
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = StubProvider;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     let calls = mock_executor.calls();
     assert_eq!(calls.len(), 3);
 
-    // Verify strict phase ordering via shell path
-    // call[0] = "chroot", call[1] = rootfs, call[2] = shell path, call[3] = script path
+    // ChrootContext wraps: ["chroot", rootfs, ...command], so call[0]="chroot", call[1]=rootfs, call[2]=shell
     assert_eq!(calls[0][2], OsString::from("/bin/sh-pre"));
     assert_eq!(calls[1][2], OsString::from("/bin/sh-prov"));
     assert_eq!(calls[2][2], OsString::from("/bin/sh-post"));
@@ -361,11 +343,11 @@ fn test_pipeline_run_stops_within_phase_on_error() {
     ];
     let pipeline = Pipeline::new(&[], &prov, &[]);
 
-    let mock_executor = Arc::new(MockExecutor::failing_on(1)); // fail on 2nd call (0-indexed)
+    // failing_on(1): 2nd call (0-indexed) fails, so task 1 succeeds, task 2 fails, task 3 never runs
+    let mock_executor = Arc::new(MockExecutor::failing_on(1));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = StubProvider;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
     assert!(result.is_err());
     assert_eq!(mock_executor.call_count(), 2);
 }
@@ -379,9 +361,8 @@ fn test_pipeline_run_stops_on_first_phase_error() {
 
     let mock_executor = Arc::new(MockExecutor::failing_on(0));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = StubProvider;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
     assert!(result.is_err());
     assert_eq!(mock_executor.call_count(), 1);
 }
@@ -393,12 +374,11 @@ fn test_pipeline_run_provisioner_failure_skips_post_processors() {
     let post = [inline_task("echo post")];
     let pipeline = Pipeline::new(&pre, &prov, &post);
 
-    // fail_on_call=1 means: call 0 (pre) succeeds, call 1 (prov) fails
+    // failing_on(1): pre (call 0) succeeds, prov (call 1) fails, post never runs
     let mock_executor = Arc::new(MockExecutor::failing_on(1));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = StubProvider;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
     assert!(result.is_err());
 
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -409,6 +389,64 @@ fn test_pipeline_run_provisioner_failure_skips_post_processors() {
     );
 
     assert_eq!(mock_executor.call_count(), 2);
+}
+
+// =============================================================================
+// per-task isolation tests
+// =============================================================================
+
+#[test]
+fn test_pipeline_run_task_isolation_disabled_uses_direct() {
+    let tasks = [inline_task_direct("echo direct")];
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
+
+    let mock_executor = Arc::new(MockExecutor::new());
+    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
+
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    assert!(result.is_ok(), "pipeline run failed: {:?}", result);
+
+    let calls = mock_executor.calls();
+    assert_eq!(calls.len(), 1);
+
+    // DirectContext translates absolute paths to rootfs-prefixed paths,
+    // so /bin/sh becomes /tmp/rootfs/bin/sh (no "chroot" wrapper command)
+    let first_call = &calls[0];
+    assert!(
+        first_call[0].to_string_lossy().starts_with("/tmp/rootfs/"),
+        "Expected rootfs-prefixed path (direct execution), got: {:?}",
+        first_call[0]
+    );
+    assert!(
+        !first_call.iter().any(|arg| arg == "chroot"),
+        "Direct execution should not contain 'chroot' command, got: {:?}",
+        first_call
+    );
+}
+
+#[test]
+fn test_pipeline_run_task_isolation_enabled_uses_chroot() {
+    let tasks = [inline_task("echo chroot")];
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
+
+    let mock_executor = Arc::new(MockExecutor::new());
+    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
+
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    assert!(result.is_ok(), "pipeline run failed: {:?}", result);
+
+    let calls = mock_executor.calls();
+    assert_eq!(calls.len(), 1);
+
+    // ChrootContext wraps: ["chroot", rootfs, shell, script]
+    let first_call = &calls[0];
+    assert_eq!(
+        first_call[0],
+        OsString::from("chroot"),
+        "Expected 'chroot' as first argument, got: {:?}",
+        first_call[0]
+    );
+    assert_eq!(first_call[1], OsString::from("/tmp/rootfs"));
 }
 
 // =============================================================================
