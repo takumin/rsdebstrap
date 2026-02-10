@@ -2,9 +2,8 @@
 
 mod helpers;
 
-use std::ffi::OsString;
-
 use rsdebstrap::RsdebstrapError;
+use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::task::{MitamaeTask, ScriptSource};
 use tempfile::tempdir;
 
@@ -37,6 +36,7 @@ fn test_execute_inline_recipe_success() {
         binary,
     );
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -47,14 +47,14 @@ fn test_execute_inline_recipe_success() {
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
     assert_eq!(commands[0].len(), 3, "Expected 3 command elements");
 
-    let binary_arg = commands[0][0].to_string_lossy();
+    let binary_arg = &commands[0][0];
     assert!(
         binary_arg.starts_with("/tmp/mitamae-"),
         "Expected binary in /tmp/mitamae-*, got: {}",
         binary_arg
     );
-    assert_eq!(commands[0][1], OsString::from("local"));
-    let recipe_arg = commands[0][2].to_string_lossy();
+    assert_eq!(commands[0][1], "local");
+    let recipe_arg = &commands[0][2];
     assert!(
         recipe_arg.starts_with("/tmp/recipe-") && recipe_arg.ends_with(".rb"),
         "Expected recipe in /tmp/recipe-*.rb, got: {}",
@@ -79,6 +79,7 @@ fn test_execute_external_recipe_success() {
 
     let mut task = MitamaeTask::new(ScriptSource::Script(recipe_utf8), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -88,7 +89,7 @@ fn test_execute_external_recipe_success() {
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].len(), 3);
-    assert_eq!(commands[0][1], OsString::from("local"));
+    assert_eq!(commands[0][1], "local");
 }
 
 #[test]
@@ -103,6 +104,7 @@ fn test_execute_dry_run_skips_file_operations() {
         "/usr/local/bin/mitamae".into(),
     );
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new_dry_run(&rootfs);
     let result = task.execute(&context);
@@ -112,13 +114,13 @@ fn test_execute_dry_run_skips_file_operations() {
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
     assert_eq!(commands[0].len(), 3);
-    let binary_arg = commands[0][0].to_string_lossy();
+    let binary_arg = &commands[0][0];
     assert!(
         binary_arg.starts_with("/tmp/mitamae-"),
         "Expected binary path in /tmp, got: {}",
         binary_arg
     );
-    assert_eq!(commands[0][1], OsString::from("local"));
+    assert_eq!(commands[0][1], "local");
 }
 
 #[test]
@@ -132,6 +134,7 @@ fn test_execute_failure_returns_error() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_failure(&rootfs, 1);
     let result = task.execute(&context);
@@ -162,6 +165,7 @@ fn test_execute_command_construction() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     task.execute(&context).expect("execute should succeed");
@@ -173,16 +177,16 @@ fn test_execute_command_construction() {
     let cmd = &commands[0];
     assert_eq!(cmd.len(), 3, "Command should have exactly 3 elements");
 
-    let binary_arg = cmd[0].to_string_lossy();
+    let binary_arg = &cmd[0];
     assert!(
         binary_arg.starts_with("/tmp/mitamae-"),
         "First element should be mitamae binary, got: {}",
         binary_arg
     );
 
-    assert_eq!(cmd[1], OsString::from("local"), "Second element should be 'local'");
+    assert_eq!(cmd[1], "local", "Second element should be 'local'");
 
-    let recipe_arg = cmd[2].to_string_lossy();
+    let recipe_arg = &cmd[2];
     assert!(
         recipe_arg.starts_with("/tmp/recipe-") && recipe_arg.ends_with(".rb"),
         "Third element should be recipe path, got: {}",
@@ -201,6 +205,7 @@ fn test_execute_cleans_up_files() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     task.execute(&context).expect("execute should succeed");
@@ -211,7 +216,7 @@ fn test_execute_cleans_up_files() {
         .expect("failed to read tmp dir")
         .filter_map(|e| e.ok())
         .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
+            let name = e.file_name().to_str().unwrap().to_string();
             name.starts_with("mitamae-") || name.starts_with("recipe-")
         })
         .collect();
@@ -233,6 +238,7 @@ fn test_execute_fails_when_context_execute_errors() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_error(&rootfs, "connection to isolation backend lost");
     let result = task.execute(&context);
@@ -259,6 +265,7 @@ fn test_execute_with_no_exit_status_returns_error() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_no_status(&rootfs);
     let result = task.execute(&context);
@@ -295,6 +302,7 @@ fn test_execute_without_tmp_directory() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);

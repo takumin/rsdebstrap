@@ -1,6 +1,5 @@
 //! Shared command argument builder utilities for bootstrap backends.
 
-use std::ffi::OsString;
 use std::fmt::Display;
 
 /// Defines how a flag and its value are rendered in command arguments.
@@ -15,7 +14,7 @@ pub enum FlagValueStyle {
 /// Builder for assembling command arguments consistently across bootstrap backends.
 #[derive(Debug, Default)]
 pub struct CommandArgsBuilder {
-    args: Vec<OsString>,
+    args: Vec<String>,
 }
 
 impl CommandArgsBuilder {
@@ -25,13 +24,13 @@ impl CommandArgsBuilder {
     }
 
     /// Append a raw argument to the builder.
-    pub fn push_arg<S: Into<OsString>>(&mut self, arg: S) {
+    pub fn push_arg(&mut self, arg: impl Into<String>) {
         self.args.push(arg.into());
     }
 
     /// Append a flag with no value.
     pub fn push_flag(&mut self, flag: &str) {
-        self.args.push(flag.into());
+        self.args.push(flag.to_string());
     }
 
     /// Append a flag with value if the value is not empty.
@@ -42,11 +41,11 @@ impl CommandArgsBuilder {
 
         match style {
             FlagValueStyle::Separate => {
-                self.args.push(flag.into());
-                self.args.push(value.into());
+                self.args.push(flag.to_string());
+                self.args.push(value.to_string());
             }
             FlagValueStyle::Equals => {
-                self.args.push(format!("{}={}", flag, value).into());
+                self.args.push(format!("{}={}", flag, value));
             }
         }
     }
@@ -80,7 +79,7 @@ impl CommandArgsBuilder {
     }
 
     /// Return the collected arguments.
-    pub fn into_args(self) -> Vec<OsString> {
+    pub fn into_args(self) -> Vec<String> {
         self.args
     }
 }

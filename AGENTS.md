@@ -71,6 +71,8 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - `Shell` variant (`src/task/shell.rs`) - Runs shell scripts within an isolation context
   - `Mitamae` variant (`src/task/mitamae.rs`) - Runs mitamae recipes within an isolation context
   - Each task has a `privilege: Privilege` field resolved during defaults application
+  - Each task has an `isolation: TaskIsolation` field resolved via `resolve_isolation()`
+  - `resolved_isolation_config()` returns `Option<&IsolationConfig>` after resolution
   - Enum-based dispatch with compile-time exhaustive matching
   - Shared utilities in `src/task/mod.rs`: `ScriptSource`, `TempFileGuard`, `validate_tmp_directory()`
   - Helper functions: `execute_in_context()`, `check_execution_result()`, `prepare_files_with_toctou_check()`
@@ -81,12 +83,26 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - RAII cleanup of both binary and recipe temp files via `TempFileGuard`
 
 - **`Pipeline`** struct (`src/pipeline.rs`) - Orchestrates task execution in three phases
-  - Manages isolation context lifecycle (setup/teardown)
+  - Creates per-task isolation contexts based on each task's `resolved_isolation_config()`
+  - `run_task()` creates provider → setup → execute → teardown for each task independently
   - Executes pre-processors, provisioners, post-processors in order
-  - Guarantees teardown even on phase errors
+  - Guarantees teardown even on task execution errors
+
+- **`TaskIsolation`** enum (`src/isolation/mod.rs`) - Task-level isolation setting
+  - `Inherit` (default): use profile defaults
+  - `UseDefault`: explicitly use defaults (`isolation: true`)
+  - `Disabled`: no isolation, direct execution (`isolation: false`)
+  - `Config(IsolationConfig)`: explicit config (`isolation: { type: chroot }`)
+  - `resolve()` / `resolve_in_place()` collapse against profile `IsolationConfig` defaults
+  - `resolved_config()` returns `Option<&IsolationConfig>` — `Some` for isolation, `None` for disabled
+  - Custom Serialize/Deserialize: `true` → UseDefault, `false` → Disabled, `{ type: chroot }` → Config, absent → Inherit
+  - Note: `UseDefault` and `Inherit` produce identical behavior because `IsolationConfig` always has a default (`Chroot`). Both exist for API symmetry with `Privilege` enum.
 
 - **`IsolationProvider`** / **`IsolationContext`** traits (`src/isolation/mod.rs`) - Isolation backends
   - `ChrootProvider` / `ChrootContext` - chroot-based isolation
+  - `DirectProvider` / `DirectContext` (`src/isolation/direct.rs`) - No isolation, direct execution on host
+    - Translates absolute paths to rootfs-prefixed paths (e.g., `/bin/sh` → `<rootfs>/bin/sh`)
+    - Guards against empty commands and post-teardown execution
   - `IsolationContext::execute()` takes `privilege: Option<PrivilegeMethod>` parameter
 
 - **`CommandExecutor`** trait / **`CommandSpec`** struct (`src/executor/mod.rs`) - Command execution
@@ -119,6 +135,7 @@ pre_processors:             # Optional pre-provisioning steps
   - type: shell
     content: "..."
     privilege: false         # Disable privilege escalation for this task
+    isolation: false         # Disable isolation (direct execution on host)
 provisioners:               # Optional main provisioning steps
   - type: shell
     content: "..."          # Inline script
@@ -131,6 +148,8 @@ provisioners:               # Optional main provisioning steps
     binary: /path/to/mitamae  # Optional: override defaults.mitamae
     privilege:               # Optional: override defaults.privilege
       method: doas
+    isolation:               # Optional: override defaults.isolation
+      type: chroot
 post_processors:            # Optional post-provisioning steps
   - type: shell
     script: ./cleanup.sh
@@ -143,6 +162,13 @@ post_processors:            # Optional post-provisioning steps
 - `privilege: false` → `Disabled`: no privilege escalation
 - `privilege: { method: sudo }` → `Method`: use the specified method explicitly
 
+#### Isolation field values
+
+- Absent (field not specified) → `Inherit`: use `defaults.isolation` (defaults to chroot)
+- `isolation: true` → `UseDefault`: use `defaults.isolation` explicitly (same behavior as `Inherit`)
+- `isolation: false` → `Disabled`: no isolation (direct execution on host via `DirectProvider`)
+- `isolation: { type: chroot }` → `Config`: use the specified isolation backend explicitly
+
 ### Testing Pattern
 
 Tests use a mock executor pattern defined in `tests/helpers/mod.rs`:
@@ -151,3 +177,7 @@ Tests use a mock executor pattern defined in `tests/helpers/mod.rs`:
 - `helpers::load_profile_from_yaml()` / `load_profile_from_yaml_typed()` - Load profiles from YAML strings in temp files
 - Test builders: `MmdebstrapConfigBuilder`, `DebootstrapConfigBuilder` with fluent API
 - Privilege-related tests verify resolution, inheritance, and error handling across tasks and bootstrap backends
+
+#### Known test gaps
+
+- `Pipeline::run_task()` teardown failure paths (patterns 3 and 4: `Ok/Err` and `Err/Err`) are not currently testable because the pipeline internally creates providers from `task.resolved_isolation_config()`, making failure injection impractical. Both `ChrootProvider` and `DirectProvider` have infallible teardown, so these paths are unreachable with current backends. Tests should be added when backends with fallible teardown (e.g., bwrap, systemd-nspawn) are introduced.

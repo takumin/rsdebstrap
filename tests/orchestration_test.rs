@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -8,7 +7,7 @@ use rsdebstrap::{
     run_apply, run_validate,
 };
 
-type CommandCalls = Arc<Mutex<Vec<(String, Vec<OsString>)>>>;
+type CommandCalls = Arc<Mutex<Vec<(String, Vec<String>)>>>;
 
 #[derive(Default)]
 struct RecordingExecutor {
@@ -88,7 +87,7 @@ fn run_apply_with_pipeline_tasks_uses_isolation() {
     let (command, args) = &calls[1];
     assert_eq!(command, "chroot");
     // First arg should be the rootfs path
-    assert!(args[0].to_string_lossy().contains("rootfs"));
+    assert!(args[0].contains("rootfs"));
     // Second arg should be the shell
     assert_eq!(args[1], "/bin/sh");
 }

@@ -9,23 +9,22 @@
 mod pipe;
 mod real;
 
-use std::ffi::OsString;
-use std::path::PathBuf;
 use std::process::ExitStatus;
 
 use anyhow::Result;
+use camino::Utf8PathBuf;
 
 use crate::privilege::PrivilegeMethod;
 
 pub use real::RealCommandExecutor;
 
-/// Formats OsString arguments into a space-separated, debug-quoted string.
+/// Formats string arguments into a space-separated, debug-quoted string.
 ///
 /// Used by error messages and dry-run output to consistently format
 /// command arguments (e.g., `"--variant=debootstrap" "/tmp/rootfs"`).
-pub(crate) fn format_args_lossy(args: &[OsString]) -> String {
+pub(crate) fn format_command_args(args: &[String]) -> String {
     args.iter()
-        .map(|a| format!("{:?}", a.to_string_lossy()))
+        .map(|a| format!("{:?}", a))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -36,9 +35,9 @@ pub struct CommandSpec {
     /// The command to execute (e.g., "mmdebstrap")
     pub command: String,
     /// Command arguments
-    pub args: Vec<OsString>,
+    pub args: Vec<String>,
     /// Working directory (optional, defaults to current directory)
-    pub cwd: Option<PathBuf>,
+    pub cwd: Option<Utf8PathBuf>,
     /// Environment variables to set (in addition to inherited environment)
     pub env: Vec<(String, String)>,
     /// Privilege escalation method to wrap the command
@@ -48,7 +47,7 @@ pub struct CommandSpec {
 impl CommandSpec {
     /// Creates a new CommandSpec with command and args
     #[must_use]
-    pub fn new(command: impl Into<String>, args: Vec<OsString>) -> Self {
+    pub fn new(command: impl Into<String>, args: Vec<String>) -> Self {
         Self {
             command: command.into(),
             args,
@@ -67,7 +66,7 @@ impl CommandSpec {
 
     /// Sets the working directory
     #[must_use]
-    pub fn with_cwd(mut self, cwd: PathBuf) -> Self {
+    pub fn with_cwd(mut self, cwd: Utf8PathBuf) -> Self {
         self.cwd = Some(cwd);
         self
     }

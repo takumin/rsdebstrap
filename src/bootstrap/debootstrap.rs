@@ -5,7 +5,6 @@ use crate::privilege::Privilege;
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsString;
 use strum::Display;
 
 /// Variant defines the package selection strategy for debootstrap
@@ -79,7 +78,7 @@ impl BootstrapBackend for DebootstrapConfig {
     }
 
     #[tracing::instrument(skip(self, output_dir))]
-    fn build_args(&self, output_dir: &Utf8Path) -> Result<Vec<OsString>> {
+    fn build_args(&self, output_dir: &Utf8Path) -> Result<Vec<String>> {
         let mut builder = CommandArgsBuilder::new();
 
         // Add options
@@ -120,14 +119,14 @@ impl BootstrapBackend for DebootstrapConfig {
         builder.push_arg(self.suite.clone());
 
         let target_path = output_dir.join(&self.target);
-        builder.push_arg(target_path.into_os_string());
+        builder.push_arg(target_path.to_string());
 
         let mut cmd_args = builder.into_args();
 
         if let Some(ref mirror) = self.mirror
             && !mirror.trim().is_empty()
         {
-            cmd_args.push(mirror.into());
+            cmd_args.push(mirror.clone());
         }
 
         self.log_command_args(&cmd_args);

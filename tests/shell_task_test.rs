@@ -3,13 +3,13 @@
 mod helpers;
 
 use std::cell::RefCell;
-use std::ffi::OsString;
 use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
 
 use anyhow::Result;
 use camino::Utf8Path;
 use rsdebstrap::RsdebstrapError;
+use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::executor::ExecutionResult;
 use rsdebstrap::isolation::IsolationContext;
 use rsdebstrap::task::{ScriptSource, ShellTask};
@@ -159,6 +159,7 @@ fn test_run_fails_when_script_execution_fails() {
 
     let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_failure(&rootfs, 1);
     let result = task.execute(&context);
@@ -182,6 +183,7 @@ fn test_run_dry_run_skips_rootfs_validation() {
 
     let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new_dry_run(&rootfs);
     let result = task.execute(&context);
@@ -190,7 +192,7 @@ fn test_run_dry_run_skips_rootfs_validation() {
 
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
-    assert_eq!(commands[0][0], OsString::from("/bin/sh"));
+    assert_eq!(commands[0][0], "/bin/sh");
 }
 
 #[test]
@@ -206,6 +208,7 @@ fn test_run_with_external_script_dry_run() {
 
     let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new_dry_run(&rootfs);
     let result = task.execute(&context);
@@ -214,8 +217,8 @@ fn test_run_with_external_script_dry_run() {
 
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
-    assert_eq!(commands[0][0], OsString::from("/bin/sh"));
-    let script_arg = commands[0][1].to_string_lossy();
+    assert_eq!(commands[0][0], "/bin/sh");
+    let script_arg = &commands[0][1];
     assert!(
         script_arg.starts_with("/tmp/task-"),
         "Expected script path in /tmp, got: {}",
@@ -253,6 +256,7 @@ fn test_run_fails_when_context_execute_errors() {
 
     let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_error(&rootfs, "connection to isolation backend lost");
     let result = task.execute(&context);
@@ -292,6 +296,7 @@ fn test_run_fails_when_script_copy_fails() {
 
     let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -322,6 +327,7 @@ fn test_execute_inline_script_success() {
 
     let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -331,8 +337,8 @@ fn test_execute_inline_script_success() {
     // Verify the correct command was executed
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
-    assert_eq!(commands[0][0], OsString::from("/bin/sh"));
-    let script_arg = commands[0][1].to_string_lossy();
+    assert_eq!(commands[0][0], "/bin/sh");
+    let script_arg = &commands[0][1];
     assert!(
         script_arg.starts_with("/tmp/task-"),
         "Expected script path in /tmp, got: {}",
@@ -344,7 +350,7 @@ fn test_execute_inline_script_success() {
     let remaining_scripts: Vec<_> = std::fs::read_dir(&tmp_dir)
         .expect("failed to read tmp dir")
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("task-"))
+        .filter(|e| e.file_name().to_str().unwrap().starts_with("task-"))
         .collect();
     assert!(
         remaining_scripts.is_empty(),
@@ -372,6 +378,7 @@ fn test_execute_external_script_success() {
 
     let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -381,8 +388,8 @@ fn test_execute_external_script_success() {
     // Verify the correct command was executed
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
-    assert_eq!(commands[0][0], OsString::from("/bin/sh"));
-    let script_arg = commands[0][1].to_string_lossy();
+    assert_eq!(commands[0][0], "/bin/sh");
+    let script_arg = &commands[0][1];
     assert!(
         script_arg.starts_with("/tmp/task-"),
         "Expected script path in /tmp, got: {}",
@@ -394,7 +401,7 @@ fn test_execute_external_script_success() {
     let remaining_scripts: Vec<_> = std::fs::read_dir(&tmp_dir)
         .expect("failed to read tmp dir")
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("task-"))
+        .filter(|e| e.file_name().to_str().unwrap().starts_with("task-"))
         .collect();
     assert!(
         remaining_scripts.is_empty(),
@@ -420,6 +427,7 @@ fn test_execute_inline_script_verifies_file_written() {
     let script_content = "#!/bin/sh\necho hello world\n";
     let mut task = ShellTask::new(ScriptSource::Content(script_content.to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     // Use a custom mock that captures the script content at execution time
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -428,7 +436,7 @@ fn test_execute_inline_script_verifies_file_written() {
     struct CapturingContext {
         rootfs: camino::Utf8PathBuf,
         captured_content: Arc<Mutex<Option<String>>>,
-        executed_commands: RefCell<Vec<Vec<OsString>>>,
+        executed_commands: RefCell<Vec<Vec<String>>>,
     }
 
     impl IsolationContext for CapturingContext {
@@ -443,13 +451,13 @@ fn test_execute_inline_script_verifies_file_written() {
         }
         fn execute(
             &self,
-            command: &[OsString],
+            command: &[String],
             _privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
         ) -> Result<ExecutionResult> {
             self.executed_commands.borrow_mut().push(command.to_vec());
             // Read the script file that was written to rootfs
             if command.len() >= 2 {
-                let script_path_in_isolation = command[1].to_string_lossy();
+                let script_path_in_isolation = &command[1];
                 let script_path_on_host = self
                     .rootfs
                     .join(script_path_in_isolation.trim_start_matches('/'));
@@ -512,6 +520,7 @@ fn test_execute_external_script_verifies_file_copied() {
 
     let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured_content);
@@ -519,7 +528,7 @@ fn test_execute_external_script_verifies_file_copied() {
     struct CapturingContext {
         rootfs: camino::Utf8PathBuf,
         captured_content: Arc<Mutex<Option<String>>>,
-        executed_commands: RefCell<Vec<Vec<OsString>>>,
+        executed_commands: RefCell<Vec<Vec<String>>>,
     }
 
     impl IsolationContext for CapturingContext {
@@ -534,12 +543,12 @@ fn test_execute_external_script_verifies_file_copied() {
         }
         fn execute(
             &self,
-            command: &[OsString],
+            command: &[String],
             _privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
         ) -> Result<ExecutionResult> {
             self.executed_commands.borrow_mut().push(command.to_vec());
             if command.len() >= 2 {
-                let script_path_in_isolation = command[1].to_string_lossy();
+                let script_path_in_isolation = &command[1];
                 let script_path_on_host = self
                     .rootfs
                     .join(script_path_in_isolation.trim_start_matches('/'));
@@ -603,6 +612,7 @@ fn test_execute_with_custom_shell() {
     let mut task =
         ShellTask::with_shell(ScriptSource::Content("echo custom shell".to_string()), "/bin/bash");
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -613,12 +623,11 @@ fn test_execute_with_custom_shell() {
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
     assert_eq!(
-        commands[0][0],
-        OsString::from("/bin/bash"),
+        commands[0][0], "/bin/bash",
         "Expected custom shell /bin/bash, got: {:?}",
         commands[0][0]
     );
-    let script_arg = commands[0][1].to_string_lossy();
+    let script_arg = &commands[0][1];
     assert!(
         script_arg.starts_with("/tmp/task-"),
         "Expected script path in /tmp, got: {}",
@@ -638,6 +647,7 @@ fn test_execute_with_no_exit_status_returns_error() {
 
     let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_no_status(&rootfs);
     let result = task.execute(&context);
@@ -677,6 +687,7 @@ fn test_execute_nonzero_exit_returns_execution_error() {
 
     let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
     let context = MockContext::with_failure(&rootfs, 1);
     let result = task.execute(&context);
 

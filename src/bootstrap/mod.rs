@@ -4,7 +4,6 @@
 //! bootstrap tools (mmdebstrap, debootstrap, etc.).
 
 use anyhow::Result;
-use std::ffi::OsString;
 use url::Url;
 
 mod args;
@@ -37,7 +36,7 @@ pub trait BootstrapBackend {
     ///
     /// # Returns
     /// A vector of command-line arguments to pass to the bootstrap tool.
-    fn build_args(&self, output_dir: &camino::Utf8Path) -> Result<Vec<OsString>>;
+    fn build_args(&self, output_dir: &camino::Utf8Path) -> Result<Vec<String>>;
 
     /// Returns the rootfs output classification for pipeline task usage.
     fn rootfs_output(&self, output_dir: &camino::Utf8Path) -> Result<RootfsOutput>;
@@ -45,12 +44,12 @@ pub trait BootstrapBackend {
     /// Logs the final command arguments at debug level.
     ///
     /// URL credentials in arguments are masked before logging.
-    fn log_command_args(&self, args: &[OsString]) {
+    fn log_command_args(&self, args: &[String]) {
         let name = self.command_name();
         tracing::debug!(
             "{name} would run: {name} {}",
             args.iter()
-                .map(|s| sanitize_credential(&s.to_string_lossy()))
+                .map(|s| sanitize_credential(s))
                 .collect::<Vec<_>>()
                 .join(" ")
         );
