@@ -186,12 +186,9 @@ impl Profile {
         // (e.g., a non-RsdebstrapError from a backend), we fall back to Validation.
         if !pipeline.is_empty() {
             let backend = self.bootstrap.as_backend();
-            let output = backend.rootfs_output(&self.dir).map_err(|e| {
-                match e.downcast::<RsdebstrapError>() {
-                    Ok(typed_err) => typed_err,
-                    Err(e) => RsdebstrapError::Validation(format!("{:#}", e)),
-                }
-            })?;
+            let output = backend
+                .rootfs_output(&self.dir)
+                .map_err(RsdebstrapError::from_anyhow_or_validation)?;
             if let RootfsOutput::NonDirectory { reason } = output {
                 return Err(RsdebstrapError::Validation(format!(
                     "pipeline tasks require directory output but got: {}. \

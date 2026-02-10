@@ -124,11 +124,7 @@ impl ShellTask {
 
     /// Resolves relative paths in this task relative to the given base directory.
     pub fn resolve_paths(&mut self, base_dir: &Utf8Path) {
-        if let ScriptSource::Script(path) = &mut self.source
-            && path.is_relative()
-        {
-            *path = base_dir.join(&*path);
-        }
+        self.source.resolve_paths(base_dir);
     }
 
     /// Resolves the privilege setting against profile defaults.

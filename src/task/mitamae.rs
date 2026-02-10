@@ -122,11 +122,7 @@ impl MitamaeTask {
         {
             *binary = base_dir.join(&*binary);
         }
-        if let ScriptSource::Script(path) = &mut self.source
-            && path.is_relative()
-        {
-            *path = base_dir.join(&*path);
-        }
+        self.source.resolve_paths(base_dir);
     }
 
     /// Resolves the privilege setting against profile defaults.

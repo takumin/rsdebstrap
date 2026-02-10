@@ -111,6 +111,16 @@ impl RsdebstrapError {
         }
     }
 
+    /// Converts an `anyhow::Error` into a `RsdebstrapError`, preserving the typed
+    /// variant if the error is already a `RsdebstrapError`, or wrapping it as
+    /// `Validation` otherwise.
+    pub(crate) fn from_anyhow_or_validation(e: anyhow::Error) -> Self {
+        match e.downcast::<RsdebstrapError>() {
+            Ok(typed) => typed,
+            Err(e) => Self::Validation(format!("{:#}", e)),
+        }
+    }
+
     /// Creates an `Execution` variant from a `CommandSpec` and a status description.
     ///
     /// Formats the command consistently as `"command_name arg1 arg2 ..."`.
@@ -410,6 +420,32 @@ mod tests {
         let source = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
         let err = RsdebstrapError::io("/etc/shadow", source);
         assert_eq!(err.to_string(), "/etc/shadow: I/O error: permission denied");
+    }
+
+    #[test]
+    fn test_from_anyhow_or_validation_preserves_typed_error() {
+        let original = RsdebstrapError::Config("test error".to_string());
+        let anyhow_err: anyhow::Error = original.into();
+        let result = RsdebstrapError::from_anyhow_or_validation(anyhow_err);
+        assert!(
+            matches!(&result, RsdebstrapError::Config(msg) if msg == "test error"),
+            "expected Config variant, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_from_anyhow_or_validation_wraps_non_typed_error() {
+        let anyhow_err = anyhow::anyhow!("some generic error");
+        let result = RsdebstrapError::from_anyhow_or_validation(anyhow_err);
+        assert!(
+            matches!(
+                &result,
+                RsdebstrapError::Validation(msg) if msg.contains("some generic error")
+            ),
+            "expected Validation variant, got: {:?}",
+            result
+        );
     }
 
     #[test]
