@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::bootstrap::{
@@ -88,7 +88,7 @@ impl Bootstrap {
 /// This enum represents the different isolation mechanisms that can be used
 /// to execute commands within a rootfs. The `type` field in YAML determines
 /// which variant is used. If not specified, defaults to chroot.
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum IsolationConfig {
     /// chroot isolation (default)
@@ -248,6 +248,7 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
     let arch = std::env::consts::ARCH;
     let default_binary = profile.defaults.mitamae.binary.get(arch);
     let privilege_defaults = profile.defaults.privilege.as_ref();
+    let isolation_defaults = profile.defaults.isolation.clone();
 
     if default_binary.is_none() && !profile.defaults.mitamae.binary.is_empty() {
         let available: Vec<&String> = profile.defaults.mitamae.binary.keys().collect();
@@ -274,6 +275,7 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
             mitamae_task.set_binary_if_absent(binary);
         }
         task.resolve_privilege(privilege_defaults)?;
+        task.resolve_isolation(&isolation_defaults);
     }
 
     Ok(())

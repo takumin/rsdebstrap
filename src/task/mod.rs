@@ -9,7 +9,7 @@
 //! 2. Creating a corresponding data struct (e.g., `MitamaeTask`)
 //! 3. Implementing the match arms in all methods on `TaskDefinition`
 //!    (`name`, `validate`, `execute`, `script_path`, `resolve_paths`, `binary_path`,
-//!    `resolve_privilege`)
+//!    `resolve_privilege`, `resolve_isolation`, `resolved_isolation_config`)
 //!
 //! The compiler enforces exhaustiveness, ensuring all task types are handled.
 
@@ -28,6 +28,7 @@ use tracing::info;
 pub use mitamae::MitamaeTask;
 pub use shell::ShellTask;
 
+use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::executor::ExecutionResult;
 use crate::isolation::IsolationContext;
@@ -418,6 +419,24 @@ impl TaskDefinition {
         match self {
             Self::Shell(task) => task.resolve_privilege(defaults),
             Self::Mitamae(task) => task.resolve_privilege(defaults),
+        }
+    }
+
+    /// Resolves the isolation setting against profile defaults.
+    pub fn resolve_isolation(&mut self, defaults: &IsolationConfig) {
+        match self {
+            Self::Shell(task) => task.resolve_isolation(defaults),
+            Self::Mitamae(task) => task.resolve_isolation(defaults),
+        }
+    }
+
+    /// Returns the resolved isolation config.
+    ///
+    /// Should only be called after [`resolve_isolation()`](Self::resolve_isolation).
+    pub fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
+        match self {
+            Self::Shell(task) => task.resolved_isolation_config(),
+            Self::Mitamae(task) => task.resolved_isolation_config(),
         }
     }
 }

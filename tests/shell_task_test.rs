@@ -10,6 +10,7 @@ use std::process::ExitStatus;
 use anyhow::Result;
 use camino::Utf8Path;
 use rsdebstrap::RsdebstrapError;
+use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::executor::ExecutionResult;
 use rsdebstrap::isolation::IsolationContext;
 use rsdebstrap::task::{ScriptSource, ShellTask};
@@ -159,6 +160,7 @@ fn test_run_fails_when_script_execution_fails() {
 
     let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_failure(&rootfs, 1);
     let result = task.execute(&context);
@@ -182,6 +184,7 @@ fn test_run_dry_run_skips_rootfs_validation() {
 
     let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new_dry_run(&rootfs);
     let result = task.execute(&context);
@@ -206,6 +209,7 @@ fn test_run_with_external_script_dry_run() {
 
     let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new_dry_run(&rootfs);
     let result = task.execute(&context);
@@ -253,6 +257,7 @@ fn test_run_fails_when_context_execute_errors() {
 
     let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_error(&rootfs, "connection to isolation backend lost");
     let result = task.execute(&context);
@@ -292,6 +297,7 @@ fn test_run_fails_when_script_copy_fails() {
 
     let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -322,6 +328,7 @@ fn test_execute_inline_script_success() {
 
     let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -372,6 +379,7 @@ fn test_execute_external_script_success() {
 
     let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -420,6 +428,7 @@ fn test_execute_inline_script_verifies_file_written() {
     let script_content = "#!/bin/sh\necho hello world\n";
     let mut task = ShellTask::new(ScriptSource::Content(script_content.to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     // Use a custom mock that captures the script content at execution time
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -512,6 +521,7 @@ fn test_execute_external_script_verifies_file_copied() {
 
     let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured_content);
@@ -603,6 +613,7 @@ fn test_execute_with_custom_shell() {
     let mut task =
         ShellTask::with_shell(ScriptSource::Content("echo custom shell".to_string()), "/bin/bash");
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -638,6 +649,7 @@ fn test_execute_with_no_exit_status_returns_error() {
 
     let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_no_status(&rootfs);
     let result = task.execute(&context);
@@ -677,6 +689,7 @@ fn test_execute_nonzero_exit_returns_execution_error() {
 
     let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
     let context = MockContext::with_failure(&rootfs, 1);
     let result = task.execute(&context);
 

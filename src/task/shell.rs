@@ -14,8 +14,9 @@ use std::fs;
 use tracing::{debug, info};
 
 use super::{ScriptSource, TempFileGuard};
+use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
-use crate::isolation::IsolationContext;
+use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::privilege::{Privilege, PrivilegeDefaults};
 
 /// Shell task data and execution logic.
@@ -45,6 +46,9 @@ pub struct ShellTask {
 
     /// Privilege escalation setting (resolved during defaults application)
     privilege: Privilege,
+
+    /// Isolation setting (resolved during defaults application)
+    isolation: TaskIsolation,
 }
 
 fn default_shell() -> String {
@@ -65,6 +69,8 @@ impl<'de> Deserialize<'de> for ShellTask {
             shell: String,
             #[serde(default)]
             privilege: Privilege,
+            #[serde(default)]
+            isolation: TaskIsolation,
         }
 
         let raw = RawShellTask::deserialize(deserializer)?;
@@ -73,6 +79,7 @@ impl<'de> Deserialize<'de> for ShellTask {
             source,
             shell: raw.shell,
             privilege: raw.privilege,
+            isolation: raw.isolation,
         })
     }
 }
@@ -87,6 +94,7 @@ impl ShellTask {
             source,
             shell: default_shell(),
             privilege: Privilege::default(),
+            isolation: TaskIsolation::default(),
         }
     }
 
@@ -99,6 +107,7 @@ impl ShellTask {
             source,
             shell: shell.into(),
             privilege: Privilege::default(),
+            isolation: TaskIsolation::default(),
         }
     }
 
@@ -138,6 +147,18 @@ impl ShellTask {
         defaults: Option<&PrivilegeDefaults>,
     ) -> Result<(), RsdebstrapError> {
         self.privilege.resolve_in_place(defaults)
+    }
+
+    /// Resolves the isolation setting against profile defaults.
+    pub fn resolve_isolation(&mut self, defaults: &IsolationConfig) {
+        self.isolation.resolve_in_place(defaults);
+    }
+
+    /// Returns the resolved isolation config.
+    ///
+    /// Should only be called after [`resolve_isolation()`](Self::resolve_isolation).
+    pub fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
+        self.isolation.resolved_config()
     }
 
     /// Validates the task configuration.

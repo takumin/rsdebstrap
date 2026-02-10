@@ -1521,3 +1521,239 @@ provisioners:
 
     Ok(())
 }
+
+// =============================================================================
+// Task-level isolation tests
+// =============================================================================
+
+#[test]
+fn test_load_profile_task_isolation_absent_resolves_to_chroot() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    content: echo "hello"
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    use rsdebstrap::config::IsolationConfig;
+    match &profile.provisioners[0] {
+        TaskDefinition::Shell(task) => {
+            assert_eq!(
+                task.resolved_isolation_config(),
+                Some(&IsolationConfig::Chroot),
+                "Absent isolation should resolve to Chroot from defaults"
+            );
+        }
+        other => panic!("Expected Shell task, got: {:?}", other),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_task_isolation_true_resolves_to_chroot() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    content: echo "hello"
+    isolation: true
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    use rsdebstrap::config::IsolationConfig;
+    match &profile.provisioners[0] {
+        TaskDefinition::Shell(task) => {
+            assert_eq!(
+                task.resolved_isolation_config(),
+                Some(&IsolationConfig::Chroot),
+                "isolation: true should resolve to Chroot from defaults"
+            );
+        }
+        other => panic!("Expected Shell task, got: {:?}", other),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_task_isolation_false_resolves_to_none() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    content: echo "hello"
+    isolation: false
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    match &profile.provisioners[0] {
+        TaskDefinition::Shell(task) => {
+            assert_eq!(
+                task.resolved_isolation_config(),
+                None,
+                "isolation: false should resolve to None (Disabled)"
+            );
+        }
+        other => panic!("Expected Shell task, got: {:?}", other),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_task_isolation_explicit_chroot_resolves_to_chroot() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    content: echo "hello"
+    isolation:
+      type: chroot
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    use rsdebstrap::config::IsolationConfig;
+    match &profile.provisioners[0] {
+        TaskDefinition::Shell(task) => {
+            assert_eq!(
+                task.resolved_isolation_config(),
+                Some(&IsolationConfig::Chroot),
+                "isolation: {{type: chroot}} should resolve to Chroot"
+            );
+        }
+        other => panic!("Expected Shell task, got: {:?}", other),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_mitamae_task_isolation_false() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let bin_dir = temp_dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let binary_path = bin_dir.join("mitamae");
+    std::fs::write(&binary_path, "fake mitamae binary")?;
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: mitamae
+    binary: bin/mitamae
+    content: "package 'vim'"
+    isolation: false
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match profile.provisioners.as_slice() {
+        [TaskDefinition::Mitamae(mitamae)] => {
+            assert_eq!(
+                mitamae.resolved_isolation_config(),
+                None,
+                "isolation: false on mitamae task should resolve to None"
+            );
+        }
+        _ => panic!("expected one mitamae task"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_mixed_task_isolation_settings() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    content: echo "with isolation"
+    isolation: true
+  - type: shell
+    content: echo "without isolation"
+    isolation: false
+  - type: shell
+    content: echo "default isolation"
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    use rsdebstrap::config::IsolationConfig;
+
+    assert_eq!(profile.provisioners.len(), 3);
+
+    match &profile.provisioners[0] {
+        TaskDefinition::Shell(task) => {
+            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::Chroot));
+        }
+        other => panic!("Expected Shell task, got: {:?}", other),
+    }
+    match &profile.provisioners[1] {
+        TaskDefinition::Shell(task) => {
+            assert_eq!(task.resolved_isolation_config(), None);
+        }
+        other => panic!("Expected Shell task, got: {:?}", other),
+    }
+    match &profile.provisioners[2] {
+        TaskDefinition::Shell(task) => {
+            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::Chroot));
+        }
+        other => panic!("Expected Shell task, got: {:?}", other),
+    }
+
+    Ok(())
+}

@@ -5,6 +5,7 @@ mod helpers;
 use std::ffi::OsString;
 
 use rsdebstrap::RsdebstrapError;
+use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::task::{MitamaeTask, ScriptSource};
 use tempfile::tempdir;
 
@@ -37,6 +38,7 @@ fn test_execute_inline_recipe_success() {
         binary,
     );
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -79,6 +81,7 @@ fn test_execute_external_recipe_success() {
 
     let mut task = MitamaeTask::new(ScriptSource::Script(recipe_utf8), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
@@ -103,6 +106,7 @@ fn test_execute_dry_run_skips_file_operations() {
         "/usr/local/bin/mitamae".into(),
     );
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new_dry_run(&rootfs);
     let result = task.execute(&context);
@@ -132,6 +136,7 @@ fn test_execute_failure_returns_error() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_failure(&rootfs, 1);
     let result = task.execute(&context);
@@ -162,6 +167,7 @@ fn test_execute_command_construction() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     task.execute(&context).expect("execute should succeed");
@@ -201,6 +207,7 @@ fn test_execute_cleans_up_files() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     task.execute(&context).expect("execute should succeed");
@@ -233,6 +240,7 @@ fn test_execute_fails_when_context_execute_errors() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_error(&rootfs, "connection to isolation backend lost");
     let result = task.execute(&context);
@@ -259,6 +267,7 @@ fn test_execute_with_no_exit_status_returns_error() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::with_no_status(&rootfs);
     let result = task.execute(&context);
@@ -295,6 +304,7 @@ fn test_execute_without_tmp_directory() {
 
     let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);

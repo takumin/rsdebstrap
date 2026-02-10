@@ -1,12 +1,12 @@
 //! Tests for the Pipeline orchestrator.
 
 use std::ffi::OsString;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use camino::Utf8Path;
 use rsdebstrap::RsdebstrapError;
+use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use rsdebstrap::isolation::{IsolationContext, IsolationProvider};
 use rsdebstrap::pipeline::Pipeline;
@@ -63,113 +63,31 @@ impl CommandExecutor for MockExecutor {
     }
 }
 
-/// Mock isolation provider that tracks setup/teardown calls.
-struct MockProvider {
-    setup_should_fail: bool,
-    teardown_should_fail: bool,
-    teardown_called: Arc<AtomicBool>,
-}
+/// Stub isolation provider (pipeline no longer uses the passed-in provider
+/// for task execution, but the signature still requires one).
+struct StubProvider;
 
-impl MockProvider {
-    fn new() -> Self {
-        Self {
-            setup_should_fail: false,
-            teardown_should_fail: false,
-            teardown_called: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    fn with_setup_failure() -> Self {
-        Self {
-            setup_should_fail: true,
-            teardown_should_fail: false,
-            teardown_called: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    fn with_teardown_failure() -> Self {
-        Self {
-            setup_should_fail: false,
-            teardown_should_fail: true,
-            teardown_called: Arc::new(AtomicBool::new(false)),
-        }
-    }
-}
-
-impl IsolationProvider for MockProvider {
+impl IsolationProvider for StubProvider {
     fn name(&self) -> &'static str {
-        "mock"
+        "stub"
     }
 
     fn setup(
         &self,
-        rootfs: &Utf8Path,
-        executor: Arc<dyn CommandExecutor>,
-        dry_run: bool,
+        _rootfs: &Utf8Path,
+        _executor: Arc<dyn CommandExecutor>,
+        _dry_run: bool,
     ) -> Result<Box<dyn IsolationContext>> {
-        if self.setup_should_fail {
-            anyhow::bail!("mock setup failure");
-        }
-        Ok(Box::new(MockContext {
-            rootfs: rootfs.to_owned(),
-            executor,
-            dry_run,
-            teardown_should_fail: self.teardown_should_fail,
-            teardown_called: Arc::clone(&self.teardown_called),
-            torn_down: false,
-        }))
+        // This should never be called in per-task isolation mode
+        unreachable!("StubProvider::setup should not be called")
     }
 }
 
-/// Mock isolation context that records command execution.
-struct MockContext {
-    rootfs: camino::Utf8PathBuf,
-    executor: Arc<dyn CommandExecutor>,
-    dry_run: bool,
-    teardown_should_fail: bool,
-    teardown_called: Arc<AtomicBool>,
-    torn_down: bool,
-}
-
-impl IsolationContext for MockContext {
-    fn name(&self) -> &'static str {
-        "mock"
-    }
-
-    fn rootfs(&self) -> &Utf8Path {
-        &self.rootfs
-    }
-
-    fn dry_run(&self) -> bool {
-        self.dry_run
-    }
-
-    fn execute(
-        &self,
-        command: &[OsString],
-        privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
-    ) -> Result<ExecutionResult> {
-        let spec = CommandSpec::new("mock", command.to_vec()).with_privilege(privilege);
-        self.executor.execute(&spec)
-    }
-
-    fn teardown(&mut self) -> Result<()> {
-        if self.torn_down {
-            return Ok(());
-        }
-        self.torn_down = true;
-        self.teardown_called.store(true, Ordering::SeqCst);
-        if self.teardown_should_fail {
-            anyhow::bail!("mock teardown failure");
-        }
-        Ok(())
-    }
-}
-
-/// Helper to create a simple inline shell task with privilege resolved.
+/// Helper to create a simple inline shell task with privilege and isolation resolved.
 fn inline_task(content: &str) -> TaskDefinition {
     let mut task = ShellTask::new(ScriptSource::Content(content.to_string()));
     task.resolve_privilege(None).unwrap();
+    task.resolve_isolation(&IsolationConfig::default());
     TaskDefinition::Shell(task)
 }
 
@@ -302,9 +220,6 @@ fn test_pipeline_validate_reports_correct_index() {
 
 #[test]
 fn test_pipeline_validate_stops_at_first_failing_phase() {
-    // Both pre_processors and provisioners have invalid tasks,
-    // but validate should stop at the first failing phase (pre-processor)
-    // and not report the provisioner error.
     let bad_pre = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
         "../../../etc/shadow".into(),
     )))];
@@ -333,17 +248,16 @@ fn test_pipeline_validate_stops_at_first_failing_phase() {
 #[test]
 fn test_pipeline_run_empty_returns_ok_without_setup() {
     let pipeline = Pipeline::new(&[], &[], &[]);
-    let provider = MockProvider::with_setup_failure();
+    let provider = StubProvider;
     let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
 
-    // Empty pipeline should return Ok without even calling setup
+    // Empty pipeline should return Ok without any setup
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_pipeline_run_executes_tasks_in_phase_order() {
-    // Create distinct tasks for each phase so we can verify ordering
     let pre = [inline_task("echo pre")];
     let prov = [inline_task("echo prov")];
     let post = [inline_task("echo post")];
@@ -351,7 +265,7 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = MockProvider::new();
+    let provider = StubProvider;
 
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
@@ -359,54 +273,24 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
     // All 3 tasks should have been executed
     assert_eq!(mock_executor.call_count(), 3);
 
-    // Verify execution order by checking the script paths in /tmp
+    // Each call goes through ChrootContext which creates:
+    // ["chroot", rootfs_path, shell_path, script_path]
     let calls = mock_executor.calls();
-    // Each call goes through MockContext which creates CommandSpec with "mock" as command
-    // The args are the original command passed to IsolationContext::execute
-    // ShellTask creates: [shell_path, script_path_in_chroot]
-    // Since we're in dry_run mode, scripts are not actually written
-    // but commands are still dispatched
     for call in &calls {
-        // call[0] is "mock" (from MockContext)
-        // call[1] is "/bin/sh" (the shell)
-        // call[2] is "/tmp/task-<uuid>.sh" (the script path)
-        assert_eq!(call[0], OsString::from("mock"));
-        assert_eq!(call[1], OsString::from("/bin/sh"));
+        assert_eq!(call[0], OsString::from("chroot"));
+        assert_eq!(call[1], OsString::from("/tmp/rootfs"));
+        assert_eq!(call[2], OsString::from("/bin/sh"));
     }
-
-    // Teardown must be called after successful execution
-    assert!(
-        provider.teardown_called.load(Ordering::SeqCst),
-        "teardown must be called after successful execution"
-    );
-}
-
-#[test]
-fn test_pipeline_run_setup_failure() {
-    let tasks = [inline_task("echo hello")];
-    let pipeline = Pipeline::new(&tasks, &[], &[]);
-    let provider = MockProvider::with_setup_failure();
-    let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
-
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("failed to setup isolation context"),
-        "Expected setup failure error, got: {}",
-        err_msg
-    );
 }
 
 #[test]
 fn test_pipeline_run_phase_error_with_successful_teardown() {
-    // Task execution fails, but teardown succeeds -> returns phase error
     let tasks = [inline_task("echo hello")];
     let pipeline = Pipeline::new(&tasks, &[], &[]);
 
     let mock_executor = Arc::new(MockExecutor::failing_on(0));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = MockProvider::new();
+    let provider = StubProvider;
 
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
     assert!(result.is_err());
@@ -416,113 +300,44 @@ fn test_pipeline_run_phase_error_with_successful_teardown() {
         "Expected phase error, got: {}",
         err_msg
     );
-    // Should NOT contain teardown error
-    assert!(
-        !err_msg.contains("teardown"),
-        "Should not contain teardown error, got: {}",
-        err_msg
-    );
-    // Teardown must still be called even when phases fail
-    assert!(
-        provider.teardown_called.load(Ordering::SeqCst),
-        "teardown must be called even when a phase fails"
-    );
-}
-
-#[test]
-fn test_pipeline_run_successful_phases_with_teardown_error() {
-    // All phases succeed, but teardown fails -> returns teardown error
-    let tasks = [inline_task("echo hello")];
-    let pipeline = Pipeline::new(&tasks, &[], &[]);
-
-    let mock_executor = Arc::new(MockExecutor::new());
-    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = MockProvider::with_teardown_failure();
-
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("failed to teardown isolation context"),
-        "Expected teardown error, got: {}",
-        err_msg
-    );
-    // Teardown was attempted (even though it failed)
-    assert!(
-        provider.teardown_called.load(Ordering::SeqCst),
-        "teardown must be called even when it fails"
-    );
-}
-
-#[test]
-fn test_pipeline_run_phase_error_and_teardown_error() {
-    // Both phase and teardown fail -> returns phase error with teardown context
-    let tasks = [inline_task("echo hello")];
-    let pipeline = Pipeline::new(&tasks, &[], &[]);
-
-    let mock_executor = Arc::new(MockExecutor::failing_on(0));
-    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = MockProvider::with_teardown_failure();
-
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    // Phase error should be the primary error returned
-    assert!(
-        err_msg.contains("failed to run pre-processor 1"),
-        "Expected phase error as primary error, got: {}",
-        err_msg
-    );
-    // Teardown error should be attached as context
-    assert!(
-        err_msg.contains("additionally, teardown failed"),
-        "Expected teardown context in error, got: {}",
-        err_msg
-    );
-    // Teardown must be called even when both phases and teardown fail
-    assert!(
-        provider.teardown_called.load(Ordering::SeqCst),
-        "teardown must be called even when both phases and teardown fail"
-    );
 }
 
 #[test]
 fn test_pipeline_run_skips_empty_phases() {
-    // Only provisioners phase has tasks; pre and post are empty
     let prov = [inline_task("echo prov")];
     let pipeline = Pipeline::new(&[], &prov, &[]);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = MockProvider::new();
+    let provider = StubProvider;
 
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
     assert!(result.is_ok());
-
-    // Only one task should have been executed
     assert_eq!(mock_executor.call_count(), 1);
 }
 
 #[test]
 fn test_pipeline_run_phase_order_is_strictly_pre_prov_post() {
-    // Use distinct shell paths per phase to verify strict ordering
     let mut pre_task =
         ShellTask::with_shell(ScriptSource::Content("echo pre".to_string()), "/bin/sh-pre");
     pre_task.resolve_privilege(None).unwrap();
+    pre_task.resolve_isolation(&IsolationConfig::default());
     let pre = [TaskDefinition::Shell(pre_task)];
     let mut prov_task =
         ShellTask::with_shell(ScriptSource::Content("echo prov".to_string()), "/bin/sh-prov");
     prov_task.resolve_privilege(None).unwrap();
+    prov_task.resolve_isolation(&IsolationConfig::default());
     let prov = [TaskDefinition::Shell(prov_task)];
     let mut post_task =
         ShellTask::with_shell(ScriptSource::Content("echo post".to_string()), "/bin/sh-post");
     post_task.resolve_privilege(None).unwrap();
+    post_task.resolve_isolation(&IsolationConfig::default());
     let post = [TaskDefinition::Shell(post_task)];
     let pipeline = Pipeline::new(&pre, &prov, &post);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = MockProvider::new();
+    let provider = StubProvider;
 
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
@@ -530,16 +345,15 @@ fn test_pipeline_run_phase_order_is_strictly_pre_prov_post() {
     let calls = mock_executor.calls();
     assert_eq!(calls.len(), 3);
 
-    // Verify strict phase ordering via shell path in args[1]
-    // call[0] = "mock", call[1] = shell path, call[2] = script path
-    assert_eq!(calls[0][1], OsString::from("/bin/sh-pre"));
-    assert_eq!(calls[1][1], OsString::from("/bin/sh-prov"));
-    assert_eq!(calls[2][1], OsString::from("/bin/sh-post"));
+    // Verify strict phase ordering via shell path
+    // call[0] = "chroot", call[1] = rootfs, call[2] = shell path, call[3] = script path
+    assert_eq!(calls[0][2], OsString::from("/bin/sh-pre"));
+    assert_eq!(calls[1][2], OsString::from("/bin/sh-prov"));
+    assert_eq!(calls[2][2], OsString::from("/bin/sh-post"));
 }
 
 #[test]
 fn test_pipeline_run_stops_within_phase_on_error() {
-    // provisioner phase has 3 tasks; 2nd fails -> 3rd should NOT execute
     let prov = [
         inline_task("echo prov1"),
         inline_task("echo prov2"),
@@ -549,18 +363,15 @@ fn test_pipeline_run_stops_within_phase_on_error() {
 
     let mock_executor = Arc::new(MockExecutor::failing_on(1)); // fail on 2nd call (0-indexed)
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = MockProvider::new();
+    let provider = StubProvider;
 
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
     assert!(result.is_err());
-
-    // 1st task succeeds (call 0), 2nd task fails (call 1), 3rd never executed
     assert_eq!(mock_executor.call_count(), 2);
 }
 
 #[test]
 fn test_pipeline_run_stops_on_first_phase_error() {
-    // pre-processor fails, provisioners and post-processors should NOT execute
     let pre = [inline_task("echo pre")];
     let prov = [inline_task("echo prov")];
     let post = [inline_task("echo post")];
@@ -568,18 +379,15 @@ fn test_pipeline_run_stops_on_first_phase_error() {
 
     let mock_executor = Arc::new(MockExecutor::failing_on(0));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = MockProvider::new();
+    let provider = StubProvider;
 
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
     assert!(result.is_err());
-
-    // Only 1 call should have been made (the failed pre-processor)
     assert_eq!(mock_executor.call_count(), 1);
 }
 
 #[test]
 fn test_pipeline_run_provisioner_failure_skips_post_processors() {
-    // provisioner fails -> post-processors should NOT execute
     let pre = [inline_task("echo pre")];
     let prov = [inline_task("echo prov")];
     let post = [inline_task("echo post")];
@@ -588,7 +396,7 @@ fn test_pipeline_run_provisioner_failure_skips_post_processors() {
     // fail_on_call=1 means: call 0 (pre) succeeds, call 1 (prov) fails
     let mock_executor = Arc::new(MockExecutor::failing_on(1));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-    let provider = MockProvider::new();
+    let provider = StubProvider;
 
     let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), &provider, executor, true);
     assert!(result.is_err());
@@ -600,8 +408,6 @@ fn test_pipeline_run_provisioner_failure_skips_post_processors() {
         err_msg
     );
 
-    // pre-processor (call 0) succeeded, provisioner (call 1) failed,
-    // post-processor should NOT have been executed
     assert_eq!(mock_executor.call_count(), 2);
 }
 
@@ -611,8 +417,6 @@ fn test_pipeline_run_provisioner_failure_skips_post_processors() {
 
 #[test]
 fn test_pipeline_validate_preserves_validation_variant() {
-    // Path traversal triggers Validation error; validate_phase should preserve
-    // the variant while adding phase context.
     let bad_task = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
         "../../../etc/passwd".into(),
     )))];
@@ -631,8 +435,6 @@ fn test_pipeline_validate_preserves_validation_variant() {
 
 #[test]
 fn test_pipeline_validate_preserves_io_variant() {
-    // Non-existent script triggers Io error; validate_phase should preserve
-    // the Io variant (not convert to Validation) while adding phase context.
     let nonexistent_task = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
         "/nonexistent/path/to/script.sh".into(),
     )))];

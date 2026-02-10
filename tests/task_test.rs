@@ -860,3 +860,117 @@ fn test_task_definition_binary_path_mitamae_none_when_unset() {
     )));
     assert_eq!(task.binary_path(), None);
 }
+
+// =============================================================================
+// Task-level isolation deserialization tests
+// =============================================================================
+
+#[test]
+fn test_shell_task_deserialize_isolation_true() {
+    let yaml = r#"content: echo hello
+isolation: true
+"#;
+    let task: ShellTask =
+        serde_yaml::from_str(yaml).expect("should parse ShellTask with isolation: true");
+    use rsdebstrap::config::IsolationConfig;
+    let mut task_mut = task;
+    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    assert_eq!(
+        task_mut.resolved_isolation_config(),
+        Some(&IsolationConfig::Chroot),
+        "isolation: true should resolve to Chroot"
+    );
+}
+
+#[test]
+fn test_shell_task_deserialize_isolation_false() {
+    let yaml = r#"content: echo hello
+isolation: false
+"#;
+    let task: ShellTask =
+        serde_yaml::from_str(yaml).expect("should parse ShellTask with isolation: false");
+    use rsdebstrap::config::IsolationConfig;
+    let mut task_mut = task;
+    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    assert_eq!(
+        task_mut.resolved_isolation_config(),
+        None,
+        "isolation: false should resolve to None (Disabled)"
+    );
+}
+
+#[test]
+fn test_shell_task_deserialize_isolation_explicit_chroot() {
+    // editorconfig-checker-disable
+    let yaml = r#"content: echo hello
+isolation:
+  type: chroot
+"#;
+    // editorconfig-checker-enable
+    let task: ShellTask =
+        serde_yaml::from_str(yaml).expect("should parse ShellTask with explicit isolation");
+    use rsdebstrap::config::IsolationConfig;
+    let mut task_mut = task;
+    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    assert_eq!(
+        task_mut.resolved_isolation_config(),
+        Some(&IsolationConfig::Chroot),
+        "explicit chroot isolation should resolve to Chroot"
+    );
+}
+
+#[test]
+fn test_shell_task_deserialize_isolation_absent_defaults_to_inherit() {
+    let yaml = r#"content: echo hello
+"#;
+    let task: ShellTask =
+        serde_yaml::from_str(yaml).expect("should parse ShellTask without isolation");
+    use rsdebstrap::config::IsolationConfig;
+    let mut task_mut = task;
+    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    assert_eq!(
+        task_mut.resolved_isolation_config(),
+        Some(&IsolationConfig::Chroot),
+        "absent isolation (Inherit) should resolve to Chroot from defaults"
+    );
+}
+
+#[test]
+fn test_mitamae_task_deserialize_isolation_false() {
+    // editorconfig-checker-disable
+    let yaml = r#"binary: /usr/local/bin/mitamae
+content: "package 'vim'"
+isolation: false
+"#;
+    // editorconfig-checker-enable
+    let task: MitamaeTask =
+        serde_yaml::from_str(yaml).expect("should parse MitamaeTask with isolation: false");
+    use rsdebstrap::config::IsolationConfig;
+    let mut task_mut = task;
+    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    assert_eq!(
+        task_mut.resolved_isolation_config(),
+        None,
+        "isolation: false on MitamaeTask should resolve to None"
+    );
+}
+
+#[test]
+fn test_task_definition_resolve_isolation_dispatches_to_shell() {
+    use rsdebstrap::config::IsolationConfig;
+    let mut task =
+        TaskDefinition::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
+    task.resolve_isolation(&IsolationConfig::Chroot);
+    assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::Chroot));
+}
+
+#[test]
+fn test_task_definition_resolve_isolation_dispatches_to_mitamae() {
+    use rsdebstrap::config::IsolationConfig;
+    let mut task = TaskDefinition::Mitamae(MitamaeTask::new(
+        ScriptSource::Content("package 'vim'".to_string()),
+        "/usr/local/bin/mitamae".into(),
+    ));
+    task.resolve_isolation(&IsolationConfig::Chroot);
+    assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::Chroot));
+}
