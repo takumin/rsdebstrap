@@ -169,10 +169,12 @@ impl RootfsMounts {
     /// and reused for `umount` commands.
     /// On failure, automatically unmounts any entries that were successfully mounted.
     pub fn mount(&mut self) -> Result<()> {
-        debug_assert!(
-            self.mounted_paths.iter().all(|p| p.is_none()) && !self.torn_down,
-            "mount() called on already-used RootfsMounts"
-        );
+        if self.torn_down || self.mounted_paths.iter().any(|p| p.is_some()) {
+            return Err(RsdebstrapError::Isolation(
+                "mount() called on already-used RootfsMounts".to_string(),
+            )
+            .into());
+        }
 
         if self.entries.is_empty() {
             return Ok(());

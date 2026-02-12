@@ -131,7 +131,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - Traverses each path component with `openat(O_NOFOLLOW)`, creates missing dirs with `mkdirat`
   - Returns `ELOOP`/`ENOTDIR` → `RsdebstrapError::Isolation` on symlink detection
   - Handles race conditions (`EEXIST` on `mkdirat` → re-open)
-  - Uses `rustix` crate (transitive dependency via `which`) for memory-safe syscall wrappers
+  - Uses `rustix` crate (direct dependency, `features = ["fs"]`) for memory-safe syscall wrappers
 
 - **`IsolationProvider`** / **`IsolationContext`** traits (`src/isolation/mod.rs`) - Isolation backends
   - `ChrootProvider` / `ChrootContext` - chroot-based isolation

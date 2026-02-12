@@ -1014,6 +1014,17 @@ mod tests {
     }
 
     #[test]
+    fn test_mount_entry_validate_valid_bind_mount() {
+        // /tmp is guaranteed to exist on any system
+        let entry = MountEntry {
+            source: "/tmp".to_string(),
+            target: "/tmp".into(),
+            options: vec!["bind".to_string()],
+        };
+        assert!(entry.validate().is_ok());
+    }
+
+    #[test]
     fn test_mount_entry_validate_bind_rejects_relative_source() {
         let entry = MountEntry {
             source: "dev".to_string(),
@@ -1183,6 +1194,30 @@ mod tests {
                 assert_eq!(mounts[0].source, "proc");
             }
         }
+    }
+
+    #[test]
+    fn test_isolation_config_serialize_deserialize_roundtrip() {
+        let config = IsolationConfig::Chroot {
+            preset: Some(MountPreset::Recommends),
+            mounts: vec![MountEntry {
+                source: "/dev".to_string(),
+                target: "/dev".into(),
+                options: vec!["bind".to_string()],
+            }],
+        };
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(config, deserialized);
+    }
+
+    #[test]
+    fn test_isolation_config_serialize_skips_empty_fields() {
+        let config = IsolationConfig::chroot();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        // Empty mounts and None preset should be omitted
+        assert!(!yaml.contains("preset"));
+        assert!(!yaml.contains("mounts"));
     }
 
     // =========================================================================
@@ -1389,6 +1424,35 @@ mod tests {
 
         // The merged result should pass mount order validation
         validate_mount_order(&mounts).unwrap();
+    }
+
+    #[test]
+    fn test_resolved_mounts_appends_non_overlapping_custom_mounts() {
+        // Custom mount with a target not in the preset should be appended
+        let config = IsolationConfig::Chroot {
+            preset: Some(MountPreset::Recommends),
+            mounts: vec![MountEntry {
+                source: "tmpfs".to_string(),
+                target: "/var/tmp".into(),
+                options: vec![],
+            }],
+        };
+        let mounts = config.resolved_mounts();
+        // 6 preset entries + 1 new custom = 7
+        assert_eq!(mounts.len(), 7);
+
+        // The new custom mount should be at the end
+        let last = mounts.last().unwrap();
+        assert_eq!(last.target.as_str(), "/var/tmp");
+        assert_eq!(last.source, "tmpfs");
+
+        // All original preset entries should still be present
+        assert!(mounts.iter().any(|m| m.target.as_str() == "/proc"));
+        assert!(mounts.iter().any(|m| m.target.as_str() == "/sys"));
+        assert!(mounts.iter().any(|m| m.target.as_str() == "/dev"));
+        assert!(mounts.iter().any(|m| m.target.as_str() == "/dev/pts"));
+        assert!(mounts.iter().any(|m| m.target.as_str() == "/tmp"));
+        assert!(mounts.iter().any(|m| m.target.as_str() == "/run"));
     }
 
     #[test]
