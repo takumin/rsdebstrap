@@ -114,7 +114,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - Pseudo-fs uses `mount -t <type>`, bind mounts use `mount -o bind`
 
 - **`MountPreset`** enum (`src/config.rs`) - Predefined mount sets
-  - `Recommends` — common mounts: proc, sysfs, devtmpfs, devpts, tmpfs (/tmp, /run)
+  - `Recommends` — common mounts: proc -> /proc, sysfs -> /sys, devtmpfs -> /dev, devpts -> /dev/pts, tmpfs -> /tmp, tmpfs -> /run
 
 - **`RootfsMounts`** struct (`src/isolation/mount.rs`) - RAII mount lifecycle manager
   - Mounts entries in order, unmounts in reverse order
