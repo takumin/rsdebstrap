@@ -110,8 +110,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - Fields: `source` (device/path), `target` (absolute path in rootfs), `options` (mount -o flags)
   - `is_pseudo_fs()` — checks if source is a known pseudo-filesystem (proc, sysfs, etc.)
   - `is_bind_mount()` — checks if options contain "bind"
-  - `build_mount_spec()` / `build_umount_spec()` — construct `CommandSpec` for mount/umount commands
-  - `build_mount_spec_with_path()` — like `build_mount_spec()` but accepts a pre-validated absolute target path
+  - `build_mount_spec_with_path()` / `build_umount_spec_with_path()` — construct `CommandSpec` for mount/umount using a pre-validated absolute target path
   - `validate()` checks `..` components in targets, bind mount sources, and regular mount sources
   - Pseudo-fs uses `mount -t <type>`, bind mounts use `mount -o bind`
 

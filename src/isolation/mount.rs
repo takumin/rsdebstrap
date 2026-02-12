@@ -17,7 +17,7 @@ use tracing::info;
 
 use crate::config::MountEntry;
 use crate::error::RsdebstrapError;
-use crate::executor::{CommandExecutor, CommandSpec};
+use crate::executor::CommandExecutor;
 use crate::privilege::PrivilegeMethod;
 
 /// Opens a directory without following symlinks.
@@ -264,8 +264,7 @@ impl RootfsMounts {
             };
             let entry = &self.entries[i];
             info!("unmounting {}", entry.target);
-            let spec = CommandSpec::new("umount", vec![abs_target.to_string()])
-                .with_privilege(self.privilege);
+            let spec = entry.build_umount_spec_with_path(abs_target, self.privilege);
             match self.executor.execute(&spec) {
                 Ok(result) if result.success() => {
                     self.mounted_paths[i] = None;

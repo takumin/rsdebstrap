@@ -107,40 +107,14 @@ impl MountEntry {
         self.options.iter().any(|o| o == "bind")
     }
 
-    /// Builds a `CommandSpec` for the `mount` command.
-    ///
-    /// For pseudo-filesystems, generates: `mount -t <source> [-o opts] <source> <rootfs>/<target>`
-    /// For others: `mount [-o opts] <source> <rootfs>/<target>`
-    pub fn build_mount_spec(
-        &self,
-        rootfs: &Utf8Path,
-        privilege: Option<PrivilegeMethod>,
-    ) -> CommandSpec {
-        let abs_target = rootfs.join(self.target.strip_prefix("/").unwrap_or(&self.target));
-        let mut args = Vec::new();
-
-        if self.is_pseudo_fs() {
-            args.push("-t".to_string());
-            args.push(self.source.clone());
-        }
-
-        if !self.options.is_empty() {
-            args.push("-o".to_string());
-            args.push(self.options.join(","));
-        }
-
-        args.push(self.source.clone());
-        args.push(abs_target.to_string());
-
-        CommandSpec::new("mount", args).with_privilege(privilege)
-    }
-
     /// Builds a `CommandSpec` for the `mount` command using a pre-validated absolute target path.
     ///
-    /// Unlike [`build_mount_spec()`](Self::build_mount_spec), this method accepts
-    /// an already-validated absolute path (e.g., from
+    /// Accepts an already-validated absolute path (e.g., from
     /// [`safe_create_mount_point()`](crate::isolation::mount::safe_create_mount_point))
     /// instead of computing it from rootfs + target.
+    ///
+    /// For pseudo-filesystems, generates: `mount -t <source> [-o opts] <source> <abs_target>`
+    /// For others: `mount [-o opts] <source> <abs_target>`
     pub fn build_mount_spec_with_path(
         &self,
         abs_target: &Utf8Path,
@@ -164,13 +138,16 @@ impl MountEntry {
         CommandSpec::new("mount", args).with_privilege(privilege)
     }
 
-    /// Builds a `CommandSpec` for the `umount` command.
-    pub fn build_umount_spec(
+    /// Builds a `CommandSpec` for the `umount` command using a pre-validated absolute target path.
+    ///
+    /// Accepts an already-validated absolute path (e.g., stored by
+    /// [`RootfsMounts`](crate::isolation::mount::RootfsMounts) after a successful mount)
+    /// instead of computing it from rootfs + target.
+    pub fn build_umount_spec_with_path(
         &self,
-        rootfs: &Utf8Path,
+        abs_target: &Utf8Path,
         privilege: Option<PrivilegeMethod>,
     ) -> CommandSpec {
-        let abs_target = rootfs.join(self.target.strip_prefix("/").unwrap_or(&self.target));
         CommandSpec::new("umount", vec![abs_target.to_string()]).with_privilege(privilege)
     }
 
@@ -324,11 +301,12 @@ impl IsolationConfig {
     /// If a preset is set, expands the preset entries first. Custom mounts
     /// with the same target as a preset entry replace the preset entry
     /// at its original position, preserving mount order (parent before child).
-    /// Non-overlapping custom mounts are appended after preset entries.
+    /// Non-overlapping custom mounts are appended in YAML definition order.
     pub fn resolved_mounts(&self) -> Vec<MountEntry> {
         match self {
             Self::Chroot { preset, mounts } => {
-                let preset_entries = preset.as_ref().map(|p| p.to_entries()).unwrap_or_default();
+                let mut preset_entries =
+                    preset.as_ref().map(|p| p.to_entries()).unwrap_or_default();
 
                 if mounts.is_empty() {
                     return preset_entries;
@@ -338,32 +316,24 @@ impl IsolationConfig {
                 }
 
                 // Build lookup from target path to custom mount entry
-                let custom_by_target: std::collections::HashMap<&Utf8Path, &MountEntry> =
+                let mut custom_by_target: HashMap<&Utf8Path, &MountEntry> =
                     mounts.iter().map(|m| (m.target.as_path(), m)).collect();
 
-                let mut used_targets = std::collections::HashSet::new();
-
                 // Replace preset entries in-place where custom overrides exist
-                let mut result: Vec<MountEntry> = preset_entries
-                    .iter()
-                    .map(|e| {
-                        if let Some(custom) = custom_by_target.get(e.target.as_path()) {
-                            used_targets.insert(e.target.as_path());
-                            (*custom).clone()
-                        } else {
-                            e.clone()
-                        }
-                    })
-                    .collect();
-
-                // Append custom mounts that don't override any preset entry
-                for m in mounts {
-                    if !used_targets.contains(m.target.as_path()) {
-                        result.push(m.clone());
+                for entry in &mut preset_entries {
+                    if let Some(custom) = custom_by_target.remove(entry.target.as_path()) {
+                        *entry = custom.clone();
                     }
                 }
 
-                result
+                // Append non-overlapping custom mounts in YAML definition order
+                for m in mounts {
+                    if custom_by_target.contains_key(m.target.as_path()) {
+                        preset_entries.push(m.clone());
+                    }
+                }
+
+                preset_entries
             }
         }
     }
@@ -911,25 +881,25 @@ mod tests {
     }
 
     #[test]
-    fn test_mount_entry_build_mount_spec_pseudo_fs() {
+    fn test_mount_entry_build_mount_spec_with_path_pseudo_fs() {
         let entry = MountEntry {
             source: "proc".to_string(),
             target: "/proc".into(),
             options: vec![],
         };
-        let spec = entry.build_mount_spec(Utf8Path::new("/rootfs"), None);
+        let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/proc"), None);
         assert_eq!(spec.command, "mount");
         assert_eq!(spec.args, vec!["-t", "proc", "proc", "/rootfs/proc"]);
     }
 
     #[test]
-    fn test_mount_entry_build_mount_spec_pseudo_fs_with_options() {
+    fn test_mount_entry_build_mount_spec_with_path_pseudo_fs_with_options() {
         let entry = MountEntry {
             source: "devpts".to_string(),
             target: "/dev/pts".into(),
             options: vec!["gid=5".to_string(), "mode=620".to_string()],
         };
-        let spec = entry.build_mount_spec(Utf8Path::new("/rootfs"), None);
+        let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/dev/pts"), None);
         assert_eq!(spec.command, "mount");
         assert_eq!(
             spec.args,
@@ -945,37 +915,54 @@ mod tests {
     }
 
     #[test]
-    fn test_mount_entry_build_mount_spec_bind() {
+    fn test_mount_entry_build_mount_spec_with_path_bind() {
         let entry = MountEntry {
             source: "/dev".to_string(),
             target: "/dev".into(),
             options: vec!["bind".to_string()],
         };
-        let spec = entry.build_mount_spec(Utf8Path::new("/rootfs"), None);
+        let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/dev"), None);
         assert_eq!(spec.command, "mount");
         assert_eq!(spec.args, vec!["-o", "bind", "/dev", "/rootfs/dev"]);
     }
 
     #[test]
-    fn test_mount_entry_build_umount_spec() {
+    fn test_mount_entry_build_umount_spec_with_path() {
         let entry = MountEntry {
             source: "proc".to_string(),
             target: "/proc".into(),
             options: vec![],
         };
-        let spec = entry.build_umount_spec(Utf8Path::new("/rootfs"), None);
+        let spec = entry.build_umount_spec_with_path(Utf8Path::new("/rootfs/proc"), None);
         assert_eq!(spec.command, "umount");
         assert_eq!(spec.args, vec!["/rootfs/proc"]);
     }
 
     #[test]
-    fn test_mount_entry_build_mount_spec_with_privilege() {
+    fn test_mount_entry_build_mount_spec_with_path_privilege() {
         let entry = MountEntry {
             source: "proc".to_string(),
             target: "/proc".into(),
             options: vec![],
         };
-        let spec = entry.build_mount_spec(Utf8Path::new("/rootfs"), Some(PrivilegeMethod::Sudo));
+        let spec = entry
+            .build_mount_spec_with_path(Utf8Path::new("/rootfs/proc"), Some(PrivilegeMethod::Sudo));
+        assert_eq!(spec.privilege, Some(PrivilegeMethod::Sudo));
+    }
+
+    #[test]
+    fn test_mount_entry_build_umount_spec_with_path_privilege() {
+        let entry = MountEntry {
+            source: "proc".to_string(),
+            target: "/proc".into(),
+            options: vec![],
+        };
+        let spec = entry.build_umount_spec_with_path(
+            Utf8Path::new("/rootfs/proc"),
+            Some(PrivilegeMethod::Sudo),
+        );
+        assert_eq!(spec.command, "umount");
+        assert_eq!(spec.args, vec!["/rootfs/proc"]);
         assert_eq!(spec.privilege, Some(PrivilegeMethod::Sudo));
     }
 
@@ -1465,33 +1452,5 @@ mod tests {
         let err = entry.validate().unwrap_err();
         assert!(matches!(err, RsdebstrapError::Validation(_)));
         assert!(err.to_string().contains(".."));
-    }
-
-    #[test]
-    fn test_mount_entry_build_mount_spec_with_path() {
-        let entry = MountEntry {
-            source: "proc".to_string(),
-            target: "/proc".into(),
-            options: vec![],
-        };
-        let spec = entry.build_mount_spec_with_path(Utf8Path::new("/verified/rootfs/proc"), None);
-        assert_eq!(spec.command, "mount");
-        assert_eq!(spec.args, vec!["-t", "proc", "proc", "/verified/rootfs/proc"]);
-    }
-
-    #[test]
-    fn test_mount_entry_build_mount_spec_with_path_bind() {
-        let entry = MountEntry {
-            source: "/dev".to_string(),
-            target: "/dev".into(),
-            options: vec!["bind".to_string()],
-        };
-        let spec = entry.build_mount_spec_with_path(
-            Utf8Path::new("/verified/rootfs/dev"),
-            Some(PrivilegeMethod::Sudo),
-        );
-        assert_eq!(spec.command, "mount");
-        assert_eq!(spec.args, vec!["-o", "bind", "/dev", "/verified/rootfs/dev"]);
-        assert_eq!(spec.privilege, Some(PrivilegeMethod::Sudo));
     }
 }
