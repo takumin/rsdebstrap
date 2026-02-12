@@ -30,7 +30,7 @@ pub use shell::ShellTask;
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::executor::ExecutionResult;
-use crate::isolation::IsolationContext;
+use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::privilege::{PrivilegeDefaults, PrivilegeMethod};
 
 /// Validates that a path contains no `..` components.
@@ -418,6 +418,14 @@ impl TaskDefinition {
         match self {
             Self::Shell(task) => task.resolve_privilege(defaults),
             Self::Mitamae(task) => task.resolve_privilege(defaults),
+        }
+    }
+
+    /// Returns a reference to the task's isolation setting (possibly unresolved).
+    pub fn task_isolation(&self) -> &TaskIsolation {
+        match self {
+            Self::Shell(task) => task.task_isolation(),
+            Self::Mitamae(task) => task.task_isolation(),
         }
     }
 

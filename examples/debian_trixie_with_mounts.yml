@@ -1,0 +1,38 @@
+---
+# Example profile demonstrating filesystem mounts for chroot isolation
+# Mounts are set up before pipeline tasks and torn down after completion.
+# This is useful when tasks need /proc, /sys, /dev, etc. inside the rootfs
+# (e.g., running apt-get install which requires /proc for dpkg).
+
+dir: /tmp/debian-trixie-mounts
+
+defaults:
+  isolation:
+    type: chroot
+    # 'recommends' preset provides common mounts:
+    #   proc -> /proc, sysfs -> /sys, devtmpfs -> /dev,
+    #   devpts -> /dev/pts, tmpfs -> /tmp, tmpfs -> /run
+    preset: recommends
+  # Privilege escalation is required when mounts are configured
+  privilege:
+    method: sudo
+
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+  mirrors:
+  - https://deb.debian.org/debian
+  variant: apt
+  components:
+  - main
+  architectures:
+  - amd64
+
+provisioners:
+- type: shell
+  content: |-
+    #!/bin/sh
+    set -e
+    apt-get update
+    apt-get install -y vim curl

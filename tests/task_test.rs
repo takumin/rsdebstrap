@@ -874,10 +874,10 @@ isolation: true
         serde_yaml::from_str(yaml).expect("should parse ShellTask with isolation: true");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    task_mut.resolve_isolation(&IsolationConfig::chroot());
     assert_eq!(
         task_mut.resolved_isolation_config(),
-        Some(&IsolationConfig::Chroot),
+        Some(&IsolationConfig::chroot()),
         "isolation: true should resolve to Chroot"
     );
 }
@@ -891,7 +891,7 @@ isolation: false
         serde_yaml::from_str(yaml).expect("should parse ShellTask with isolation: false");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    task_mut.resolve_isolation(&IsolationConfig::chroot());
     assert_eq!(
         task_mut.resolved_isolation_config(),
         None,
@@ -911,10 +911,10 @@ isolation:
         serde_yaml::from_str(yaml).expect("should parse ShellTask with explicit isolation");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    task_mut.resolve_isolation(&IsolationConfig::chroot());
     assert_eq!(
         task_mut.resolved_isolation_config(),
-        Some(&IsolationConfig::Chroot),
+        Some(&IsolationConfig::chroot()),
         "explicit chroot isolation should resolve to Chroot"
     );
 }
@@ -927,10 +927,10 @@ fn test_shell_task_deserialize_isolation_absent_defaults_to_inherit() {
         serde_yaml::from_str(yaml).expect("should parse ShellTask without isolation");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    task_mut.resolve_isolation(&IsolationConfig::chroot());
     assert_eq!(
         task_mut.resolved_isolation_config(),
-        Some(&IsolationConfig::Chroot),
+        Some(&IsolationConfig::chroot()),
         "absent isolation (Inherit) should resolve to Chroot from defaults"
     );
 }
@@ -947,7 +947,7 @@ isolation: false
         serde_yaml::from_str(yaml).expect("should parse MitamaeTask with isolation: false");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::Chroot);
+    task_mut.resolve_isolation(&IsolationConfig::chroot());
     assert_eq!(
         task_mut.resolved_isolation_config(),
         None,
@@ -960,8 +960,8 @@ fn test_task_definition_resolve_isolation_dispatches_to_shell() {
     use rsdebstrap::config::IsolationConfig;
     let mut task =
         TaskDefinition::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
-    task.resolve_isolation(&IsolationConfig::Chroot);
-    assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::Chroot));
+    task.resolve_isolation(&IsolationConfig::chroot());
+    assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
 }
 
 #[test]
@@ -971,6 +971,6 @@ fn test_task_definition_resolve_isolation_dispatches_to_mitamae() {
         ScriptSource::Content("package 'vim'".to_string()),
         "/usr/local/bin/mitamae".into(),
     ));
-    task.resolve_isolation(&IsolationConfig::Chroot);
-    assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::Chroot));
+    task.resolve_isolation(&IsolationConfig::chroot());
+    assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
 }

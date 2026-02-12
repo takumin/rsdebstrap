@@ -17,7 +17,7 @@
 use anyhow::Result;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::config::IsolationConfig;
 use crate::executor::{CommandExecutor, ExecutionResult};
@@ -26,10 +26,12 @@ use crate::privilege::PrivilegeMethod;
 /// Fallback isolation config for unresolved states.
 /// Used by `resolved_config()` to fail-closed (use isolation) rather than
 /// fail-open (bypass isolation) when called before resolution.
-static DEFAULT_ISOLATION_CONFIG: IsolationConfig = IsolationConfig::Chroot;
+static DEFAULT_ISOLATION_CONFIG: LazyLock<IsolationConfig> =
+    LazyLock::new(IsolationConfig::default);
 
 pub mod chroot;
 pub mod direct;
+pub mod mount;
 
 pub use chroot::{ChrootContext, ChrootProvider};
 pub use direct::{DirectContext, DirectProvider};
@@ -116,7 +118,7 @@ pub trait IsolationContext: Send {
 /// - Absent (field not specified) → `Inherit` (use defaults)
 /// - `isolation: true` → `UseDefault` (use defaults explicitly)
 /// - `isolation: false` → `Disabled` (no isolation, direct execution)
-/// - `isolation: { type: chroot }` → `Config(IsolationConfig::Chroot)` (explicit)
+/// - `isolation: { type: chroot }` → `Config(IsolationConfig::chroot())` (explicit)
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum TaskIsolation {
     /// YAML field not specified — inherit from defaults.
@@ -153,7 +155,7 @@ impl TaskIsolation {
                     Falling back to default isolation config (fail-closed).",
                     unresolved
                 );
-                Some(&DEFAULT_ISOLATION_CONFIG)
+                Some(&*DEFAULT_ISOLATION_CONFIG)
             }
         }
     }
@@ -270,7 +272,7 @@ mod tests {
     #[test]
     fn task_isolation_deserialize_chroot_map() {
         let p: TaskIsolation = serde_yaml::from_str("type: chroot").unwrap();
-        assert_eq!(p, TaskIsolation::Config(IsolationConfig::Chroot));
+        assert_eq!(p, TaskIsolation::Config(IsolationConfig::chroot()));
     }
 
     #[test]
@@ -309,30 +311,30 @@ mod tests {
 
     #[test]
     fn resolve_inherit_uses_defaults() {
-        let defaults = IsolationConfig::Chroot;
+        let defaults = IsolationConfig::chroot();
         let result = TaskIsolation::Inherit.resolve(&defaults);
-        assert_eq!(result, Some(IsolationConfig::Chroot));
+        assert_eq!(result, Some(IsolationConfig::chroot()));
     }
 
     #[test]
     fn resolve_use_default_uses_defaults() {
-        let defaults = IsolationConfig::Chroot;
+        let defaults = IsolationConfig::chroot();
         let result = TaskIsolation::UseDefault.resolve(&defaults);
-        assert_eq!(result, Some(IsolationConfig::Chroot));
+        assert_eq!(result, Some(IsolationConfig::chroot()));
     }
 
     #[test]
     fn resolve_disabled_returns_none() {
-        let defaults = IsolationConfig::Chroot;
+        let defaults = IsolationConfig::chroot();
         let result = TaskIsolation::Disabled.resolve(&defaults);
         assert_eq!(result, None);
     }
 
     #[test]
     fn resolve_config_uses_explicit() {
-        let defaults = IsolationConfig::Chroot;
-        let result = TaskIsolation::Config(IsolationConfig::Chroot).resolve(&defaults);
-        assert_eq!(result, Some(IsolationConfig::Chroot));
+        let defaults = IsolationConfig::chroot();
+        let result = TaskIsolation::Config(IsolationConfig::chroot()).resolve(&defaults);
+        assert_eq!(result, Some(IsolationConfig::chroot()));
     }
 
     // =========================================================================
@@ -342,22 +344,22 @@ mod tests {
     #[test]
     fn resolve_in_place_inherit() {
         let mut iso = TaskIsolation::Inherit;
-        iso.resolve_in_place(&IsolationConfig::Chroot);
-        assert_eq!(iso, TaskIsolation::Config(IsolationConfig::Chroot));
+        iso.resolve_in_place(&IsolationConfig::chroot());
+        assert_eq!(iso, TaskIsolation::Config(IsolationConfig::chroot()));
     }
 
     #[test]
     fn resolve_in_place_disabled() {
         let mut iso = TaskIsolation::Disabled;
-        iso.resolve_in_place(&IsolationConfig::Chroot);
+        iso.resolve_in_place(&IsolationConfig::chroot());
         assert_eq!(iso, TaskIsolation::Disabled);
     }
 
     #[test]
     fn resolve_in_place_use_default() {
         let mut iso = TaskIsolation::UseDefault;
-        iso.resolve_in_place(&IsolationConfig::Chroot);
-        assert_eq!(iso, TaskIsolation::Config(IsolationConfig::Chroot));
+        iso.resolve_in_place(&IsolationConfig::chroot());
+        assert_eq!(iso, TaskIsolation::Config(IsolationConfig::chroot()));
     }
 
     // =========================================================================
@@ -366,8 +368,8 @@ mod tests {
 
     #[test]
     fn resolved_config_returns_some_for_config() {
-        let iso = TaskIsolation::Config(IsolationConfig::Chroot);
-        assert_eq!(iso.resolved_config(), Some(&IsolationConfig::Chroot));
+        let iso = TaskIsolation::Config(IsolationConfig::chroot());
+        assert_eq!(iso.resolved_config(), Some(&IsolationConfig::chroot()));
     }
 
     #[test]
@@ -403,8 +405,8 @@ mod tests {
     #[test]
     fn serialize_roundtrip_config_chroot() {
         assert_eq!(
-            roundtrip(&TaskIsolation::Config(IsolationConfig::Chroot)),
-            TaskIsolation::Config(IsolationConfig::Chroot)
+            roundtrip(&TaskIsolation::Config(IsolationConfig::chroot())),
+            TaskIsolation::Config(IsolationConfig::chroot())
         );
     }
 }
