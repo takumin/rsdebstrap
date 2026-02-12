@@ -14,11 +14,13 @@ use std::fs;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use camino::Utf8Path;
 use tracing::{info, warn};
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
 use crate::executor::CommandExecutor;
 use crate::isolation::mount::RootfsMounts;
+use crate::isolation::resolv_conf::RootfsResolvConf;
 
 pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
     let filter = match log_level {
@@ -97,26 +99,57 @@ fn run_pipeline_phase(
         .mount()
         .context("failed to mount filesystems in rootfs")?;
 
-    // Run the pipeline, then unmount regardless of result.
-    // Both can independently succeed or fail, so handle the 4-way error matrix:
-    // pipeline errors take priority over unmount errors.
+    // Set up resolv.conf (if configured)
+    // setup failure is handled by Drop guards for mounts cleanup
+    let mut resolv_conf = RootfsResolvConf::new(
+        &rootfs,
+        profile.defaults.isolation.resolv_conf().cloned(),
+        Utf8Path::new("/etc/resolv.conf"),
+        dry_run,
+    );
+    resolv_conf
+        .setup()
+        .context("failed to set up resolv.conf in rootfs")?;
+
+    // Run the pipeline, then tear down in reverse order:
+    // resolv_conf → mounts. Each can independently succeed or fail.
+    // Error priority: pipeline > resolv_conf > unmount.
     let pipeline_result = pipeline.run(&rootfs, executor, dry_run);
+    let resolv_result = resolv_conf.teardown();
     let unmount_result = mounts.unmount();
 
-    match (pipeline_result, unmount_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(e), Ok(())) => Err(e),
-        (Ok(()), Err(e)) => {
-            Err(e).context("failed to unmount filesystems after pipeline completed successfully")
+    match pipeline_result {
+        Err(e) => {
+            if let Err(r) = resolv_result {
+                tracing::error!("resolv.conf restore also failed: {:#}", r);
+            }
+            if let Err(u) = unmount_result {
+                tracing::error!(
+                    "unmount also failed after pipeline error: {:#}. \
+                    Drop guard will attempt cleanup.",
+                    u
+                );
+            }
+            Err(e)
         }
-        (Err(run_err), Err(umount_err)) => {
-            tracing::error!(
-                "unmount also failed after pipeline error: {:#}. \
-                Drop guard will attempt cleanup.",
-                umount_err
-            );
-            Err(run_err)
-        }
+        Ok(()) => match resolv_result {
+            Err(e) => {
+                if let Err(u) = unmount_result {
+                    tracing::error!(
+                        "unmount also failed after resolv.conf restore error: {:#}. \
+                        Drop guard will attempt cleanup.",
+                        u
+                    );
+                }
+                Err(e)
+                    .context("failed to restore resolv.conf after pipeline completed successfully")
+            }
+            Ok(()) => match unmount_result {
+                Ok(()) => Ok(()),
+                Err(e) => Err(e)
+                    .context("failed to unmount filesystems after pipeline completed successfully"),
+            },
+        },
     }
 }
 

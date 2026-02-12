@@ -99,12 +99,21 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - Note: `UseDefault` and `Inherit` produce identical behavior because `IsolationConfig` always has a default (`Chroot`). Both exist for API symmetry with `Privilege` enum.
 
 - **`IsolationConfig`** enum (`src/config.rs`) - Isolation backend configuration
-  - `Chroot { preset, mounts }` - chroot with optional filesystem mounts
+  - `Chroot { preset, mounts, resolv_conf }` - chroot with optional filesystem mounts and resolv.conf setup
   - `preset: Option<MountPreset>` — predefined mount set (e.g., `recommends`)
   - `mounts: Vec<MountEntry>` — custom mount entries
+  - `resolv_conf: Option<ResolvConfConfig>` — optional resolv.conf configuration for DNS resolution
   - `resolved_mounts()` merges preset + custom mounts (custom overrides preset at original position)
   - `has_mounts()` returns true if preset or custom mounts are specified
-  - `chroot()` convenience constructor returns default chroot (no preset, no mounts)
+  - `resolv_conf()` returns `Option<&ResolvConfConfig>`
+  - `chroot()` convenience constructor returns default chroot (no preset, no mounts, no resolv_conf)
+
+- **`ResolvConfConfig`** struct (`src/config.rs`) - resolv.conf configuration
+  - `copy: bool` — copy host's /etc/resolv.conf into the chroot (following symlinks)
+  - `name_servers: Vec<IpAddr>` — explicit nameserver IP addresses
+  - `search: Vec<String>` — search domains
+  - `copy: true` and `name_servers`/`search` are mutually exclusive
+  - `validate()` enforces resolv.conf spec limits (max 3 nameservers, max 6 search domains, 256 char total)
 
 - **`MountEntry`** struct (`src/config.rs`) - Filesystem mount specification
   - Fields: `source` (device/path), `target` (absolute path in rootfs), `options` (mount -o flags)
@@ -124,6 +133,15 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - `unmount()` is idempotent, collects errors from all entries
   - `Drop` impl guarantees cleanup even on error paths
   - Used by `run_pipeline_phase()` to bracket the entire pipeline execution
+
+- **`RootfsResolvConf`** struct (`src/isolation/resolv_conf.rs`) - RAII resolv.conf lifecycle manager
+  - `setup()` backs up existing resolv.conf, writes new content (copy from host or generate)
+  - `teardown()` restores original resolv.conf from backup
+  - Write failure triggers rename rollback to prevent data loss
+  - Drop guard ensures cleanup even on error paths
+  - `host_resolv_conf` parameter enables test-time host path injection
+  - Validates `/etc` is not a symlink, checks for leftover backup files
+  - Used by `run_pipeline_phase()` between mount and pipeline execution
 
 - **`safe_create_mount_point()`** fn (`src/isolation/mount.rs`) - Symlink-safe directory creation
   - Opens rootfs with `O_NOFOLLOW` to verify it's not a symlink
@@ -158,6 +176,11 @@ defaults:                   # Optional default settings
       - source: /dev
         target: /dev
         options: [bind]
+    resolv_conf:            # Optional: resolv.conf setup for DNS in chroot
+      copy: true            # Copy host's /etc/resolv.conf
+      # OR
+      # name_servers: [8.8.8.8]  # Generate with explicit nameservers
+      # search: [example.com]    # Optional search domains
   privilege:                # Optional default privilege escalation
     method: sudo            # Method: sudo | doas
   mitamae:                  # Optional mitamae defaults
@@ -208,6 +231,13 @@ post_processors:            # Optional post-provisioning steps
 - `isolation: false` → `Disabled`: no isolation (direct execution on host via `DirectProvider`)
 - `isolation: { type: chroot }` → `Config`: use the specified isolation backend explicitly
 
+#### resolv_conf field values
+
+- Absent (field not specified) → no resolv.conf setup
+- `resolv_conf: { copy: true }` → copy host's /etc/resolv.conf into the chroot
+- `resolv_conf: { name_servers: [...] }` → generate resolv.conf with specified nameservers
+- `resolv_conf: { name_servers: [...], search: [...] }` → generate with nameservers + search domains
+
 #### Mount configuration rules
 
 - Mounts are configured at profile level (`defaults.isolation`), not at task level
@@ -217,6 +247,7 @@ post_processors:            # Optional post-provisioning steps
 - Mount order must satisfy parent-before-child ordering
 - Custom mounts override preset entries with the same target at their original position (preserving mount order)
 - `RootfsMounts` handles mount/unmount lifecycle around the entire pipeline phase
+- `RootfsResolvConf` handles resolv.conf setup/restore between mount and pipeline execution
 
 ### Testing Pattern
 

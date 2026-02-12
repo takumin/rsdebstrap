@@ -32,6 +32,7 @@ static DEFAULT_ISOLATION_CONFIG: LazyLock<IsolationConfig> =
 pub mod chroot;
 pub mod direct;
 pub mod mount;
+pub mod resolv_conf;
 
 pub use chroot::{ChrootContext, ChrootProvider};
 pub use direct::{DirectContext, DirectProvider};

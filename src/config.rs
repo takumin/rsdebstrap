@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
+use std::net::IpAddr;
 use std::sync::LazyLock;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -81,6 +82,85 @@ impl MountPreset {
                 },
             ],
         }
+    }
+}
+
+/// Configuration for resolv.conf setup within a chroot.
+///
+/// Supports two mutually exclusive modes:
+/// - `copy: true` — copies the host's /etc/resolv.conf into the chroot
+/// - `name_servers` / `search` — generates resolv.conf from explicit values
+///
+/// Limits follow the resolv.conf specification: max 3 nameservers,
+/// max 6 search domains (total 256 characters).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvConfConfig {
+    /// Copy host's /etc/resolv.conf into the chroot (following symlinks).
+    #[serde(default)]
+    pub copy: bool,
+    /// Nameserver IP addresses to write to resolv.conf.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub name_servers: Vec<IpAddr>,
+    /// Search domains to write to resolv.conf.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search: Vec<String>,
+}
+
+impl ResolvConfConfig {
+    /// Validates the resolv.conf configuration.
+    ///
+    /// Checks mutual exclusivity of `copy` vs `name_servers`/`search`,
+    /// and enforces resolv.conf specification limits.
+    pub fn validate(&self) -> Result<(), RsdebstrapError> {
+        if self.copy && !self.name_servers.is_empty() {
+            return Err(RsdebstrapError::Validation(
+                "resolv_conf: 'copy: true' and 'name_servers' are mutually exclusive".to_string(),
+            ));
+        }
+        if self.copy && !self.search.is_empty() {
+            return Err(RsdebstrapError::Validation(
+                "resolv_conf: 'copy: true' and 'search' are mutually exclusive".to_string(),
+            ));
+        }
+        if !self.copy && self.name_servers.is_empty() {
+            return Err(RsdebstrapError::Validation(
+                "resolv_conf: 'name_servers' is required when 'copy' is not enabled".to_string(),
+            ));
+        }
+        if self.name_servers.len() > 3 {
+            return Err(RsdebstrapError::Validation(format!(
+                "resolv_conf: at most 3 nameservers allowed (got {})",
+                self.name_servers.len()
+            )));
+        }
+        if self.search.len() > 6 {
+            return Err(RsdebstrapError::Validation(format!(
+                "resolv_conf: at most 6 search domains allowed (got {})",
+                self.search.len()
+            )));
+        }
+        let total_search_len: usize = self.search.iter().map(|s| s.len()).sum::<usize>()
+            + self.search.len().saturating_sub(1); // spaces between domains
+        if total_search_len > 256 {
+            return Err(RsdebstrapError::Validation(format!(
+                "resolv_conf: search domains total length exceeds 256 characters (got {})",
+                total_search_len
+            )));
+        }
+        for domain in &self.search {
+            if domain.trim().is_empty() {
+                return Err(RsdebstrapError::Validation(
+                    "resolv_conf: search domain must not be empty".to_string(),
+                ));
+            }
+            if domain.contains(' ') {
+                return Err(RsdebstrapError::Validation(format!(
+                    "resolv_conf: search domain '{}' must not contain spaces",
+                    domain
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -277,6 +357,9 @@ pub enum IsolationConfig {
         /// Custom mount entries.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         mounts: Vec<MountEntry>,
+        /// Optional resolv.conf configuration for DNS resolution inside chroot.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolv_conf: Option<ResolvConfConfig>,
     },
     // Future: Bwrap(BwrapConfig), Nspawn(NspawnConfig)
 }
@@ -286,6 +369,7 @@ impl Default for IsolationConfig {
         Self::Chroot {
             preset: None,
             mounts: vec![],
+            resolv_conf: None,
         }
     }
 }
@@ -304,7 +388,7 @@ impl IsolationConfig {
     /// Non-overlapping custom mounts are appended in YAML definition order.
     pub fn resolved_mounts(&self) -> Vec<MountEntry> {
         match self {
-            Self::Chroot { preset, mounts } => {
+            Self::Chroot { preset, mounts, .. } => {
                 let mut preset_entries =
                     preset.as_ref().map(|p| p.to_entries()).unwrap_or_default();
 
@@ -341,7 +425,14 @@ impl IsolationConfig {
     /// Returns true if this config has any mount entries (preset or custom).
     pub fn has_mounts(&self) -> bool {
         match self {
-            Self::Chroot { preset, mounts } => preset.is_some() || !mounts.is_empty(),
+            Self::Chroot { preset, mounts, .. } => preset.is_some() || !mounts.is_empty(),
+        }
+    }
+
+    /// Returns the resolv.conf configuration, if any.
+    pub fn resolv_conf(&self) -> Option<&ResolvConfConfig> {
+        match self {
+            Self::Chroot { resolv_conf, .. } => resolv_conf.as_ref(),
         }
     }
 
@@ -425,6 +516,11 @@ impl Profile {
 
         // Validate mounts configuration
         self.validate_mounts()?;
+
+        // Validate resolv_conf configuration
+        if let Some(resolv_conf) = self.defaults.isolation.resolv_conf() {
+            resolv_conf.validate()?;
+        }
 
         // Validate all tasks across phases
         let pipeline = self.pipeline();
@@ -1095,6 +1191,7 @@ mod tests {
         let config = IsolationConfig::Chroot {
             preset: Some(MountPreset::Recommends),
             mounts: vec![],
+            resolv_conf: None,
         };
         let mounts = config.resolved_mounts();
         assert_eq!(mounts.len(), 6);
@@ -1109,6 +1206,7 @@ mod tests {
                 target: "/proc".into(),
                 options: vec![],
             }],
+            resolv_conf: None,
         };
         let mounts = config.resolved_mounts();
         assert_eq!(mounts.len(), 1);
@@ -1123,6 +1221,7 @@ mod tests {
                 target: "/dev".into(),
                 options: vec!["bind".to_string()],
             }],
+            resolv_conf: None,
         };
         let mounts = config.resolved_mounts();
 
@@ -1142,6 +1241,7 @@ mod tests {
             IsolationConfig::Chroot {
                 preset: Some(MountPreset::Recommends),
                 mounts: vec![],
+                resolv_conf: None,
             }
             .has_mounts()
         );
@@ -1153,6 +1253,7 @@ mod tests {
                     target: "/proc".into(),
                     options: vec![],
                 }],
+                resolv_conf: None,
             }
             .has_mounts()
         );
@@ -1163,7 +1264,7 @@ mod tests {
         let yaml = "type: chroot\npreset: recommends\n";
         let config: IsolationConfig = serde_yaml::from_str(yaml).unwrap();
         match config {
-            IsolationConfig::Chroot { preset, mounts } => {
+            IsolationConfig::Chroot { preset, mounts, .. } => {
                 assert_eq!(preset, Some(MountPreset::Recommends));
                 assert!(mounts.is_empty());
             }
@@ -1175,7 +1276,7 @@ mod tests {
         let yaml = "type: chroot\nmounts:\n  - source: proc\n    target: /proc\n";
         let config: IsolationConfig = serde_yaml::from_str(yaml).unwrap();
         match config {
-            IsolationConfig::Chroot { preset, mounts } => {
+            IsolationConfig::Chroot { preset, mounts, .. } => {
                 assert!(preset.is_none());
                 assert_eq!(mounts.len(), 1);
                 assert_eq!(mounts[0].source, "proc");
@@ -1192,6 +1293,7 @@ mod tests {
                 target: "/dev".into(),
                 options: vec!["bind".to_string()],
             }],
+            resolv_conf: None,
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
         let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
@@ -1358,6 +1460,7 @@ mod tests {
                 target: "/dev".into(),
                 options: vec!["bind".to_string()],
             }],
+            resolv_conf: None,
         };
         let mounts = config.resolved_mounts();
         assert_eq!(mounts.len(), 6);
@@ -1398,6 +1501,7 @@ mod tests {
                     options: vec!["bind".to_string()],
                 },
             ],
+            resolv_conf: None,
         };
         let mounts = config.resolved_mounts();
         assert_eq!(mounts.len(), 6);
@@ -1423,6 +1527,7 @@ mod tests {
                 target: "/var/tmp".into(),
                 options: vec![],
             }],
+            resolv_conf: None,
         };
         let mounts = config.resolved_mounts();
         // 6 preset entries + 1 new custom = 7
@@ -1452,5 +1557,267 @@ mod tests {
         let err = entry.validate().unwrap_err();
         assert!(matches!(err, RsdebstrapError::Validation(_)));
         assert!(err.to_string().contains(".."));
+    }
+
+    // =========================================================================
+    // ResolvConfConfig tests
+    // =========================================================================
+
+    #[test]
+    fn test_resolv_conf_deserialize_copy() {
+        let yaml = "copy: true";
+        let config: ResolvConfConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.copy);
+        assert!(config.name_servers.is_empty());
+        assert!(config.search.is_empty());
+    }
+
+    #[test]
+    fn test_resolv_conf_deserialize_name_servers() {
+        let yaml = "name_servers:\n  - 127.0.0.1\n";
+        let config: ResolvConfConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.copy);
+        assert_eq!(config.name_servers.len(), 1);
+        assert_eq!(config.name_servers[0].to_string(), "127.0.0.1");
+    }
+
+    #[test]
+    fn test_resolv_conf_deserialize_ipv6() {
+        let yaml = "name_servers:\n  - '::1'\nsearch:\n  - example.com\n";
+        let config: ResolvConfConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.name_servers[0].to_string(), "::1");
+        assert_eq!(config.search, vec!["example.com"]);
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_copy_and_name_servers_conflict() {
+        let config = ResolvConfConfig {
+            copy: true,
+            name_servers: vec!["8.8.8.8".parse().unwrap()],
+            search: vec![],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_copy_and_search_conflict() {
+        let config = ResolvConfConfig {
+            copy: true,
+            name_servers: vec![],
+            search: vec!["example.com".to_string()],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_empty_config() {
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec![],
+            search: vec![],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("name_servers"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_search_only_requires_nameservers() {
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec![],
+            search: vec!["example.com".to_string()],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("name_servers"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_too_many_nameservers() {
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec![
+                "8.8.8.8".parse().unwrap(),
+                "8.8.4.4".parse().unwrap(),
+                "1.1.1.1".parse().unwrap(),
+                "1.0.0.1".parse().unwrap(),
+            ],
+            search: vec![],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("at most 3"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_too_many_search_domains() {
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec!["8.8.8.8".parse().unwrap()],
+            search: vec![
+                "a.com".to_string(),
+                "b.com".to_string(),
+                "c.com".to_string(),
+                "d.com".to_string(),
+                "e.com".to_string(),
+                "f.com".to_string(),
+                "g.com".to_string(),
+            ],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("at most 6"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_search_total_length_exceeded() {
+        // Create 6 domains with very long names that exceed 256 chars total
+        let long_domain = "a".repeat(50);
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec!["8.8.8.8".parse().unwrap()],
+            search: vec![long_domain; 6],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("256"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_empty_search_domain() {
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec!["8.8.8.8".parse().unwrap()],
+            search: vec!["".to_string()],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_search_domain_with_space() {
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec!["8.8.8.8".parse().unwrap()],
+            search: vec!["example .com".to_string()],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("spaces"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_valid_copy() {
+        let config = ResolvConfConfig {
+            copy: true,
+            name_servers: vec![],
+            search: vec![],
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_valid_nameservers_and_search() {
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec!["8.8.8.8".parse().unwrap()],
+            search: vec!["example.com".to_string()],
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_valid_max_nameservers() {
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec![
+                "8.8.8.8".parse().unwrap(),
+                "8.8.4.4".parse().unwrap(),
+                "1.1.1.1".parse().unwrap(),
+            ],
+            search: vec![],
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_resolv_conf_accessor_none() {
+        let config = IsolationConfig::chroot();
+        assert!(config.resolv_conf().is_none());
+    }
+
+    #[test]
+    fn test_resolv_conf_accessor_some() {
+        let config = IsolationConfig::Chroot {
+            preset: None,
+            mounts: vec![],
+            resolv_conf: Some(ResolvConfConfig {
+                copy: true,
+                name_servers: vec![],
+                search: vec![],
+            }),
+        };
+        let rc = config.resolv_conf().unwrap();
+        assert!(rc.copy);
+    }
+
+    #[test]
+    fn test_resolv_conf_serialize_deserialize_roundtrip() {
+        use std::net::IpAddr;
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec![
+                "8.8.8.8".parse::<IpAddr>().unwrap(),
+                "::1".parse::<IpAddr>().unwrap(),
+            ],
+            search: vec!["example.com".to_string()],
+        };
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let deserialized: ResolvConfConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(config, deserialized);
+    }
+
+    #[test]
+    fn test_isolation_config_with_resolv_conf_deserialize() {
+        let yaml = "type: chroot\nresolv_conf:\n  copy: true\n";
+        let config: IsolationConfig = serde_yaml::from_str(yaml).unwrap();
+        let rc = config.resolv_conf().unwrap();
+        assert!(rc.copy);
+    }
+
+    #[test]
+    fn test_isolation_config_without_resolv_conf_deserialize() {
+        let yaml = "type: chroot\n";
+        let config: IsolationConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.resolv_conf().is_none());
+    }
+
+    #[test]
+    fn test_isolation_config_serialize_skips_none_resolv_conf() {
+        let config = IsolationConfig::chroot();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(!yaml.contains("resolv_conf"));
+    }
+
+    #[test]
+    fn test_isolation_config_with_resolv_conf_roundtrip() {
+        let config = IsolationConfig::Chroot {
+            preset: Some(MountPreset::Recommends),
+            mounts: vec![],
+            resolv_conf: Some(ResolvConfConfig {
+                copy: false,
+                name_servers: vec!["8.8.8.8".parse().unwrap()],
+                search: vec!["example.com".to_string()],
+            }),
+        };
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(config, deserialized);
     }
 }
