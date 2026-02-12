@@ -112,15 +112,18 @@ impl ResolvConfConfig {
     /// Checks mutual exclusivity of `copy` vs `name_servers`/`search`,
     /// and enforces resolv.conf specification limits.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        if self.copy && !self.name_servers.is_empty() {
-            return Err(RsdebstrapError::Validation(
-                "resolv_conf: 'copy: true' and 'name_servers' are mutually exclusive".to_string(),
-            ));
-        }
-        if self.copy && !self.search.is_empty() {
-            return Err(RsdebstrapError::Validation(
-                "resolv_conf: 'copy: true' and 'search' are mutually exclusive".to_string(),
-            ));
+        if self.copy {
+            if !self.name_servers.is_empty() {
+                return Err(RsdebstrapError::Validation(
+                    "resolv_conf: 'copy: true' and 'name_servers' are mutually exclusive"
+                        .to_string(),
+                ));
+            }
+            if !self.search.is_empty() {
+                return Err(RsdebstrapError::Validation(
+                    "resolv_conf: 'copy: true' and 'search' are mutually exclusive".to_string(),
+                ));
+            }
         }
         if !self.copy && self.name_servers.is_empty() {
             return Err(RsdebstrapError::Validation(
@@ -152,6 +155,12 @@ impl ResolvConfConfig {
                 return Err(RsdebstrapError::Validation(
                     "resolv_conf: search domain must not be empty".to_string(),
                 ));
+            }
+            if domain.contains('\n') || domain.contains('\r') {
+                return Err(RsdebstrapError::Validation(format!(
+                    "resolv_conf: search domain '{}' must not contain newline characters",
+                    domain.escape_default()
+                )));
             }
             if domain.contains(' ') {
                 return Err(RsdebstrapError::Validation(format!(

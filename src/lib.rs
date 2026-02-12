@@ -120,39 +120,33 @@ fn run_pipeline_phase(
     let resolv_result = resolv_conf.teardown();
     let unmount_result = mounts.unmount();
 
-    match pipeline_result {
-        Err(e) => {
-            if let Err(r) = resolv_result {
-                tracing::error!("resolv.conf restore also failed: {:#}", r);
-            }
-            if let Err(u) = unmount_result {
-                tracing::error!(
-                    "unmount also failed after pipeline error: {:#}. \
-                    Drop guard will attempt cleanup.",
-                    u
-                );
-            }
-            Err(e)
+    if let Err(e) = pipeline_result {
+        if let Err(r) = resolv_result {
+            tracing::error!("resolv.conf restore also failed: {:#}", r);
         }
-        Ok(()) => match resolv_result {
-            Err(e) => {
-                if let Err(u) = unmount_result {
-                    tracing::error!(
-                        "unmount also failed after resolv.conf restore error: {:#}. \
-                        Drop guard will attempt cleanup.",
-                        u
-                    );
-                }
-                Err(e)
-                    .context("failed to restore resolv.conf after pipeline completed successfully")
-            }
-            Ok(()) => match unmount_result {
-                Ok(()) => Ok(()),
-                Err(e) => Err(e)
-                    .context("failed to unmount filesystems after pipeline completed successfully"),
-            },
-        },
+        if let Err(u) = unmount_result {
+            tracing::error!(
+                "unmount also failed after pipeline error: {:#}. \
+                Drop guard will attempt cleanup.",
+                u
+            );
+        }
+        return Err(e);
     }
+
+    if let Err(e) = resolv_result {
+        if let Err(u) = unmount_result {
+            tracing::error!(
+                "unmount also failed after resolv.conf restore error: {:#}. \
+                Drop guard will attempt cleanup.",
+                u
+            );
+        }
+        return Err(e)
+            .context("failed to restore resolv.conf after pipeline completed successfully");
+    }
+
+    unmount_result.context("failed to unmount filesystems after pipeline completed successfully")
 }
 
 pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {

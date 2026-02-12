@@ -2234,3 +2234,79 @@ bootstrap:
 
     Ok(())
 }
+
+#[test]
+fn test_profile_validation_rejects_resolv_conf_search_with_newline() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    resolv_conf:
+      name_servers:
+        - 8.8.8.8
+      search:
+        - "evil.com\nnameserver 6.6.6.6"
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("newline"),
+        "Expected error about newline characters, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_resolv_conf_search_with_carriage_return() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    resolv_conf:
+      name_servers:
+        - 8.8.8.8
+      search:
+        - "evil.com\rnameserver 6.6.6.6"
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("newline"),
+        "Expected error about newline characters, got: {}",
+        err
+    );
+
+    Ok(())
+}

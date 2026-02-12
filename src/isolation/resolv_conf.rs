@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
+use rustix::fs::{self as rfs, CWD, Mode, OFlags};
 use tracing::info;
 
 use crate::config::ResolvConfConfig;
@@ -126,20 +127,26 @@ impl RootfsResolvConf {
 
         let etc = self.etc_path();
 
-        // Validate /etc exists and is not a symlink
-        let etc_metadata = fs::symlink_metadata(&etc)
-            .map_err(|e| RsdebstrapError::io(format!("failed to read metadata: {}", etc), e))?;
-        if etc_metadata.file_type().is_symlink() {
-            return Err(RsdebstrapError::Isolation(format!(
-                "{} is a symlink, refusing to set up resolv.conf \
-                (possible symlink attack)",
-                etc
-            ))
-            .into());
-        }
-        if !etc_metadata.is_dir() {
-            return Err(RsdebstrapError::Isolation(format!("{} is not a directory", etc)).into());
-        }
+        // Validate /etc exists and is not a symlink (fd-based, avoids TOCTOU with symlink_metadata)
+        // Note: A TOCTOU window remains between this fd-based check and subsequent
+        // command execution via CommandExecutor, as external commands (mv, cp) operate
+        // on path strings. This is inherent when using privilege escalation commands.
+        let _etc_fd = rfs::openat(
+            CWD,
+            etc.as_str(),
+            OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| match e {
+            rustix::io::Errno::LOOP | rustix::io::Errno::NOTDIR => {
+                RsdebstrapError::Isolation(format!(
+                    "{} is a symlink or not a directory, refusing to set up resolv.conf \
+                    (possible symlink attack)",
+                    etc
+                ))
+            }
+            _ => RsdebstrapError::io(format!("failed to open {}", etc), std::io::Error::from(e)),
+        })?;
 
         let resolv_path = self.resolv_conf_path();
         let backup_path = self.backup_path();
