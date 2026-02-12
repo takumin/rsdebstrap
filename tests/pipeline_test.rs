@@ -74,7 +74,7 @@ fn inline_task_direct(content: &str) -> TaskDefinition {
     let yaml = format!("content: \"{}\"\nisolation: false\n", content);
     let mut task: ShellTask = serde_yaml::from_str(&yaml).unwrap();
     task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::Chroot); // Disabled stays Disabled
+    task.resolve_isolation(&IsolationConfig::chroot()); // Disabled stays Disabled
     TaskDefinition::Shell(task)
 }
 

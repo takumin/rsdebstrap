@@ -1,0 +1,39 @@
+---
+# Example profile with custom mount entries and preset override
+# Custom mounts can be combined with presets. When both are specified,
+# custom entries with the same target override preset entries.
+
+dir: /tmp/debian-trixie-custom-mounts
+
+defaults:
+  isolation:
+    type: chroot
+    # Use recommends preset as a base
+    preset: recommends
+    # Add custom mounts (overrides preset entry for /dev with bind mount)
+    mounts:
+    - source: /dev
+      target: /dev
+      options: [bind]
+  privilege:
+    method: sudo
+
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+  mirrors:
+  - https://deb.debian.org/debian
+  variant: apt
+  components:
+  - main
+  architectures:
+  - amd64
+
+provisioners:
+- type: shell
+  content: |-
+    #!/bin/sh
+    set -e
+    apt-get update
+    apt-get install -y build-essential

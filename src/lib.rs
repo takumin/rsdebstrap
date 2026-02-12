@@ -18,6 +18,7 @@ use tracing::{info, warn};
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
 use crate::executor::CommandExecutor;
+use crate::isolation::mount::RootfsMounts;
 
 pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
     let filter = match log_level {
@@ -87,7 +88,36 @@ fn run_pipeline_phase(
         .into());
     };
 
-    pipeline.run(&rootfs, executor, dry_run)
+    // Set up filesystem mounts (if configured)
+    let mount_entries = profile.defaults.isolation.resolved_mounts();
+    let privilege = profile.defaults.privilege.as_ref().map(|d| d.method);
+    let mut mounts =
+        RootfsMounts::new(&rootfs, mount_entries, executor.clone(), privilege, dry_run);
+    mounts
+        .mount()
+        .context("failed to mount filesystems in rootfs")?;
+
+    // Run the pipeline, then unmount regardless of result.
+    // Both can independently succeed or fail, so handle the 4-way error matrix:
+    // pipeline errors take priority over unmount errors.
+    let pipeline_result = pipeline.run(&rootfs, executor, dry_run);
+    let unmount_result = mounts.unmount();
+
+    match (pipeline_result, unmount_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(e), Ok(())) => Err(e),
+        (Ok(()), Err(e)) => {
+            Err(e).context("failed to unmount filesystems after pipeline completed successfully")
+        }
+        (Err(run_err), Err(umount_err)) => {
+            tracing::error!(
+                "unmount also failed after pipeline error: {:#}. \
+                Drop guard will attempt cleanup.",
+                umount_err
+            );
+            Err(run_err)
+        }
+    }
 }
 
 pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {

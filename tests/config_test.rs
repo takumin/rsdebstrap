@@ -581,7 +581,7 @@ bootstrap:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot));
+    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot { .. }));
 
     Ok(())
 }
@@ -602,7 +602,7 @@ bootstrap:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot));
+    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot { .. }));
 
     Ok(())
 }
@@ -1549,7 +1549,7 @@ provisioners:
         TaskDefinition::Shell(task) => {
             assert_eq!(
                 task.resolved_isolation_config(),
-                Some(&IsolationConfig::Chroot),
+                Some(&IsolationConfig::chroot()),
                 "Absent isolation should resolve to Chroot from defaults"
             );
         }
@@ -1583,7 +1583,7 @@ provisioners:
         TaskDefinition::Shell(task) => {
             assert_eq!(
                 task.resolved_isolation_config(),
-                Some(&IsolationConfig::Chroot),
+                Some(&IsolationConfig::chroot()),
                 "isolation: true should resolve to Chroot from defaults"
             );
         }
@@ -1651,7 +1651,7 @@ provisioners:
         TaskDefinition::Shell(task) => {
             assert_eq!(
                 task.resolved_isolation_config(),
-                Some(&IsolationConfig::Chroot),
+                Some(&IsolationConfig::chroot()),
                 "isolation: {{type: chroot}} should resolve to Chroot"
             );
         }
@@ -1738,7 +1738,7 @@ provisioners:
 
     match &profile.provisioners[0] {
         TaskDefinition::Shell(task) => {
-            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::Chroot));
+            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
@@ -1750,10 +1750,300 @@ provisioners:
     }
     match &profile.provisioners[2] {
         TaskDefinition::Shell(task) => {
-            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::Chroot));
+            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
+
+    Ok(())
+}
+
+// =============================================================================
+// Mount configuration tests
+// =============================================================================
+
+#[test]
+fn test_load_profile_with_isolation_preset() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    preset: recommends
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    use rsdebstrap::config::IsolationConfig;
+    match &profile.defaults.isolation {
+        IsolationConfig::Chroot { preset, .. } => {
+            assert!(preset.is_some(), "Expected preset to be set");
+        }
+    }
+
+    let mounts = profile.defaults.isolation.resolved_mounts();
+    assert_eq!(mounts.len(), 6, "Recommends preset should have 6 entries");
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_with_custom_mounts() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    mounts:
+      - source: proc
+        target: /proc
+      - source: sysfs
+        target: /sys
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let mounts = profile.defaults.isolation.resolved_mounts();
+    assert_eq!(mounts.len(), 2);
+    assert_eq!(mounts[0].source, "proc");
+    assert_eq!(mounts[1].source, "sysfs");
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_with_preset_and_custom_mounts() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    preset: recommends
+    mounts:
+      - source: /dev
+        target: /dev
+        options:
+          - bind
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let mounts = profile.defaults.isolation.resolved_mounts();
+    // Recommends has 6, custom replaces /dev entry => 6
+    assert_eq!(mounts.len(), 6);
+
+    // The /dev entry should be the custom bind mount
+    let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
+    assert_eq!(dev_entry.source, "/dev");
+    assert!(dev_entry.options.contains(&"bind".to_string()), "Expected bind option");
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_mounts_require_privilege() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    preset: recommends
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("privilege"),
+        "Expected error about privilege, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_task_level_mounts() -> Result<()> {
+    // editorconfig-checker-disable
+    let err = helpers::load_profile_from_yaml_typed(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provisioners:
+  - type: shell
+    content: echo "hello"
+    isolation:
+      type: chroot
+      preset: recommends
+"#
+    ))
+    .unwrap_err();
+    // editorconfig-checker-enable
+
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("task-level isolation"),
+        "Expected error about task-level isolation, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_mount_order_error() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    mounts:
+      - source: devpts
+        target: /dev/pts
+      - source: devtmpfs
+        target: /dev
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("mount order"),
+        "Expected error about mount order, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_accepts_mounts_with_privilege() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    mounts:
+      - source: proc
+        target: /proc
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert!(profile.validate().is_ok());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_pseudo_fs_with_bind_mount() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    mounts:
+      - source: proc
+        target: /proc
+        options:
+          - bind
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("pseudo-filesystem"),
+        "Expected error about pseudo-filesystem, got: {}",
+        err
+    );
 
     Ok(())
 }

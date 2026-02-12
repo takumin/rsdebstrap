@@ -148,6 +148,11 @@ impl ShellTask {
         self.privilege.resolve_in_place(defaults)
     }
 
+    /// Returns a reference to the task's isolation setting.
+    pub fn task_isolation(&self) -> &TaskIsolation {
+        &self.isolation
+    }
+
     /// Resolves the isolation setting against profile defaults.
     pub fn resolve_isolation(&mut self, defaults: &IsolationConfig) {
         self.isolation.resolve_in_place(defaults);
