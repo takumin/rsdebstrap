@@ -105,6 +105,8 @@ fn run_pipeline_phase(
         &rootfs,
         profile.defaults.isolation.resolv_conf().cloned(),
         Utf8Path::new("/etc/resolv.conf"),
+        executor.clone(),
+        privilege,
         dry_run,
     );
     resolv_conf
