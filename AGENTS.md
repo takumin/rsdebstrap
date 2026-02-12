@@ -111,6 +111,8 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - `is_pseudo_fs()` — checks if source is a known pseudo-filesystem (proc, sysfs, etc.)
   - `is_bind_mount()` — checks if options contain "bind"
   - `build_mount_spec()` / `build_umount_spec()` — construct `CommandSpec` for mount/umount commands
+  - `build_mount_spec_with_path()` — like `build_mount_spec()` but accepts a pre-validated absolute target path
+  - `validate()` checks `..` components in targets, bind mount sources, and regular mount sources
   - Pseudo-fs uses `mount -t <type>`, bind mounts use `mount -o bind`
 
 - **`MountPreset`** enum (`src/config.rs`) - Predefined mount sets
@@ -118,10 +120,18 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
 
 - **`RootfsMounts`** struct (`src/isolation/mount.rs`) - RAII mount lifecycle manager
   - Mounts entries in order, unmounts in reverse order
-  - `mount()` creates directories and mounts, with partial unmount on failure
+  - `mount()` uses `safe_create_mount_point()` to create directories with `openat`/`mkdirat` + `O_NOFOLLOW` (TOCTOU-safe)
+  - Stores verified absolute paths in `mounted_paths: Vec<Option<Utf8PathBuf>>` and reuses them for `umount` (avoids re-traversal)
   - `unmount()` is idempotent, collects errors from all entries
   - `Drop` impl guarantees cleanup even on error paths
   - Used by `run_pipeline_phase()` to bracket the entire pipeline execution
+
+- **`safe_create_mount_point()`** fn (`src/isolation/mount.rs`) - Symlink-safe directory creation
+  - Opens rootfs with `O_NOFOLLOW` to verify it's not a symlink
+  - Traverses each path component with `openat(O_NOFOLLOW)`, creates missing dirs with `mkdirat`
+  - Returns `ELOOP`/`ENOTDIR` → `RsdebstrapError::Isolation` on symlink detection
+  - Handles race conditions (`EEXIST` on `mkdirat` → re-open)
+  - Uses `rustix` crate (transitive dependency via `which`) for memory-safe syscall wrappers
 
 - **`IsolationProvider`** / **`IsolationContext`** traits (`src/isolation/mod.rs`) - Isolation backends
   - `ChrootProvider` / `ChrootContext` - chroot-based isolation

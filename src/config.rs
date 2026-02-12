@@ -135,6 +135,35 @@ impl MountEntry {
         CommandSpec::new("mount", args).with_privilege(privilege)
     }
 
+    /// Builds a `CommandSpec` for the `mount` command using a pre-validated absolute target path.
+    ///
+    /// Unlike [`build_mount_spec()`](Self::build_mount_spec), this method accepts
+    /// an already-validated absolute path (e.g., from
+    /// [`safe_create_mount_point()`](crate::isolation::mount::safe_create_mount_point))
+    /// instead of computing it from rootfs + target.
+    pub fn build_mount_spec_with_path(
+        &self,
+        abs_target: &Utf8Path,
+        privilege: Option<PrivilegeMethod>,
+    ) -> CommandSpec {
+        let mut args = Vec::new();
+
+        if self.is_pseudo_fs() {
+            args.push("-t".to_string());
+            args.push(self.source.clone());
+        }
+
+        if !self.options.is_empty() {
+            args.push("-o".to_string());
+            args.push(self.options.join(","));
+        }
+
+        args.push(self.source.clone());
+        args.push(abs_target.to_string());
+
+        CommandSpec::new("mount", args).with_privilege(privilege)
+    }
+
     /// Builds a `CommandSpec` for the `umount` command.
     pub fn build_umount_spec(
         &self,
@@ -195,6 +224,7 @@ impl MountEntry {
                     PSEUDO_FS_TYPES.join(", ")
                 )));
             }
+            crate::task::validate_no_parent_dirs(source_path, "mount source")?;
         }
 
         Ok(())
@@ -1359,5 +1389,45 @@ mod tests {
 
         // The merged result should pass mount order validation
         validate_mount_order(&mounts).unwrap();
+    }
+
+    #[test]
+    fn test_mount_entry_validate_rejects_regular_source_with_dotdot() {
+        let entry = MountEntry {
+            source: "/mnt/../etc".to_string(),
+            target: "/mnt".into(),
+            options: vec![],
+        };
+        let err = entry.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains(".."));
+    }
+
+    #[test]
+    fn test_mount_entry_build_mount_spec_with_path() {
+        let entry = MountEntry {
+            source: "proc".to_string(),
+            target: "/proc".into(),
+            options: vec![],
+        };
+        let spec = entry.build_mount_spec_with_path(Utf8Path::new("/verified/rootfs/proc"), None);
+        assert_eq!(spec.command, "mount");
+        assert_eq!(spec.args, vec!["-t", "proc", "proc", "/verified/rootfs/proc"]);
+    }
+
+    #[test]
+    fn test_mount_entry_build_mount_spec_with_path_bind() {
+        let entry = MountEntry {
+            source: "/dev".to_string(),
+            target: "/dev".into(),
+            options: vec!["bind".to_string()],
+        };
+        let spec = entry.build_mount_spec_with_path(
+            Utf8Path::new("/verified/rootfs/dev"),
+            Some(PrivilegeMethod::Sudo),
+        );
+        assert_eq!(spec.command, "mount");
+        assert_eq!(spec.args, vec!["-o", "bind", "/dev", "/verified/rootfs/dev"]);
+        assert_eq!(spec.privilege, Some(PrivilegeMethod::Sudo));
     }
 }

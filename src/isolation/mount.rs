@@ -3,65 +3,126 @@
 //! This module provides [`RootfsMounts`], an RAII guard that manages filesystem
 //! mounts within a rootfs directory. Mounts are set up in order and torn down
 //! in reverse order, with guaranteed cleanup via `Drop`.
+//!
+//! Mount point directories are created using `openat`/`mkdirat` with `O_NOFOLLOW`
+//! to prevent TOCTOU races between symlink validation and directory creation.
 
-use std::fs;
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
+use rustix::fs::{self as rfs, CWD, Mode, OFlags};
 use tracing::info;
 
 use crate::config::MountEntry;
 use crate::error::RsdebstrapError;
-use crate::executor::CommandExecutor;
+use crate::executor::{CommandExecutor, CommandSpec};
 use crate::privilege::PrivilegeMethod;
 
-/// Validates that no component of the target path within rootfs is a symlink.
+/// Opens a directory without following symlinks.
 ///
-/// This prevents symlink-based attacks where a malicious rootfs could redirect
-/// mount points to arbitrary locations on the host filesystem.
-fn validate_no_symlinks(rootfs: &Utf8Path, target: &Utf8Path) -> Result<()> {
+/// Returns `ELOOP` if the path is a symlink, `ENOTDIR` if it's not a directory.
+fn open_dir_nofollow(dirfd: &OwnedFd, path: &str) -> rustix::io::Result<OwnedFd> {
+    rfs::openat(
+        dirfd,
+        path,
+        OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+}
+
+/// Maps an `openat`/`mkdirat` error to a typed `RsdebstrapError`.
+fn map_openat_error(err: rustix::io::Errno, path: &Utf8Path, label: &str) -> anyhow::Error {
+    match err {
+        rustix::io::Errno::LOOP | rustix::io::Errno::NOTDIR => RsdebstrapError::Isolation(format!(
+            "symlink detected at {} while creating {}; \
+                this could allow mount point redirection outside the rootfs",
+            path, label,
+        ))
+        .into(),
+        _ => {
+            let io_err = std::io::Error::from(err);
+            RsdebstrapError::io(format!("failed to create mount point component: {}", path), io_err)
+                .into()
+        }
+    }
+}
+
+/// Creates mount point directories within rootfs using `openat`/`mkdirat` with `O_NOFOLLOW`.
+///
+/// This function atomically validates that no path component is a symlink and creates
+/// directories as needed, preventing TOCTOU races between symlink checks and `create_dir_all`.
+///
+/// The rootfs directory itself is also verified (opened with `O_NOFOLLOW`) to ensure it
+/// is not a symlink.
+///
+/// Returns the verified absolute path for use in mount/umount commands.
+pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &Utf8Path) -> Result<Utf8PathBuf> {
     let relative = target.strip_prefix("/").unwrap_or(target);
-    let mut current = rootfs.to_path_buf();
+
+    // Open rootfs with O_NOFOLLOW to verify it's not a symlink
+    let rootfs_fd = rfs::openat(
+        CWD,
+        rootfs.as_str(),
+        OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|e| map_openat_error(e, rootfs, "rootfs directory"))?;
+
+    let mut current_fd = rootfs_fd;
+    let mut current_path = rootfs.to_path_buf();
 
     for component in relative.components() {
-        current.push(component);
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) => {
-                if metadata.file_type().is_symlink() {
-                    return Err(RsdebstrapError::Isolation(format!(
-                        "symlink detected at {} in rootfs mount target path {}; \
-                        this could allow mount point redirection outside the rootfs",
-                        current, target,
-                    ))
-                    .into());
-                }
+        let name = component.as_str();
+        current_path.push(name);
+
+        // Try to open the existing directory
+        match open_dir_nofollow(&current_fd, name) {
+            Ok(fd) => {
+                current_fd = fd;
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Path doesn't exist yet; remaining components will be created by create_dir_all
-                break;
+            Err(rustix::io::Errno::NOENT) => {
+                // Directory doesn't exist, create it
+                match rfs::mkdirat(
+                    &current_fd,
+                    name,
+                    Mode::RWXU | Mode::RGRP | Mode::XGRP | Mode::ROTH | Mode::XOTH,
+                ) {
+                    Ok(()) => {}
+                    Err(rustix::io::Errno::EXIST) => {
+                        // Race: another process created it between our check and create.
+                        // Re-open it (still with O_NOFOLLOW for safety).
+                    }
+                    Err(e) => return Err(map_openat_error(e, &current_path, "mount point")),
+                }
+                // Open the just-created (or racing) directory
+                current_fd = open_dir_nofollow(&current_fd, name)
+                    .map_err(|e| map_openat_error(e, &current_path, "mount point"))?;
             }
             Err(e) => {
-                return Err(RsdebstrapError::io(
-                    format!("failed to check mount target path component: {}", current),
-                    e,
-                )
-                .into());
+                return Err(map_openat_error(e, &current_path, "mount point"));
             }
         }
     }
 
-    Ok(())
+    Ok(current_path)
 }
 
 /// RAII guard for filesystem mounts within a rootfs.
 ///
 /// Mounts are established in order and torn down in reverse order.
 /// The `Drop` implementation ensures cleanup even on error paths.
+///
+/// Mount point directories are created atomically using `openat`/`mkdirat`
+/// with `O_NOFOLLOW` to prevent TOCTOU races. Verified absolute paths are
+/// stored and reused for `umount` commands, avoiding re-traversal of
+/// potentially-tampered paths.
 pub struct RootfsMounts {
     rootfs: Utf8PathBuf,
     entries: Vec<MountEntry>,
-    mounted: Vec<bool>,
+    /// Verified absolute paths for mounted entries (`Some` = mounted, `None` = not mounted).
+    mounted_paths: Vec<Option<Utf8PathBuf>>,
     executor: Arc<dyn CommandExecutor>,
     privilege: Option<PrivilegeMethod>,
     dry_run: bool,
@@ -79,11 +140,11 @@ impl RootfsMounts {
         privilege: Option<PrivilegeMethod>,
         dry_run: bool,
     ) -> Self {
-        let mounted = vec![false; entries.len()];
+        let mounted_paths = vec![None; entries.len()];
         Self {
             rootfs: rootfs.to_owned(),
             entries,
-            mounted,
+            mounted_paths,
             executor,
             privilege,
             dry_run,
@@ -93,7 +154,7 @@ impl RootfsMounts {
 
     /// Returns the number of currently mounted entries.
     fn mounted_count(&self) -> usize {
-        self.mounted.iter().filter(|&&m| m).count()
+        self.mounted_paths.iter().filter(|p| p.is_some()).count()
     }
 
     /// Returns true if there are no mount entries.
@@ -103,11 +164,13 @@ impl RootfsMounts {
 
     /// Mounts all entries in order.
     ///
-    /// Creates mount point directories as needed (skipped in dry-run mode).
+    /// Creates mount point directories as needed using `openat`/`mkdirat` with
+    /// `O_NOFOLLOW` (skipped in dry-run mode). Verified absolute paths are stored
+    /// and reused for `umount` commands.
     /// On failure, automatically unmounts any entries that were successfully mounted.
     pub fn mount(&mut self) -> Result<()> {
         debug_assert!(
-            self.mounted.iter().all(|m| !m) && !self.torn_down,
+            self.mounted_paths.iter().all(|p| p.is_none()) && !self.torn_down,
             "mount() called on already-used RootfsMounts"
         );
 
@@ -118,32 +181,23 @@ impl RootfsMounts {
         info!("mounting {} filesystem(s) in rootfs", self.entries.len());
 
         for (i, entry) in self.entries.iter().enumerate() {
-            let abs_target = self
-                .rootfs
-                .join(entry.target.strip_prefix("/").unwrap_or(&entry.target));
-
-            // Validate no symlinks in target path before creating directories
-            if !self.dry_run
-                && let Err(e) = validate_no_symlinks(&self.rootfs, &entry.target)
-            {
-                return Err(self.cleanup_after_error(e));
-            }
-
-            // Create mount point directory if needed
-            if !self.dry_run
-                && let Err(e) = fs::create_dir_all(&abs_target)
-            {
-                return Err(self.cleanup_after_error(
-                    RsdebstrapError::io(format!("failed to create mount point: {}", abs_target), e)
-                        .into(),
-                ));
-            }
+            // Create mount point directory with symlink-safe openat/mkdirat
+            let abs_target = if self.dry_run {
+                // In dry-run mode, compute path by string concatenation (no filesystem access)
+                self.rootfs
+                    .join(entry.target.strip_prefix("/").unwrap_or(&entry.target))
+            } else {
+                match safe_create_mount_point(&self.rootfs, &entry.target) {
+                    Ok(path) => path,
+                    Err(e) => return Err(self.cleanup_after_error(e)),
+                }
+            };
 
             info!("mounting {} on {}", entry.source, entry.target);
-            let spec = entry.build_mount_spec(&self.rootfs, self.privilege);
+            let spec = entry.build_mount_spec_with_path(&abs_target, self.privilege);
             match self.executor.execute(&spec) {
                 Ok(result) if result.success() => {
-                    self.mounted[i] = true;
+                    self.mounted_paths[i] = Some(abs_target);
                 }
                 Ok(result) => {
                     let status = result
@@ -189,8 +243,9 @@ impl RootfsMounts {
     }
 
     /// Shared unmount logic called by both `unmount()` and `mount()` (for cleanup
-    /// on mount failure). Tracks per-entry state so that retries only attempt
-    /// entries that are still mounted.
+    /// on mount failure). Uses the stored verified absolute paths from `mount()`,
+    /// avoiding re-traversal of potentially-tampered paths. Tracks per-entry state
+    /// so that retries only attempt entries that are still mounted.
     fn unmount_internal(&mut self) -> Result<()> {
         let count = self.mounted_count();
         if count == 0 {
@@ -202,25 +257,26 @@ impl RootfsMounts {
         let mut errors = Vec::new();
 
         for i in (0..self.entries.len()).rev() {
-            if !self.mounted[i] {
+            let Some(abs_target) = &self.mounted_paths[i] else {
                 continue;
-            }
+            };
             let entry = &self.entries[i];
             info!("unmounting {}", entry.target);
-            let spec = entry.build_umount_spec(&self.rootfs, self.privilege);
+            let spec = CommandSpec::new("umount", vec![abs_target.to_string()])
+                .with_privilege(self.privilege);
             match self.executor.execute(&spec) {
                 Ok(result) if result.success() => {
-                    self.mounted[i] = false;
+                    self.mounted_paths[i] = None;
                 }
                 Ok(result) => {
                     let status = result
                         .status
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "unknown".to_string());
-                    errors.push(format!("umount {} failed: {}", entry.target, status));
+                    errors.push(format!("umount {} failed: {}", abs_target, status));
                 }
                 Err(e) => {
-                    errors.push(format!("umount {} failed: {}", entry.target, e));
+                    errors.push(format!("umount {} failed: {}", abs_target, e));
                 }
             }
         }
@@ -241,7 +297,7 @@ impl RootfsMounts {
 impl Drop for RootfsMounts {
     fn drop(&mut self) {
         if !self.torn_down
-            && self.mounted.iter().any(|&m| m)
+            && self.mounted_paths.iter().any(|p| p.is_some())
             && let Err(e) = self.unmount()
         {
             tracing::error!(
@@ -605,8 +661,8 @@ mod tests {
         assert!(err.to_string().contains("1 filesystem"));
 
         // /proc (index 0) was successfully unmounted, /sys (index 1) remains mounted
-        assert!(!mounts.mounted[0]);
-        assert!(mounts.mounted[1]);
+        assert!(mounts.mounted_paths[0].is_none());
+        assert!(mounts.mounted_paths[1].is_some());
     }
 
     #[test]
@@ -683,24 +739,80 @@ mod tests {
     }
 
     #[test]
-    fn validate_no_symlinks_passes_for_regular_dirs() {
+    fn safe_create_mount_point_creates_nested_directories() {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        // Create a regular directory at rootfs/proc
-        fs::create_dir_all(rootfs.join("proc")).unwrap();
-
-        let result = validate_no_symlinks(&rootfs, Utf8Path::new("/proc"));
+        let result = safe_create_mount_point(&rootfs, Utf8Path::new("/dev/pts"));
         assert!(result.is_ok());
+        let abs = result.unwrap();
+        assert_eq!(abs, rootfs.join("dev/pts"));
+        assert!(abs.exists());
     }
 
     #[test]
-    fn validate_no_symlinks_passes_for_nonexistent_path() {
+    fn safe_create_mount_point_handles_existing_directory() {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        // rootfs/proc doesn't exist — should pass (create_dir_all will create it)
-        let result = validate_no_symlinks(&rootfs, Utf8Path::new("/proc"));
+        // Create the directory first
+        std::fs::create_dir_all(rootfs.join("proc")).unwrap();
+
+        let result = safe_create_mount_point(&rootfs, Utf8Path::new("/proc"));
         assert!(result.is_ok());
+        assert_eq!(result.unwrap(), rootfs.join("proc"));
+    }
+
+    #[test]
+    fn safe_create_mount_point_rejects_symlink_at_component() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        // Create a symlink at rootfs/dev -> /tmp
+        std::os::unix::fs::symlink("/tmp", rootfs.join("dev")).unwrap();
+
+        let err = safe_create_mount_point(&rootfs, Utf8Path::new("/dev/pts")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("symlink detected"), "should detect symlink at component: {}", msg);
+    }
+
+    #[test]
+    fn safe_create_mount_point_rejects_symlink_in_rootfs() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let rootfs_link = Utf8PathBuf::from_path_buf(temp_dir.path().join("rootfs_link")).unwrap();
+        let real_dir = Utf8PathBuf::from_path_buf(temp_dir.path().join("real_rootfs")).unwrap();
+        std::fs::create_dir(&real_dir).unwrap();
+        std::os::unix::fs::symlink(&real_dir, &rootfs_link).unwrap();
+
+        let err = safe_create_mount_point(&rootfs_link, Utf8Path::new("/proc")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("symlink detected"), "should detect rootfs symlink: {}", msg);
+    }
+
+    #[test]
+    fn unmount_uses_stored_paths() {
+        let executor = Arc::new(MockMountExecutor::new());
+        let temp_dir = tempfile::tempdir().unwrap();
+        let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        mounts.mount().unwrap();
+
+        // Verify that mounted_paths contain the expected paths
+        assert!(mounts.mounted_paths[0].is_some());
+        assert!(mounts.mounted_paths[1].is_some());
+
+        let path0 = mounts.mounted_paths[0].as_ref().unwrap().clone();
+        let path1 = mounts.mounted_paths[1].as_ref().unwrap().clone();
+        assert!(path0.as_str().contains("proc"));
+        assert!(path1.as_str().contains("sys"));
+
+        mounts.unmount().unwrap();
+
+        // After unmount, the umount commands should use the stored paths
+        let calls = executor.calls();
+        // Unmount in reverse order: sys first, then proc
+        assert_eq!(calls[2][1], path1.to_string());
+        assert_eq!(calls[3][1], path0.to_string());
     }
 }
