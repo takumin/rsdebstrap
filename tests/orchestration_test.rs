@@ -39,7 +39,7 @@ fn write_yaml_tempfile(yaml: &str) -> NamedTempFile {
 }
 
 /// Minimal bootstrap-only YAML (no provisioners).
-fn bootstrap_only_yaml() -> String {
+fn bootstrap_only_yaml() -> &'static str {
     // editorconfig-checker-disable
     r#"---
 dir: /tmp/orchestration-test-bootstrap
@@ -55,12 +55,11 @@ bootstrap:
   architectures:
   - amd64
 "#
-    .to_string()
     // editorconfig-checker-enable
 }
 
 /// Minimal YAML with a provisioner (requires directory target for pipeline).
-fn provisioner_yaml() -> String {
+fn provisioner_yaml() -> &'static str {
     // editorconfig-checker-disable
     r#"---
 dir: /tmp/orchestration-test-provisioner
@@ -87,13 +86,12 @@ provisioners:
     set -e
     echo "provisioning"
 "#
-    .to_string()
     // editorconfig-checker-enable
 }
 
 #[test]
 fn run_apply_uses_executor_with_built_args() {
-    let file = write_yaml_tempfile(&bootstrap_only_yaml());
+    let file = write_yaml_tempfile(bootstrap_only_yaml());
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let opts = cli::ApplyArgs {
         common: cli::CommonArgs {
@@ -118,7 +116,7 @@ fn run_apply_uses_executor_with_built_args() {
 
 #[test]
 fn run_validate_succeeds_on_valid_profile() {
-    let file = write_yaml_tempfile(&bootstrap_only_yaml());
+    let file = write_yaml_tempfile(bootstrap_only_yaml());
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let opts = cli::ValidateArgs {
         common: cli::CommonArgs {
@@ -132,7 +130,7 @@ fn run_validate_succeeds_on_valid_profile() {
 
 #[test]
 fn run_apply_with_pipeline_tasks_uses_isolation() {
-    let file = write_yaml_tempfile(&provisioner_yaml());
+    let file = write_yaml_tempfile(provisioner_yaml());
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let opts = cli::ApplyArgs {
         common: cli::CommonArgs {
@@ -205,7 +203,7 @@ fn test_run_apply_pipeline_and_teardown_both_fail() {
     // pipeline task error is verified here. The teardown error handling path is
     // tested in pipeline_test.rs with mock contexts.
 
-    let file = write_yaml_tempfile(&provisioner_yaml());
+    let file = write_yaml_tempfile(provisioner_yaml());
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let opts = cli::ApplyArgs {
         common: cli::CommonArgs {
