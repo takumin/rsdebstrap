@@ -101,8 +101,9 @@ impl ScriptSource {
     }
 }
 
-/// Pipeline がフェーズを統一的に処理するための内部トレイト。
-/// 拡張ポイントではなく、内部の利便性のみ。
+/// Internal trait for the pipeline to process phases uniformly.
+///
+/// This is not an extension point, but for internal convenience only.
 pub(crate) trait PhaseItem: std::fmt::Debug {
     fn name(&self) -> Cow<'_, str>;
     fn validate(&self) -> Result<(), RsdebstrapError>;

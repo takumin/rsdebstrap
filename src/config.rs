@@ -675,9 +675,10 @@ fn parse_profile_yaml(
 fn validate_task_isolation_no_mounts(profile: &Profile) -> Result<(), RsdebstrapError> {
     use crate::isolation::TaskIsolation;
 
-    // Check provision tasks for task-level mounts
-    // (prepare and assemble are currently empty enums, so iteration is a no-op,
-    // but included for future-proofing)
+    // Check provision tasks for task-level mounts.
+    // NOTE: This check currently only applies to the 'provision' phase.
+    // If 'prepare' or 'assemble' phases gain tasks with isolation settings
+    // in the future, this function MUST be updated to check them as well.
     for (index, task) in profile.provision.iter().enumerate() {
         if let TaskIsolation::Config(config) = task.task_isolation()
             && config.has_mounts()
