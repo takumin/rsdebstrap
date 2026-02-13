@@ -5,7 +5,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::bootstrap::mmdebstrap::{self, Format};
 use rsdebstrap::config::load_profile;
-use rsdebstrap::task::TaskDefinition;
+use rsdebstrap::phase::ProvisionTask;
 use tempfile::tempdir;
 
 #[test]
@@ -238,7 +238,7 @@ bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs.tar.zst
-provisioners:
+provision:
   - type: shell
 "#
     ));
@@ -266,7 +266,7 @@ bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs.tar.zst
-provisioners:
+provision:
   - type: shell
     script: /tmp/provision.sh
     content: echo "hello"
@@ -325,7 +325,7 @@ bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs.tar.zst
-provisioners:
+provision:
   - type: shell
     script: scripts/provision.sh
 "#
@@ -336,8 +336,8 @@ provisioners:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    match profile.provisioners.as_slice() {
-        [TaskDefinition::Shell(shell)] => {
+    match profile.provision.as_slice() {
+        [ProvisionTask::Shell(shell)] => {
             assert_eq!(
                 shell.script_path().unwrap().canonicalize_utf8()?,
                 Utf8PathBuf::from_path_buf(script_path.canonicalize()?).unwrap()
@@ -401,7 +401,7 @@ bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs.tar.zst
-provisioners:
+provision:
   - type: shell
     script: scripts/missing.sh
 "#
@@ -444,7 +444,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: shell
     script: scripts/test.sh
 "#
@@ -465,8 +465,8 @@ provisioners:
     // Verify the script path resolves to the expected absolute path
     let expected_script_path = Utf8PathBuf::from_path_buf(script_path.canonicalize()?)
         .expect("script path should be valid UTF-8");
-    match &profile.provisioners[..] {
-        [TaskDefinition::Shell(shell)] => {
+    match &profile.provision[..] {
+        [ProvisionTask::Shell(shell)] => {
             let script = shell.script_path().expect("script should be set");
             assert_eq!(
                 script.canonicalize_utf8()?,
@@ -490,7 +490,7 @@ bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: {}
-provisioners:
+provision:
   - type: shell
     content: echo "hello"
 "#,
@@ -521,7 +521,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: shell
     content: echo "hello"
 "#
@@ -544,7 +544,7 @@ bootstrap:
   type: debootstrap
   suite: bookworm
   target: rootfs
-provisioners:
+provision:
   - type: shell
     content: echo "hello"
 "#
@@ -810,9 +810,9 @@ dir: /tmp/test
 // =============================================================================
 
 #[test]
-fn test_load_profile_with_pre_processors() -> Result<()> {
+fn test_load_profile_prepare_rejects_unknown_task_type() -> Result<()> {
     // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+    let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
         dir: /tmp/test
         bootstrap:
@@ -820,31 +820,22 @@ fn test_load_profile_with_pre_processors() -> Result<()> {
           suite: bookworm
           target: rootfs
           format: directory
-        pre_processors:
+        prepare:
           - type: shell
             content: echo "pre-processing"
         "#
-    ))?;
+    ));
     // editorconfig-checker-enable
 
-    assert_eq!(profile.pre_processors.len(), 1);
-    assert!(profile.provisioners.is_empty());
-    assert!(profile.post_processors.is_empty());
-
-    match &profile.pre_processors[0] {
-        TaskDefinition::Shell(task) => {
-            assert_eq!(task.name(), "<inline>");
-        }
-        other => panic!("Expected Shell task, got: {:?}", other),
-    }
+    assert!(result.is_err(), "PrepareTask has no variants, should fail to parse shell type");
 
     Ok(())
 }
 
 #[test]
-fn test_load_profile_with_post_processors() -> Result<()> {
+fn test_load_profile_assemble_rejects_unknown_task_type() -> Result<()> {
     // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+    let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
         dir: /tmp/test
         bootstrap:
@@ -852,29 +843,20 @@ fn test_load_profile_with_post_processors() -> Result<()> {
           suite: bookworm
           target: rootfs
           format: directory
-        post_processors:
+        assemble:
           - type: shell
             content: echo "post-processing"
         "#
-    ))?;
+    ));
     // editorconfig-checker-enable
 
-    assert!(profile.pre_processors.is_empty());
-    assert!(profile.provisioners.is_empty());
-    assert_eq!(profile.post_processors.len(), 1);
-
-    match &profile.post_processors[0] {
-        TaskDefinition::Shell(task) => {
-            assert_eq!(task.name(), "<inline>");
-        }
-        other => panic!("Expected Shell task, got: {:?}", other),
-    }
+    assert!(result.is_err(), "AssembleTask has no variants, should fail to parse shell type");
 
     Ok(())
 }
 
 #[test]
-fn test_load_profile_with_all_three_phases() -> Result<()> {
+fn test_load_profile_with_provision_tasks() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
@@ -884,22 +866,16 @@ fn test_load_profile_with_all_three_phases() -> Result<()> {
           suite: bookworm
           target: rootfs
           format: directory
-        pre_processors:
-          - type: shell
-            content: echo "pre"
-        provisioners:
+        provision:
           - type: shell
             content: echo "main"
-        post_processors:
-          - type: shell
-            content: echo "post"
         "#
     ))?;
     // editorconfig-checker-enable
 
-    assert_eq!(profile.pre_processors.len(), 1);
-    assert_eq!(profile.provisioners.len(), 1);
-    assert_eq!(profile.post_processors.len(), 1);
+    assert!(profile.prepare.is_empty());
+    assert_eq!(profile.provision.len(), 1);
+    assert!(profile.assemble.is_empty());
 
     Ok(())
 }
@@ -918,145 +894,9 @@ fn test_load_profile_phases_default_to_empty() -> Result<()> {
     ))?;
     // editorconfig-checker-enable
 
-    assert!(profile.pre_processors.is_empty());
-    assert!(profile.provisioners.is_empty());
-    assert!(profile.post_processors.is_empty());
-
-    Ok(())
-}
-
-#[test]
-fn test_profile_validation_rejects_pre_processors_with_tar_output() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-        dir: /tmp/test
-        bootstrap:
-          type: mmdebstrap
-          suite: bookworm
-          target: rootfs.tar.zst
-        pre_processors:
-          - type: shell
-            content: echo "pre"
-        "#
-    ))?;
-    // editorconfig-checker-enable
-
-    let result = profile.validate();
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("pipeline tasks require directory output"));
-
-    Ok(())
-}
-
-#[test]
-fn test_profile_validation_rejects_post_processors_with_tar_output() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-        dir: /tmp/test
-        bootstrap:
-          type: mmdebstrap
-          suite: bookworm
-          target: rootfs.tar.zst
-        post_processors:
-          - type: shell
-            content: echo "post"
-        "#
-    ))?;
-    // editorconfig-checker-enable
-
-    let result = profile.validate();
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("pipeline tasks require directory output"));
-
-    Ok(())
-}
-
-#[test]
-fn test_load_profile_resolves_pre_processor_script_path() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let profile_path = temp_dir.path().join("profile.yml");
-    let scripts_dir = temp_dir.path().join("scripts");
-    std::fs::create_dir_all(&scripts_dir)?;
-    let script_path = scripts_dir.join("pre.sh");
-    std::fs::write(&script_path, "#!/bin/sh\necho pre\n")?;
-
-    // editorconfig-checker-disable
-    std::fs::write(
-        &profile_path,
-        crate::yaml!(
-            r#"---
-            dir: /tmp/test
-            bootstrap:
-              type: mmdebstrap
-              suite: bookworm
-              target: rootfs
-              format: directory
-            pre_processors:
-              - type: shell
-                script: scripts/pre.sh
-            "#
-        ),
-    )?;
-    // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(&profile_path).unwrap();
-    let profile = load_profile(path)?;
-
-    match profile.pre_processors.as_slice() {
-        [TaskDefinition::Shell(shell)] => {
-            assert_eq!(
-                shell.script_path().unwrap().canonicalize_utf8()?,
-                Utf8PathBuf::from_path_buf(script_path.canonicalize()?).unwrap()
-            );
-        }
-        _ => panic!("expected one shell pre_processor"),
-    }
-
-    Ok(())
-}
-
-#[test]
-fn test_load_profile_resolves_post_processor_script_path() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let profile_path = temp_dir.path().join("profile.yml");
-    let scripts_dir = temp_dir.path().join("scripts");
-    std::fs::create_dir_all(&scripts_dir)?;
-    let script_path = scripts_dir.join("post.sh");
-    std::fs::write(&script_path, "#!/bin/sh\necho post\n")?;
-
-    // editorconfig-checker-disable
-    std::fs::write(
-        &profile_path,
-        crate::yaml!(
-            r#"---
-            dir: /tmp/test
-            bootstrap:
-              type: mmdebstrap
-              suite: bookworm
-              target: rootfs
-              format: directory
-            post_processors:
-              - type: shell
-                script: scripts/post.sh
-            "#
-        ),
-    )?;
-    // editorconfig-checker-enable
-
-    let path = Utf8Path::from_path(&profile_path).unwrap();
-    let profile = load_profile(path)?;
-
-    match profile.post_processors.as_slice() {
-        [TaskDefinition::Shell(shell)] => {
-            assert_eq!(
-                shell.script_path().unwrap().canonicalize_utf8()?,
-                Utf8PathBuf::from_path_buf(script_path.canonicalize()?).unwrap()
-            );
-        }
-        _ => panic!("expected one shell post_processor"),
-    }
+    assert!(profile.prepare.is_empty());
+    assert!(profile.provision.is_empty());
+    assert!(profile.assemble.is_empty());
 
     Ok(())
 }
@@ -1085,7 +925,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: mitamae
     binary: bin/mitamae
     content: "package 'vim'"
@@ -1097,8 +937,8 @@ provisioners:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    match profile.provisioners.as_slice() {
-        [TaskDefinition::Mitamae(mitamae)] => {
+    match profile.provision.as_slice() {
+        [ProvisionTask::Mitamae(mitamae)] => {
             assert_eq!(
                 mitamae.binary().unwrap().canonicalize_utf8()?,
                 Utf8PathBuf::from_path_buf(binary_path.canonicalize()?).unwrap()
@@ -1134,7 +974,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: mitamae
     binary: bin/mitamae
     script: recipes/default.rb
@@ -1146,8 +986,8 @@ provisioners:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    match profile.provisioners.as_slice() {
-        [TaskDefinition::Mitamae(mitamae)] => {
+    match profile.provision.as_slice() {
+        [ProvisionTask::Mitamae(mitamae)] => {
             assert_eq!(
                 mitamae.script_path().unwrap().canonicalize_utf8()?,
                 Utf8PathBuf::from_path_buf(recipe_path.canonicalize()?).unwrap()
@@ -1179,7 +1019,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: mitamae
     binary: bin/nonexistent_mitamae
     content: "package 'vim'"
@@ -1293,7 +1133,7 @@ bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs.tar.zst
-provisioners:
+provision:
   - type: shell
     content: echo "hello"
 "#
@@ -1321,7 +1161,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: shell
     script: /nonexistent/script.sh
 "#
@@ -1380,7 +1220,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: mitamae
     content: "package 'vim'"
 "#,
@@ -1392,8 +1232,8 @@ provisioners:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    match profile.provisioners.as_slice() {
-        [TaskDefinition::Mitamae(mitamae)] => {
+    match profile.provision.as_slice() {
+        [ProvisionTask::Mitamae(mitamae)] => {
             assert_eq!(
                 mitamae.binary().unwrap().canonicalize_utf8()?,
                 Utf8PathBuf::from_path_buf(binary_path.canonicalize()?).unwrap(),
@@ -1435,7 +1275,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: mitamae
     binary: bin/mitamae-override
     content: "package 'vim'"
@@ -1448,8 +1288,8 @@ provisioners:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    match profile.provisioners.as_slice() {
-        [TaskDefinition::Mitamae(mitamae)] => {
+    match profile.provision.as_slice() {
+        [ProvisionTask::Mitamae(mitamae)] => {
             assert_eq!(
                 mitamae.binary().unwrap().canonicalize_utf8()?,
                 Utf8PathBuf::from_path_buf(override_binary.canonicalize()?).unwrap(),
@@ -1482,7 +1322,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: mitamae
     content: "package 'vim'"
 "#
@@ -1493,8 +1333,8 @@ provisioners:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    match profile.provisioners.as_slice() {
-        [TaskDefinition::Mitamae(mitamae)] => {
+    match profile.provision.as_slice() {
+        [ProvisionTask::Mitamae(mitamae)] => {
             assert_eq!(
                 mitamae.binary(),
                 None,
@@ -1537,7 +1377,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: shell
     content: echo "hello"
 "#
@@ -1545,8 +1385,8 @@ provisioners:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    match &profile.provisioners[0] {
-        TaskDefinition::Shell(task) => {
+    match &profile.provision[0] {
+        ProvisionTask::Shell(task) => {
             assert_eq!(
                 task.resolved_isolation_config(),
                 Some(&IsolationConfig::chroot()),
@@ -1570,7 +1410,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: shell
     content: echo "hello"
     isolation: true
@@ -1579,8 +1419,8 @@ provisioners:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    match &profile.provisioners[0] {
-        TaskDefinition::Shell(task) => {
+    match &profile.provision[0] {
+        ProvisionTask::Shell(task) => {
             assert_eq!(
                 task.resolved_isolation_config(),
                 Some(&IsolationConfig::chroot()),
@@ -1604,7 +1444,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: shell
     content: echo "hello"
     isolation: false
@@ -1612,8 +1452,8 @@ provisioners:
     ))?;
     // editorconfig-checker-enable
 
-    match &profile.provisioners[0] {
-        TaskDefinition::Shell(task) => {
+    match &profile.provision[0] {
+        ProvisionTask::Shell(task) => {
             assert_eq!(
                 task.resolved_isolation_config(),
                 None,
@@ -1637,7 +1477,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: shell
     content: echo "hello"
     isolation:
@@ -1647,8 +1487,8 @@ provisioners:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    match &profile.provisioners[0] {
-        TaskDefinition::Shell(task) => {
+    match &profile.provision[0] {
+        ProvisionTask::Shell(task) => {
             assert_eq!(
                 task.resolved_isolation_config(),
                 Some(&IsolationConfig::chroot()),
@@ -1681,7 +1521,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: mitamae
     binary: bin/mitamae
     content: "package 'vim'"
@@ -1694,8 +1534,8 @@ provisioners:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
-    match profile.provisioners.as_slice() {
-        [TaskDefinition::Mitamae(mitamae)] => {
+    match profile.provision.as_slice() {
+        [ProvisionTask::Mitamae(mitamae)] => {
             assert_eq!(
                 mitamae.resolved_isolation_config(),
                 None,
@@ -1719,7 +1559,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: shell
     content: echo "with isolation"
     isolation: true
@@ -1734,22 +1574,22 @@ provisioners:
 
     use rsdebstrap::config::IsolationConfig;
 
-    assert_eq!(profile.provisioners.len(), 3);
+    assert_eq!(profile.provision.len(), 3);
 
-    match &profile.provisioners[0] {
-        TaskDefinition::Shell(task) => {
+    match &profile.provision[0] {
+        ProvisionTask::Shell(task) => {
             assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
-    match &profile.provisioners[1] {
-        TaskDefinition::Shell(task) => {
+    match &profile.provision[1] {
+        ProvisionTask::Shell(task) => {
             assert_eq!(task.resolved_isolation_config(), None);
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
-    match &profile.provisioners[2] {
-        TaskDefinition::Shell(task) => {
+    match &profile.provision[2] {
+        ProvisionTask::Shell(task) => {
             assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
         }
         other => panic!("Expected Shell task, got: {:?}", other),
@@ -1915,7 +1755,7 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
-provisioners:
+provision:
   - type: shell
     content: echo "hello"
     isolation:

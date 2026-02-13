@@ -12,17 +12,17 @@ use serde::Deserialize;
 use std::fs;
 use tracing::{debug, info};
 
-use super::{ScriptSource, TempFileGuard};
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
+use crate::phase::{ScriptSource, TempFileGuard};
 use crate::privilege::{Privilege, PrivilegeDefaults};
 
 /// Shell task data and execution logic.
 ///
 /// Represents a shell script to be executed within an isolation context.
 /// Holds configuration data and provides methods for validation and execution.
-/// Used as a variant in the `TaskDefinition` enum for compile-time dispatch.
+/// Used as a variant in the `ProvisionTask` enum for compile-time dispatch.
 ///
 /// ## Lifecycle
 ///
@@ -73,7 +73,7 @@ impl<'de> Deserialize<'de> for ShellTask {
         }
 
         let raw = RawShellTask::deserialize(deserializer)?;
-        let source = super::resolve_script_source::<D::Error>(raw.script, raw.content)?;
+        let source = crate::phase::resolve_script_source::<D::Error>(raw.script, raw.content)?;
         Ok(ShellTask {
             source,
             shell: raw.shell,
@@ -224,20 +224,20 @@ impl ShellTask {
         let target_script = rootfs.join("tmp").join(&script_name);
         let _guard = TempFileGuard::new(target_script.clone(), dry_run);
 
-        super::prepare_files_with_toctou_check(rootfs, dry_run, || {
-            super::prepare_source_file(&self.source, &target_script, 0o700, "script")
+        crate::phase::prepare_files_with_toctou_check(rootfs, dry_run, || {
+            crate::phase::prepare_source_file(&self.source, &target_script, 0o700, "script")
         })?;
 
         let script_path_in_isolation = format!("/tmp/{}", script_name);
         let command: Vec<String> = vec![self.shell.clone(), script_path_in_isolation];
 
-        let result = super::execute_in_context(
+        let result = crate::phase::execute_in_context(
             context,
             &command,
             "script",
             self.privilege.resolved_method(),
         )?;
-        super::check_execution_result(&result, &command, context.name(), dry_run)?;
+        crate::phase::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("shell script completed successfully");
         Ok(())
@@ -245,11 +245,11 @@ impl ShellTask {
 
     /// Validates that the rootfs is ready for isolated command execution.
     fn validate_rootfs(&self, rootfs: &Utf8Path) -> Result<()> {
-        super::validate_tmp_directory(rootfs)?;
+        crate::phase::validate_tmp_directory(rootfs)?;
 
         // Validate shell path to prevent path traversal attacks
         let shell_path = self.shell.trim_start_matches('/');
-        super::validate_no_parent_dirs(camino::Utf8Path::new(shell_path), "shell")?;
+        crate::phase::validate_no_parent_dirs(camino::Utf8Path::new(shell_path), "shell")?;
 
         // Check if the specified shell exists and is a file in rootfs
         let shell_in_rootfs = rootfs.join(shell_path);

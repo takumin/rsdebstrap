@@ -1,97 +1,41 @@
-//! Task module for declarative pipeline steps.
+//! Phase module for pipeline task definitions.
 //!
-//! This module provides the `TaskDefinition` enum — a data-driven abstraction
-//! where each variant describes *what* to execute, and methods on the enum
-//! provide *how* to execute via Rust's exhaustive pattern matching.
+//! This module provides phase-specific task enums and the internal `PhaseItem`
+//! trait used by the pipeline to process tasks generically across phases.
 //!
-//! Adding a new task type requires:
-//! 1. Adding a new variant to `TaskDefinition`
-//! 2. Creating a corresponding data struct (e.g., `MitamaeTask`)
-//! 3. Implementing the match arms in all methods on `TaskDefinition`
-//!    (`name`, `validate`, `execute`, `script_path`, `resolve_paths`, `binary_path`,
-//!    `resolve_privilege`, `resolve_isolation`, `resolved_isolation_config`)
+//! ## Phase structure
 //!
-//! The compiler enforces exhaustiveness, ensuring all task types are handled.
+//! - [`prepare`] — Preparation tasks before main provisioning (currently empty)
+//! - [`provision`] — Main provisioning tasks (Shell, Mitamae)
+//! - [`assemble`] — Finalization tasks after provisioning (currently empty)
+//!
+//! Adding a new phase requires:
+//! 1. Creating a new module with a `#[non_exhaustive]` enum
+//! 2. Implementing `PhaseItem` for the enum
+//! 3. Adding a field to `Profile` and `Pipeline`
 
-pub mod mitamae;
-pub mod shell;
+pub mod assemble;
+pub mod prepare;
+pub mod provision;
 
 use std::borrow::Cow;
 use std::fs;
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-use serde::Deserialize;
 use tracing::info;
 
-pub use mitamae::MitamaeTask;
-pub use shell::ShellTask;
+pub use assemble::AssembleTask;
+pub use prepare::PrepareTask;
+pub use provision::MitamaeTask;
+pub use provision::ProvisionTask;
+pub use provision::ShellTask;
 
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::executor::ExecutionResult;
-use crate::isolation::{IsolationContext, TaskIsolation};
-use crate::privilege::{PrivilegeDefaults, PrivilegeMethod};
-
-/// Validates that a path contains no `..` components.
-///
-/// Returns `RsdebstrapError::Validation` if any parent directory component is found.
-/// The `label` parameter is used in error messages to describe the path's purpose
-/// (e.g., "shell script", "mitamae binary").
-pub(crate) fn validate_no_parent_dirs(path: &Utf8Path, label: &str) -> Result<(), RsdebstrapError> {
-    if path
-        .components()
-        .any(|c| c == camino::Utf8Component::ParentDir)
-    {
-        return Err(RsdebstrapError::Validation(format!(
-            "{} path '{}' contains '..' components, \
-            which is not allowed for security reasons",
-            label, path
-        )));
-    }
-    Ok(())
-}
-
-/// Validates that a host-side file exists and is a regular file (not a symlink).
-///
-/// Uses `symlink_metadata` to avoid following symlinks. Returns
-/// `RsdebstrapError::Io` if the file cannot be accessed, or
-/// `RsdebstrapError::Validation` if the path is a symlink or not a regular file.
-/// The `label` parameter is used in error messages (e.g., "shell script", "mitamae binary").
-pub(crate) fn validate_host_file_exists(
-    path: &Utf8Path,
-    label: &str,
-) -> Result<(), RsdebstrapError> {
-    let metadata = fs::symlink_metadata(path).map_err(|e| {
-        RsdebstrapError::io(format!("failed to read {} metadata: {}", label, path), e)
-    })?;
-    if metadata.is_symlink() {
-        return Err(RsdebstrapError::Validation(format!(
-            "{} path '{}' is a symlink, which is not allowed for security reasons",
-            label, path
-        )));
-    }
-    if !metadata.is_file() {
-        return Err(RsdebstrapError::Validation(format!("{} is not a file: {}", label, path)));
-    }
-    Ok(())
-}
-
-/// Resolves `script`/`content` mutual exclusivity and builds a [`ScriptSource`].
-///
-/// Used by task `Deserialize` impls to share the common validation logic:
-/// exactly one of `script` or `content` must be provided.
-pub(crate) fn resolve_script_source<E: serde::de::Error>(
-    script: Option<Utf8PathBuf>,
-    content: Option<String>,
-) -> std::result::Result<ScriptSource, E> {
-    match (script, content) {
-        (Some(_), Some(_)) => Err(E::custom("'script' and 'content' are mutually exclusive")),
-        (None, None) => Err(E::custom("either 'script' or 'content' must be specified")),
-        (Some(s), None) => Ok(ScriptSource::Script(s)),
-        (None, Some(c)) => Ok(ScriptSource::Content(c)),
-    }
-}
+use crate::isolation::IsolationContext;
+use crate::privilege::PrivilegeMethod;
 
 /// Script source for task execution.
 ///
@@ -154,6 +98,76 @@ impl ScriptSource {
                 Ok(())
             }
         }
+    }
+}
+
+/// Internal trait for the pipeline to process phases uniformly.
+///
+/// This is not an extension point, but for internal convenience only.
+pub(crate) trait PhaseItem: std::fmt::Debug {
+    fn name(&self) -> Cow<'_, str>;
+    fn validate(&self) -> Result<(), RsdebstrapError>;
+    fn execute(&self, ctx: &dyn IsolationContext) -> Result<()>;
+    fn resolved_isolation_config(&self) -> Option<&IsolationConfig>;
+}
+
+/// Validates that a path contains no `..` components.
+///
+/// Returns `RsdebstrapError::Validation` if any parent directory component is found.
+/// The `label` parameter is used in error messages to describe the path's purpose
+/// (e.g., "shell script", "mitamae binary").
+pub(crate) fn validate_no_parent_dirs(path: &Utf8Path, label: &str) -> Result<(), RsdebstrapError> {
+    if path
+        .components()
+        .any(|c| c == camino::Utf8Component::ParentDir)
+    {
+        return Err(RsdebstrapError::Validation(format!(
+            "{} path '{}' contains '..' components, \
+            which is not allowed for security reasons",
+            label, path
+        )));
+    }
+    Ok(())
+}
+
+/// Validates that a host-side file exists and is a regular file (not a symlink).
+///
+/// Uses `symlink_metadata` to avoid following symlinks. Returns
+/// `RsdebstrapError::Io` if the file cannot be accessed, or
+/// `RsdebstrapError::Validation` if the path is a symlink or not a regular file.
+/// The `label` parameter is used in error messages (e.g., "shell script", "mitamae binary").
+pub(crate) fn validate_host_file_exists(
+    path: &Utf8Path,
+    label: &str,
+) -> Result<(), RsdebstrapError> {
+    let metadata = fs::symlink_metadata(path).map_err(|e| {
+        RsdebstrapError::io(format!("failed to read {} metadata: {}", label, path), e)
+    })?;
+    if metadata.is_symlink() {
+        return Err(RsdebstrapError::Validation(format!(
+            "{} path '{}' is a symlink, which is not allowed for security reasons",
+            label, path
+        )));
+    }
+    if !metadata.is_file() {
+        return Err(RsdebstrapError::Validation(format!("{} is not a file: {}", label, path)));
+    }
+    Ok(())
+}
+
+/// Resolves `script`/`content` mutual exclusivity and builds a [`ScriptSource`].
+///
+/// Used by task `Deserialize` impls to share the common validation logic:
+/// exactly one of `script` or `content` must be provided.
+pub(crate) fn resolve_script_source<E: serde::de::Error>(
+    script: Option<Utf8PathBuf>,
+    content: Option<String>,
+) -> std::result::Result<ScriptSource, E> {
+    match (script, content) {
+        (Some(_), Some(_)) => Err(E::custom("'script' and 'content' are mutually exclusive")),
+        (None, None) => Err(E::custom("either 'script' or 'content' must be specified")),
+        (Some(s), None) => Ok(ScriptSource::Script(s)),
+        (None, Some(c)) => Ok(ScriptSource::Content(c)),
     }
 }
 
@@ -344,108 +358,6 @@ pub(crate) fn prepare_files_with_toctou_check(
         prepare_fn()?;
     }
     Ok(())
-}
-
-/// Declarative task definition for pipeline steps.
-///
-/// Each variant holds the data needed to configure and execute a specific
-/// type of task. The enum dispatch pattern provides compile-time exhaustive
-/// matching — adding a new variant causes compilation errors at every
-/// unhandled match site, preventing missed implementations.
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum TaskDefinition {
-    /// Shell script execution task
-    Shell(ShellTask),
-    /// Mitamae recipe execution task
-    Mitamae(MitamaeTask),
-}
-
-impl TaskDefinition {
-    /// Returns a human-readable name for this task with type prefix.
-    pub fn name(&self) -> Cow<'_, str> {
-        match self {
-            Self::Shell(task) => Cow::Owned(format!("shell:{}", task.name())),
-            Self::Mitamae(task) => Cow::Owned(format!("mitamae:{}", task.name())),
-        }
-    }
-
-    /// Validates the task configuration.
-    pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        match self {
-            Self::Shell(task) => task.validate(),
-            Self::Mitamae(task) => task.validate(),
-        }
-    }
-
-    /// Executes the task within the given isolation context.
-    pub fn execute(&self, ctx: &dyn IsolationContext) -> Result<()> {
-        match self {
-            Self::Shell(task) => task.execute(ctx),
-            Self::Mitamae(task) => task.execute(ctx),
-        }
-    }
-
-    /// Returns the script path if this task uses an external script file.
-    pub fn script_path(&self) -> Option<&Utf8Path> {
-        match self {
-            Self::Shell(task) => task.script_path(),
-            Self::Mitamae(task) => task.script_path(),
-        }
-    }
-
-    /// Resolves relative paths in this task relative to the given base directory.
-    pub fn resolve_paths(&mut self, base_dir: &Utf8Path) {
-        match self {
-            Self::Shell(task) => task.resolve_paths(base_dir),
-            Self::Mitamae(task) => task.resolve_paths(base_dir),
-        }
-    }
-
-    /// Returns the binary path if this task uses an external binary.
-    pub fn binary_path(&self) -> Option<&Utf8Path> {
-        match self {
-            Self::Shell(_) => None,
-            Self::Mitamae(task) => task.binary(),
-        }
-    }
-
-    /// Resolves the privilege setting against profile defaults.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        match self {
-            Self::Shell(task) => task.resolve_privilege(defaults),
-            Self::Mitamae(task) => task.resolve_privilege(defaults),
-        }
-    }
-
-    /// Returns a reference to the task's isolation setting (possibly unresolved).
-    pub fn task_isolation(&self) -> &TaskIsolation {
-        match self {
-            Self::Shell(task) => task.task_isolation(),
-            Self::Mitamae(task) => task.task_isolation(),
-        }
-    }
-
-    /// Resolves the isolation setting against profile defaults.
-    pub fn resolve_isolation(&mut self, defaults: &IsolationConfig) {
-        match self {
-            Self::Shell(task) => task.resolve_isolation(defaults),
-            Self::Mitamae(task) => task.resolve_isolation(defaults),
-        }
-    }
-
-    /// Returns the resolved isolation config.
-    ///
-    /// Should only be called after [`resolve_isolation()`](Self::resolve_isolation).
-    pub fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        match self {
-            Self::Shell(task) => task.resolved_isolation_config(),
-            Self::Mitamae(task) => task.resolved_isolation_config(),
-        }
-    }
 }
 
 #[cfg(test)]

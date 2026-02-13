@@ -4,9 +4,9 @@ pub mod config;
 pub mod error;
 pub mod executor;
 pub mod isolation;
+pub mod phase;
 pub mod pipeline;
 pub mod privilege;
-pub mod task;
 
 pub use error::RsdebstrapError;
 
@@ -66,7 +66,7 @@ fn run_bootstrap_phase(
     Ok(())
 }
 
-/// Executes the pipeline phase (pre-processors, provisioners, post-processors).
+/// Executes the pipeline phase (prepare, provision, assemble).
 fn run_pipeline_phase(
     profile: &config::Profile,
     executor: Arc<dyn CommandExecutor>,

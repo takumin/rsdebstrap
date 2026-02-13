@@ -2,8 +2,8 @@ mod helpers;
 
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::config::Bootstrap;
+use rsdebstrap::phase::{ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
-use rsdebstrap::task::{ScriptSource, ShellTask, TaskDefinition};
 use tempfile::tempdir;
 
 // =============================================================================
@@ -24,7 +24,7 @@ fn test_default_privilege_sudo_inherited_by_bootstrap_and_tasks() {
           suite: bookworm
           target: rootfs
           format: directory
-        provisioners:
+        provision:
           - type: shell
             content: echo "hello"
         "#
@@ -43,10 +43,7 @@ fn test_default_privilege_sudo_inherited_by_bootstrap_and_tasks() {
     // Task should also inherit Sudo from defaults.
     // The resolved privilege field is private, but we verify the profile
     // loads without error (resolve_privilege succeeded).
-    assert!(
-        matches!(&profile.provisioners[0], TaskDefinition::Shell(_)),
-        "expected Shell task"
-    );
+    assert!(matches!(&profile.provision[0], ProvisionTask::Shell(_)), "expected Shell task");
 }
 
 #[test]
@@ -63,7 +60,7 @@ fn test_task_level_privilege_overrides_default() {
           suite: bookworm
           target: rootfs
           format: directory
-        provisioners:
+        provision:
           - type: shell
             content: echo "hello"
             privilege:
@@ -82,7 +79,7 @@ fn test_task_level_privilege_overrides_default() {
     }
 
     // Profile loads successfully with task-level doas override
-    assert_eq!(profile.provisioners.len(), 1);
+    assert_eq!(profile.provision.len(), 1);
 }
 
 #[test]
@@ -100,7 +97,7 @@ fn test_privilege_false_disables_escalation() {
           target: rootfs
           format: directory
           privilege: false
-        provisioners:
+        provision:
           - type: shell
             content: echo "hello"
             privilege: false
@@ -158,7 +155,7 @@ fn test_privilege_true_on_task_without_defaults_returns_validation_error() {
           suite: bookworm
           target: rootfs
           format: directory
-        provisioners:
+        provision:
           - type: shell
             content: echo "hello"
             privilege: true
@@ -190,7 +187,7 @@ fn test_no_defaults_no_privilege_results_in_none() {
           suite: bookworm
           target: rootfs
           format: directory
-        provisioners:
+        provision:
           - type: shell
             content: echo "hello"
         "#
@@ -212,7 +209,7 @@ fn test_no_defaults_no_privilege_results_in_none() {
     }
 
     // Task should also have no privilege escalation
-    assert_eq!(profile.provisioners.len(), 1);
+    assert_eq!(profile.provision.len(), 1);
 }
 
 #[test]
@@ -228,7 +225,7 @@ fn test_default_privilege_doas_inherited() {
           type: debootstrap
           suite: trixie
           target: rootfs
-        provisioners:
+        provision:
           - type: shell
             content: echo "hello"
         "#

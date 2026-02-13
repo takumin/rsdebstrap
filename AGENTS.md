@@ -39,7 +39,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
 3. **Privilege** (`src/privilege.rs`) - Privilege escalation configuration and resolution (sudo/doas)
 4. **Error** (`src/error.rs`) - Typed error handling with `RsdebstrapError`
 5. **Bootstrap** (`src/bootstrap/`) - Executes bootstrap backends to create the rootfs
-6. **Pipeline** (`src/pipeline.rs`) - Orchestrates pre-processors, provisioners, and post-processors in order
+6. **Pipeline** (`src/pipeline.rs`) - Orchestrates prepare, provision, and assemble phases in order
 
 ### Key Abstractions
 
@@ -67,25 +67,40 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - `resolve_privilege()` resolves privilege settings against profile defaults
   - `resolved_privilege_method()` returns the resolved `Option<PrivilegeMethod>`
 
-- **`TaskDefinition`** enum (`src/task/mod.rs`) - Declarative task definition for pipeline steps
-  - `Shell` variant (`src/task/shell.rs`) - Runs shell scripts within an isolation context
-  - `Mitamae` variant (`src/task/mitamae.rs`) - Runs mitamae recipes within an isolation context
+- **`PhaseItem`** trait (`src/phase/mod.rs`) - Internal trait for generic phase processing
+  - `pub(crate)` — used by Pipeline to process tasks uniformly across phases
+  - Methods: `name()`, `validate()`, `execute()`, `resolved_isolation_config()`
+  - Implemented by `PrepareTask`, `ProvisionTask`, `AssembleTask`
+
+- **`PrepareTask`** enum (`src/phase/prepare.rs`) - Preparation tasks before provisioning
+  - `#[non_exhaustive]` empty enum — no task types available yet
+  - `PhaseItem` impl uses `match *self {}` for exhaustive matching
+
+- **`AssembleTask`** enum (`src/phase/assemble.rs`) - Finalization tasks after provisioning
+  - `#[non_exhaustive]` empty enum — no task types available yet
+  - Same structure as `PrepareTask`
+
+- **`ProvisionTask`** enum (`src/phase/provision/mod.rs`) - Declarative task definition for provision pipeline steps
+  - `Shell` variant (`src/phase/provision/shell.rs`) - Runs shell scripts within an isolation context
+  - `Mitamae` variant (`src/phase/provision/mitamae.rs`) - Runs mitamae recipes within an isolation context
   - Each task has a `privilege: Privilege` field resolved during defaults application
   - Each task has an `isolation: TaskIsolation` field resolved via `resolve_isolation()`
   - `resolved_isolation_config()` returns `Option<&IsolationConfig>` after resolution
   - Enum-based dispatch with compile-time exhaustive matching
-  - Shared utilities in `src/task/mod.rs`: `ScriptSource`, `TempFileGuard`, `validate_tmp_directory()`
+  - Shared utilities in `src/phase/mod.rs`: `ScriptSource`, `TempFileGuard`, `validate_tmp_directory()`
   - Helper functions: `execute_in_context()`, `check_execution_result()`, `prepare_files_with_toctou_check()`
 
-- **`MitamaeTask`** (`src/task/mitamae.rs`) - Mitamae recipe execution
+- **`MitamaeTask`** (`src/phase/provision/mitamae.rs`) - Mitamae recipe execution
   - `binary` field: `Option<Utf8PathBuf>` — can be omitted and resolved from `defaults.mitamae`
   - Copies binary to rootfs /tmp with 0o700 permissions, runs `mitamae local <recipe>`
   - RAII cleanup of both binary and recipe temp files via `TempFileGuard`
 
 - **`Pipeline`** struct (`src/pipeline.rs`) - Orchestrates task execution in three phases
+  - Holds `&[PrepareTask]`, `&[ProvisionTask]`, `&[AssembleTask]` slices
   - Creates per-task isolation contexts based on each task's `resolved_isolation_config()`
-  - `run_task()` creates provider → setup → execute → teardown for each task independently
-  - Executes pre-processors, provisioners, post-processors in order
+  - Generic `run_phase_items<T: PhaseItem>()` and `validate_phase_items<T: PhaseItem>()` free functions
+  - `run_task_item()` creates provider → setup → execute → teardown for each task independently
+  - Executes prepare, provision, assemble phases in order
   - Guarantees teardown even on task execution errors
 
 - **`TaskIsolation`** enum (`src/isolation/mod.rs`) - Task-level isolation setting
@@ -193,16 +208,14 @@ bootstrap:
   target: rootfs            # Output name (directory or archive)
   privilege: true           # Use default privilege method
   # Backend-specific options...
-pre_processors:             # Optional pre-provisioning steps
-  - type: shell
-    content: "..."
-    privilege: false         # Disable privilege escalation for this task
-    isolation: false         # Disable isolation (direct execution on host)
-provisioners:               # Optional main provisioning steps
+prepare: []                 # Optional preparation steps (no task types yet)
+provision:                  # Optional main provisioning steps
   - type: shell
     content: "..."          # Inline script
     # OR
     script: ./script.sh     # External script path
+    privilege: false         # Disable privilege escalation for this task
+    isolation: false         # Disable isolation (direct execution on host)
   - type: mitamae
     script: ./recipe.rb     # Mitamae recipe file
     # OR
@@ -212,9 +225,7 @@ provisioners:               # Optional main provisioning steps
       method: doas
     isolation:               # Optional: override defaults.isolation
       type: chroot
-post_processors:            # Optional post-provisioning steps
-  - type: shell
-    script: ./cleanup.sh
+assemble: []                # Optional finalization steps (no task types yet)
 ```
 
 #### Privilege field values
@@ -260,5 +271,5 @@ Tests use a mock executor pattern defined in `tests/helpers/mod.rs`:
 
 #### Known test gaps
 
-- `Pipeline::run_task()` teardown failure paths (patterns 3 and 4: `Ok/Err` and `Err/Err`) are not currently testable because the pipeline internally creates providers from `task.resolved_isolation_config()`, making failure injection impractical. Both `ChrootProvider` and `DirectProvider` have infallible teardown, so these paths are unreachable with current backends. Tests should be added when backends with fallible teardown (e.g., bwrap, systemd-nspawn) are introduced.
+- `run_task_item()` teardown failure paths (patterns 3 and 4: `Ok/Err` and `Err/Err`) are not currently testable because the pipeline internally creates providers from `task.resolved_isolation_config()`, making failure injection impractical. Both `ChrootProvider` and `DirectProvider` have infallible teardown, so these paths are unreachable with current backends. Tests should be added when backends with fallible teardown (e.g., bwrap, systemd-nspawn) are introduced.
 - `run_pipeline_phase()` 4-way error matrix (`Ok/Ok`, `Err/Ok`, `Ok/Err`, `Err/Err`) is not directly tested as an integration test because the function is private and requires real filesystem mounts. `RootfsMounts` unit tests cover mount/unmount error paths independently using `MockMountExecutor`.

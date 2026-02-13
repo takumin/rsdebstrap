@@ -12,7 +12,7 @@ use rsdebstrap::RsdebstrapError;
 use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::executor::ExecutionResult;
 use rsdebstrap::isolation::IsolationContext;
-use rsdebstrap::task::{ScriptSource, ShellTask};
+use rsdebstrap::phase::{ScriptSource, ShellTask};
 use tempfile::tempdir;
 
 use crate::helpers::MockContext;

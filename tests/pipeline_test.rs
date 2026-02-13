@@ -7,8 +7,8 @@ use camino::Utf8Path;
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
+use rsdebstrap::phase::{ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::pipeline::Pipeline;
-use rsdebstrap::task::{ScriptSource, ShellTask, TaskDefinition};
 
 // =============================================================================
 // Mock infrastructure
@@ -62,20 +62,20 @@ impl CommandExecutor for MockExecutor {
 }
 
 /// Helper to create a simple inline shell task with privilege and isolation resolved.
-fn inline_task(content: &str) -> TaskDefinition {
+fn inline_task(content: &str) -> ProvisionTask {
     let mut task = ShellTask::new(ScriptSource::Content(content.to_string()));
     task.resolve_privilege(None).unwrap();
     task.resolve_isolation(&IsolationConfig::default());
-    TaskDefinition::Shell(task)
+    ProvisionTask::Shell(task)
 }
 
 /// Helper to create an inline shell task with isolation disabled (direct execution).
-fn inline_task_direct(content: &str) -> TaskDefinition {
+fn inline_task_direct(content: &str) -> ProvisionTask {
     let yaml = format!("content: \"{}\"\nisolation: false\n", content);
     let mut task: ShellTask = serde_yaml::from_str(&yaml).unwrap();
     task.resolve_privilege(None).unwrap();
     task.resolve_isolation(&IsolationConfig::chroot()); // Disabled stays Disabled
-    TaskDefinition::Shell(task)
+    ProvisionTask::Shell(task)
 }
 
 // =============================================================================
@@ -90,14 +90,6 @@ fn test_pipeline_is_empty_when_all_phases_empty() {
 }
 
 #[test]
-fn test_pipeline_is_not_empty_with_only_pre_processors() {
-    let tasks = [inline_task("echo pre")];
-    let pipeline = Pipeline::new(&tasks, &[], &[]);
-    assert!(!pipeline.is_empty());
-    assert_eq!(pipeline.total_tasks(), 1);
-}
-
-#[test]
 fn test_pipeline_is_not_empty_with_only_provisioners() {
     let tasks = [inline_task("echo prov")];
     let pipeline = Pipeline::new(&[], &tasks, &[]);
@@ -106,23 +98,16 @@ fn test_pipeline_is_not_empty_with_only_provisioners() {
 }
 
 #[test]
-fn test_pipeline_is_not_empty_with_only_post_processors() {
-    let tasks = [inline_task("echo post")];
-    let pipeline = Pipeline::new(&[], &[], &tasks);
-    assert!(!pipeline.is_empty());
-    assert_eq!(pipeline.total_tasks(), 1);
-}
-
-#[test]
 fn test_pipeline_total_tasks_counts_all_phases() {
-    let pre = [inline_task("echo 1"), inline_task("echo 2")];
-    let prov = [inline_task("echo 3")];
-    let post = [
+    let tasks = [
+        inline_task("echo 1"),
+        inline_task("echo 2"),
+        inline_task("echo 3"),
         inline_task("echo 4"),
         inline_task("echo 5"),
         inline_task("echo 6"),
     ];
-    let pipeline = Pipeline::new(&pre, &prov, &post);
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
     assert!(!pipeline.is_empty());
     assert_eq!(pipeline.total_tasks(), 6);
 }
@@ -140,51 +125,21 @@ fn test_pipeline_validate_succeeds_for_empty_pipeline() {
 #[test]
 fn test_pipeline_validate_succeeds_for_valid_inline_tasks() {
     let tasks = [inline_task("echo hello")];
-    let pipeline = Pipeline::new(&tasks, &tasks, &tasks);
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
     assert!(pipeline.validate().is_ok());
 }
 
 #[test]
-fn test_pipeline_validate_fails_for_invalid_pre_processor() {
-    let bad_task = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
-        "../../../etc/passwd".into(),
-    )))];
-    let pipeline = Pipeline::new(&bad_task, &[], &[]);
-    let err = pipeline.validate().unwrap_err();
-    let err_msg = format!("{:#}", err);
-    assert!(
-        err_msg.contains("pre-processor 1 validation failed"),
-        "Expected 'pre-processor 1 validation failed' in error, got: {}",
-        err_msg
-    );
-}
-
-#[test]
 fn test_pipeline_validate_fails_for_invalid_provisioner() {
-    let bad_task = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
+    let bad_task = [ProvisionTask::Shell(ShellTask::new(ScriptSource::Script(
         "../../../etc/passwd".into(),
     )))];
     let pipeline = Pipeline::new(&[], &bad_task, &[]);
     let err = pipeline.validate().unwrap_err();
     let err_msg = format!("{:#}", err);
     assert!(
-        err_msg.contains("provisioner 1 validation failed"),
-        "Expected 'provisioner 1 validation failed' in error, got: {}",
-        err_msg
-    );
-}
-
-#[test]
-fn test_pipeline_validate_fails_for_invalid_post_processor() {
-    let bad_task = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
-        "../../../etc/passwd".into(),
-    )))];
-    let pipeline = Pipeline::new(&[], &[], &bad_task);
-    let err = pipeline.validate().unwrap_err();
-    let err_msg = format!("{:#}", err);
-    assert!(
-        err_msg.contains("post-processor 1 validation failed"),
-        "Expected 'post-processor 1 validation failed' in error, got: {}",
+        err_msg.contains("provision 1 validation failed"),
+        "Expected 'provision 1 validation failed' in error, got: {}",
         err_msg
     );
 }
@@ -193,37 +148,14 @@ fn test_pipeline_validate_fails_for_invalid_post_processor() {
 fn test_pipeline_validate_reports_correct_index() {
     let good = inline_task("echo ok");
     let bad =
-        TaskDefinition::Shell(ShellTask::new(ScriptSource::Script("../../../etc/passwd".into())));
+        ProvisionTask::Shell(ShellTask::new(ScriptSource::Script("../../../etc/passwd".into())));
     let tasks = [good, bad];
     let pipeline = Pipeline::new(&[], &tasks, &[]);
     let err = pipeline.validate().unwrap_err();
     let err_msg = format!("{:#}", err);
     assert!(
-        err_msg.contains("provisioner 2 validation failed"),
-        "Expected 'provisioner 2 validation failed' in error, got: {}",
-        err_msg
-    );
-}
-
-#[test]
-fn test_pipeline_validate_stops_at_first_failing_phase() {
-    let bad_pre = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
-        "../../../etc/shadow".into(),
-    )))];
-    let bad_prov = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
-        "../../../etc/passwd".into(),
-    )))];
-    let pipeline = Pipeline::new(&bad_pre, &bad_prov, &[]);
-    let err = pipeline.validate().unwrap_err();
-    let err_msg = format!("{:#}", err);
-    assert!(
-        err_msg.contains("pre-processor 1 validation failed"),
-        "Expected pre-processor error, got: {}",
-        err_msg
-    );
-    assert!(
-        !err_msg.contains("provisioner"),
-        "Should not contain provisioner error when pre-processor fails, got: {}",
+        err_msg.contains("provision 2 validation failed"),
+        "Expected 'provision 2 validation failed' in error, got: {}",
         err_msg
     );
 }
@@ -244,10 +176,12 @@ fn test_pipeline_run_empty_returns_ok_without_setup() {
 
 #[test]
 fn test_pipeline_run_executes_tasks_in_phase_order() {
-    let pre = [inline_task("echo pre")];
-    let prov = [inline_task("echo prov")];
-    let post = [inline_task("echo post")];
-    let pipeline = Pipeline::new(&pre, &prov, &post);
+    let tasks = [
+        inline_task("echo 1"),
+        inline_task("echo 2"),
+        inline_task("echo 3"),
+    ];
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -271,7 +205,7 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
 #[test]
 fn test_pipeline_run_phase_error_with_successful_teardown() {
     let tasks = [inline_task("echo hello")];
-    let pipeline = Pipeline::new(&tasks, &[], &[]);
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
 
     let mock_executor = Arc::new(MockExecutor::failing_on(0));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -280,7 +214,7 @@ fn test_pipeline_run_phase_error_with_successful_teardown() {
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
     assert!(
-        err_msg.contains("failed to run pre-processor 1"),
+        err_msg.contains("failed to run provision 1"),
         "Expected phase error, got: {}",
         err_msg
     );
@@ -300,23 +234,25 @@ fn test_pipeline_run_skips_empty_phases() {
 }
 
 #[test]
-fn test_pipeline_run_phase_order_is_strictly_pre_prov_post() {
-    let mut pre_task =
-        ShellTask::with_shell(ScriptSource::Content("echo pre".to_string()), "/bin/sh-pre");
-    pre_task.resolve_privilege(None).unwrap();
-    pre_task.resolve_isolation(&IsolationConfig::default());
-    let pre = [TaskDefinition::Shell(pre_task)];
-    let mut prov_task =
-        ShellTask::with_shell(ScriptSource::Content("echo prov".to_string()), "/bin/sh-prov");
-    prov_task.resolve_privilege(None).unwrap();
-    prov_task.resolve_isolation(&IsolationConfig::default());
-    let prov = [TaskDefinition::Shell(prov_task)];
-    let mut post_task =
-        ShellTask::with_shell(ScriptSource::Content("echo post".to_string()), "/bin/sh-post");
-    post_task.resolve_privilege(None).unwrap();
-    post_task.resolve_isolation(&IsolationConfig::default());
-    let post = [TaskDefinition::Shell(post_task)];
-    let pipeline = Pipeline::new(&pre, &prov, &post);
+fn test_pipeline_run_tasks_execute_in_order_within_phase() {
+    let mut task1 =
+        ShellTask::with_shell(ScriptSource::Content("echo t1".to_string()), "/bin/sh-1");
+    task1.resolve_privilege(None).unwrap();
+    task1.resolve_isolation(&IsolationConfig::default());
+    let mut task2 =
+        ShellTask::with_shell(ScriptSource::Content("echo t2".to_string()), "/bin/sh-2");
+    task2.resolve_privilege(None).unwrap();
+    task2.resolve_isolation(&IsolationConfig::default());
+    let mut task3 =
+        ShellTask::with_shell(ScriptSource::Content("echo t3".to_string()), "/bin/sh-3");
+    task3.resolve_privilege(None).unwrap();
+    task3.resolve_isolation(&IsolationConfig::default());
+    let tasks = [
+        ProvisionTask::Shell(task1),
+        ProvisionTask::Shell(task2),
+        ProvisionTask::Shell(task3),
+    ];
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -329,9 +265,9 @@ fn test_pipeline_run_phase_order_is_strictly_pre_prov_post() {
 
     // ChrootContext wraps: ["chroot", rootfs, ...command],
     // so call[0]="chroot", call[1]=rootfs, call[2]=shell
-    assert_eq!(calls[0][2], String::from("/bin/sh-pre"));
-    assert_eq!(calls[1][2], String::from("/bin/sh-prov"));
-    assert_eq!(calls[2][2], String::from("/bin/sh-post"));
+    assert_eq!(calls[0][2], String::from("/bin/sh-1"));
+    assert_eq!(calls[1][2], String::from("/bin/sh-2"));
+    assert_eq!(calls[2][2], String::from("/bin/sh-3"));
 }
 
 #[test]
@@ -354,11 +290,13 @@ fn test_pipeline_run_stops_within_phase_on_error() {
 }
 
 #[test]
-fn test_pipeline_run_stops_on_first_phase_error() {
-    let pre = [inline_task("echo pre")];
-    let prov = [inline_task("echo prov")];
-    let post = [inline_task("echo post")];
-    let pipeline = Pipeline::new(&pre, &prov, &post);
+fn test_pipeline_run_stops_on_first_task_error() {
+    let tasks = [
+        inline_task("echo 1"),
+        inline_task("echo 2"),
+        inline_task("echo 3"),
+    ];
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
 
     let mock_executor = Arc::new(MockExecutor::failing_on(0));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -369,13 +307,15 @@ fn test_pipeline_run_stops_on_first_phase_error() {
 }
 
 #[test]
-fn test_pipeline_run_provisioner_failure_skips_post_processors() {
-    let pre = [inline_task("echo pre")];
-    let prov = [inline_task("echo prov")];
-    let post = [inline_task("echo post")];
-    let pipeline = Pipeline::new(&pre, &prov, &post);
+fn test_pipeline_run_error_stops_remaining_tasks() {
+    let tasks = [
+        inline_task("echo 1"),
+        inline_task("echo 2"),
+        inline_task("echo 3"),
+    ];
+    let pipeline = Pipeline::new(&[], &tasks, &[]);
 
-    // failing_on(1): pre (call 0) succeeds, prov (call 1) fails, post never runs
+    // failing_on(1): task 1 succeeds, task 2 fails, task 3 never runs
     let mock_executor = Arc::new(MockExecutor::failing_on(1));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
@@ -384,8 +324,8 @@ fn test_pipeline_run_provisioner_failure_skips_post_processors() {
 
     let err_msg = format!("{:#}", result.unwrap_err());
     assert!(
-        err_msg.contains("failed to run provisioner 1"),
-        "Expected provisioner failure error, got: {}",
+        err_msg.contains("failed to run provision 2"),
+        "Expected provision 2 failure, got: {}",
         err_msg
     );
 
@@ -458,7 +398,7 @@ fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
         ShellTask::with_shell(ScriptSource::Content("echo chroot1".to_string()), "/bin/sh-chroot1");
     chroot1.resolve_privilege(None).unwrap();
     chroot1.resolve_isolation(&IsolationConfig::default());
-    let task1 = TaskDefinition::Shell(chroot1);
+    let task1 = ProvisionTask::Shell(chroot1);
 
     let task2 = inline_task_direct("echo direct");
 
@@ -466,7 +406,7 @@ fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
         ShellTask::with_shell(ScriptSource::Content("echo chroot2".to_string()), "/bin/sh-chroot2");
     chroot2.resolve_privilege(None).unwrap();
     chroot2.resolve_isolation(&IsolationConfig::default());
-    let task3 = TaskDefinition::Shell(chroot2);
+    let task3 = ProvisionTask::Shell(chroot2);
 
     let tasks = [task1, task2, task3];
     let pipeline = Pipeline::new(&[], &tasks, &[]);
@@ -507,16 +447,16 @@ fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
 
 #[test]
 fn test_pipeline_validate_preserves_validation_variant() {
-    let bad_task = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
+    let bad_task = [ProvisionTask::Shell(ShellTask::new(ScriptSource::Script(
         "../../../etc/passwd".into(),
     )))];
-    let pipeline = Pipeline::new(&bad_task, &[], &[]);
+    let pipeline = Pipeline::new(&[], &bad_task, &[]);
     let err = pipeline.validate().unwrap_err();
     assert!(
         matches!(
             err,
             RsdebstrapError::Validation(ref msg)
-                if msg.contains("pre-processor 1 validation failed")
+                if msg.contains("provision 1 validation failed")
         ),
         "Expected RsdebstrapError::Validation with phase context, got: {:?}",
         err,
@@ -525,7 +465,7 @@ fn test_pipeline_validate_preserves_validation_variant() {
 
 #[test]
 fn test_pipeline_validate_preserves_io_variant() {
-    let nonexistent_task = [TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
+    let nonexistent_task = [ProvisionTask::Shell(ShellTask::new(ScriptSource::Script(
         "/nonexistent/path/to/script.sh".into(),
     )))];
     let pipeline = Pipeline::new(&[], &nonexistent_task, &[]);
@@ -537,7 +477,7 @@ fn test_pipeline_validate_preserves_io_variant() {
             ..
         } => {
             assert!(
-                context.contains("provisioner 1 validation failed"),
+                context.contains("provision 1 validation failed"),
                 "Expected phase context in Io.context, got: {}",
                 context,
             );

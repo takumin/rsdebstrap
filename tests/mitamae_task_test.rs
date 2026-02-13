@@ -4,7 +4,7 @@ mod helpers;
 
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::config::IsolationConfig;
-use rsdebstrap::task::{MitamaeTask, ScriptSource};
+use rsdebstrap::phase::{MitamaeTask, ScriptSource};
 use tempfile::tempdir;
 
 use crate::helpers::MockContext;
