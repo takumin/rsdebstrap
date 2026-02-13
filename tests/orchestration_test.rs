@@ -1,11 +1,14 @@
+use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use camino::Utf8Path;
 use rsdebstrap::{
     cli,
     executor::{CommandExecutor, CommandSpec, ExecutionResult},
     run_apply, run_validate,
 };
+use tempfile::NamedTempFile;
 
 type CommandCalls = Arc<Mutex<Vec<(String, Vec<String>)>>>;
 
@@ -24,11 +27,75 @@ impl CommandExecutor for RecordingExecutor {
     }
 }
 
+/// Write YAML content to a temporary file and return it (kept alive by caller).
+fn write_yaml_tempfile(yaml: &str) -> NamedTempFile {
+    let mut file = NamedTempFile::new().expect("failed to create temp file");
+    file.write_all(yaml.as_bytes())
+        .expect("failed to write yaml");
+    if !yaml.ends_with('\n') {
+        writeln!(file).expect("failed to write trailing newline");
+    }
+    file
+}
+
+/// Minimal bootstrap-only YAML (no provisioners).
+fn bootstrap_only_yaml() -> &'static str {
+    // editorconfig-checker-disable
+    r#"---
+dir: /tmp/orchestration-test-bootstrap
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs.tar.zst
+  mirrors:
+  - https://deb.debian.org/debian
+  variant: apt
+  components:
+  - main
+  architectures:
+  - amd64
+"#
+    // editorconfig-checker-enable
+}
+
+/// Minimal YAML with a provisioner (requires directory target for pipeline).
+fn provisioner_yaml() -> &'static str {
+    // editorconfig-checker-disable
+    r#"---
+dir: /tmp/orchestration-test-provisioner
+defaults:
+  isolation:
+    type: chroot
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+  mirrors:
+  - https://deb.debian.org/debian
+  variant: apt
+  components:
+  - main
+  architectures:
+  - amd64
+provisioners:
+- type: shell
+  content: |-
+    #!/bin/sh
+    set -e
+    echo "provisioning"
+"#
+    // editorconfig-checker-enable
+}
+
 #[test]
 fn run_apply_uses_executor_with_built_args() {
+    let file = write_yaml_tempfile(bootstrap_only_yaml());
+    let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let opts = cli::ApplyArgs {
         common: cli::CommonArgs {
-            file: "examples/debian_trixie_mmdebstrap.yml".into(),
+            file: path.to_owned(),
             log_level: cli::LogLevel::Error,
         },
         dry_run: true,
@@ -49,9 +116,11 @@ fn run_apply_uses_executor_with_built_args() {
 
 #[test]
 fn run_validate_succeeds_on_valid_profile() {
+    let file = write_yaml_tempfile(bootstrap_only_yaml());
+    let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let opts = cli::ValidateArgs {
         common: cli::CommonArgs {
-            file: "examples/debian_trixie_mmdebstrap.yml".into(),
+            file: path.to_owned(),
             log_level: cli::LogLevel::Error,
         },
     };
@@ -61,9 +130,11 @@ fn run_validate_succeeds_on_valid_profile() {
 
 #[test]
 fn run_apply_with_pipeline_tasks_uses_isolation() {
+    let file = write_yaml_tempfile(provisioner_yaml());
+    let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let opts = cli::ApplyArgs {
         common: cli::CommonArgs {
-            file: "examples/debian_trixie_with_provisioners.yml".into(),
+            file: path.to_owned(),
             log_level: cli::LogLevel::Error,
         },
         dry_run: true,
@@ -132,9 +203,11 @@ fn test_run_apply_pipeline_and_teardown_both_fail() {
     // pipeline task error is verified here. The teardown error handling path is
     // tested in pipeline_test.rs with mock contexts.
 
+    let file = write_yaml_tempfile(provisioner_yaml());
+    let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let opts = cli::ApplyArgs {
         common: cli::CommonArgs {
-            file: "examples/debian_trixie_with_provisioners.yml".into(),
+            file: path.to_owned(),
             log_level: cli::LogLevel::Error,
         },
         dry_run: true,
