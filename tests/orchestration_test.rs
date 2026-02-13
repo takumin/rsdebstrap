@@ -40,6 +40,7 @@ fn write_yaml_tempfile(yaml: &str) -> NamedTempFile {
 
 /// Minimal bootstrap-only YAML (no provisioners).
 fn bootstrap_only_yaml() -> String {
+    // editorconfig-checker-disable
     r#"---
 dir: /tmp/orchestration-test-bootstrap
 bootstrap:
@@ -55,10 +56,12 @@ bootstrap:
   - amd64
 "#
     .to_string()
+    // editorconfig-checker-enable
 }
 
 /// Minimal YAML with a provisioner (requires directory target for pipeline).
 fn provisioner_yaml() -> String {
+    // editorconfig-checker-disable
     r#"---
 dir: /tmp/orchestration-test-provisioner
 defaults:
@@ -85,6 +88,7 @@ provisioners:
     echo "provisioning"
 "#
     .to_string()
+    // editorconfig-checker-enable
 }
 
 #[test]
