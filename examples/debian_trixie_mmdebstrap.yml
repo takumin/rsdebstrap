@@ -1,9 +1,66 @@
 ---
+# Comprehensive example profile for Debian Trixie
+#
+# This profile demonstrates all available features:
+#   - defaults: isolation (chroot + mounts + resolv_conf), privilege, mitamae
+#   - bootstrap: mmdebstrap (debootstrap also available)
+#   - pipeline: pre_processors, provisioners (shell + mitamae), post_processors
+
 dir: /tmp/debian-trixie-server-amd64
+
+# Default settings applied to all tasks unless overridden per-task
+defaults:
+  # Isolation backend for running commands inside the rootfs
+  # Currently only 'chroot' is supported (bwrap/systemd-nspawn planned)
+  isolation:
+    type: chroot
+    # Predefined mount set: proc, sysfs, devtmpfs, devpts, tmpfs(/tmp), tmpfs(/run)
+    preset: recommends
+    # Custom mount entries (override preset entries with the same target)
+    mounts:
+    - source: /dev
+      target: /dev
+      options: [bind]
+    # Copy host's /etc/resolv.conf into the chroot for DNS resolution.
+    # Needed because the 'recommends' preset mounts tmpfs on /run,
+    # which breaks the systemd symlink /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf
+    #
+    # Alternative: generate resolv.conf with explicit nameservers
+    #   resolv_conf:
+    #     name_servers: [8.8.8.8, 8.8.4.4]
+    #     search: [example.com]
+    resolv_conf:
+      copy: true
+
+  # Privilege escalation for commands that require root access
+  # Required when mounts are configured. Supported methods: sudo, doas
+  privilege:
+    method: sudo
+
+  # Default mitamae binary paths (keyed by architecture)
+  mitamae:
+    binary:
+      x86_64: /usr/local/bin/mitamae-x86_64-linux
+      aarch64: /usr/local/bin/mitamae-aarch64-linux
+
+# Bootstrap backend configuration
+# Supported types: mmdebstrap, debootstrap
+#
+# debootstrap alternative:
+#   bootstrap:
+#     type: debootstrap
+#     suite: trixie
+#     target: rootfs
+#     mirror: https://deb.debian.org/debian
+#     variant: minbase
+#     arch: amd64
+#     components: [main, contrib]
+#     include: [curl, ca-certificates]
+#     merged_usr: true
 bootstrap:
   type: mmdebstrap
   suite: trixie
-  target: rootfs.tar.zst
+  target: rootfs          # Directory output (required for pipeline tasks)
   mirrors:
   - https://deb.debian.org/debian
   variant: apt
@@ -15,3 +72,50 @@ bootstrap:
   include:
   - curl
   - ca-certificates
+  privilege: true           # Use defaults.privilege method
+
+# Pre-processors run before provisioners
+pre_processors:
+- type: shell
+  content: |-
+    #!/bin/sh
+    set -e
+    echo "Running pre-processor..."
+
+# Main provisioning steps
+provisioners:
+# Shell provisioner with inline script
+- type: shell
+  content: |-
+    #!/bin/sh
+    set -e
+    apt-get update
+    apt-get install -y vim htop
+  # Per-task overrides (optional):
+  #   privilege: false        # Disable privilege for this task
+  #   privilege: { method: doas }  # Use a different method
+  #   isolation: false        # Run directly on host (no chroot)
+  #   shell: /bin/bash        # Use a different shell
+  # External script alternative:
+  #   script: ./scripts/setup.sh
+
+# Mitamae provisioner with inline recipe
+# Requires mitamae binary at the path specified in defaults.mitamae
+# - type: mitamae
+#   content: |-
+#     package 'build-essential' do
+#       action :install
+#     end
+#   binary: /path/to/mitamae  # Override defaults.mitamae for this task
+#   External recipe alternative:
+#     script: ./recipes/setup.rb
+
+# Post-processors run after provisioners
+post_processors:
+- type: shell
+  content: |-
+    #!/bin/sh
+    set -e
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    echo "Cleanup complete"
