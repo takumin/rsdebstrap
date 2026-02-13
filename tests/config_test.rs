@@ -2047,3 +2047,266 @@ bootstrap:
 
     Ok(())
 }
+
+// =============================================================================
+// resolv_conf integration tests
+// =============================================================================
+
+#[test]
+fn test_load_profile_with_resolv_conf_copy() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    preset: recommends
+    resolv_conf:
+      copy: true
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let rc = profile.defaults.isolation.resolv_conf().unwrap();
+    assert!(rc.copy);
+    assert!(rc.name_servers.is_empty());
+    assert!(rc.search.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_with_resolv_conf_name_servers() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    resolv_conf:
+      name_servers:
+        - 8.8.8.8
+        - 8.8.4.4
+      search:
+        - example.com
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let rc = profile.defaults.isolation.resolv_conf().unwrap();
+    assert!(!rc.copy);
+    assert_eq!(rc.name_servers.len(), 2);
+    assert_eq!(rc.search, vec!["example.com"]);
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_without_resolv_conf() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert!(profile.defaults.isolation.resolv_conf().is_none());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_resolv_conf_copy_with_name_servers() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    resolv_conf:
+      copy: true
+      name_servers:
+        - 8.8.8.8
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("mutually exclusive"),
+        "Expected error about mutual exclusivity, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_resolv_conf_empty_config() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    resolv_conf:
+      copy: false
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("name_servers"),
+        "Expected error about empty config, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_accepts_resolv_conf_copy() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    resolv_conf:
+      copy: true
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert!(profile.validate().is_ok());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_resolv_conf_search_with_newline() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    resolv_conf:
+      name_servers:
+        - 8.8.8.8
+      search:
+        - "evil.com\nnameserver 6.6.6.6"
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("newline"),
+        "Expected error about newline characters, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_resolv_conf_search_with_carriage_return() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
+    resolv_conf:
+      name_servers:
+        - 8.8.8.8
+      search:
+        - "evil.com\rnameserver 6.6.6.6"
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("newline"),
+        "Expected error about newline characters, got: {}",
+        err
+    );
+
+    Ok(())
+}
