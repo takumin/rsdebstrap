@@ -60,7 +60,7 @@ defaults:
 bootstrap:
   type: mmdebstrap
   suite: trixie
-  target: rootfs          # Directory output (required for pipeline tasks)
+  target: rootfs # Directory output (required for pipeline tasks)
   mirrors:
   - https://deb.debian.org/debian
   variant: apt
@@ -72,7 +72,7 @@ bootstrap:
   include:
   - curl
   - ca-certificates
-  privilege: true           # Use defaults.privilege method
+  privilege: true # Use defaults.privilege method
 
 # Pre-processors run before provisioners
 pre_processors:
