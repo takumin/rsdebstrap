@@ -4,7 +4,7 @@
 # This profile demonstrates all available features:
 #   - defaults: isolation (chroot + mounts + resolv_conf), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
-#   - pipeline: pre_processors, provisioners (shell + mitamae), post_processors
+#   - pipeline: prepare, provision (shell + mitamae), assemble
 
 dir: /tmp/debian-trixie-server-amd64
 
@@ -74,16 +74,11 @@ bootstrap:
   - ca-certificates
   privilege: true # Use defaults.privilege method
 
-# Pre-processors run before provisioners
-pre_processors:
-- type: shell
-  content: |-
-    #!/bin/sh
-    set -e
-    echo "Running pre-processor..."
+# Prepare phase runs before provisioning (no task types available yet)
+# prepare: []
 
 # Main provisioning steps
-provisioners:
+provision:
 # Shell provisioner with inline script
 - type: shell
   content: |-
@@ -110,8 +105,10 @@ provisioners:
 #   External recipe alternative:
 #     script: ./recipes/setup.rb
 
-# Post-processors run after provisioners
-post_processors:
+# Assemble phase runs after provisioning (no task types available yet)
+# assemble: []
+
+# Cleanup step (moved to provision phase until assemble gets task types)
 - type: shell
   content: |-
     #!/bin/sh

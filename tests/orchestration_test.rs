@@ -79,7 +79,7 @@ bootstrap:
   - main
   architectures:
   - amd64
-provisioners:
+provision:
 - type: shell
   content: |-
     #!/bin/sh
@@ -230,7 +230,7 @@ fn test_run_apply_pipeline_and_teardown_both_fail() {
 
     // The error should be about the pipeline task failing
     assert!(
-        err_string.contains("failed to run provisioner"),
+        err_string.contains("failed to run provision"),
         "Expected provisioner error, got: {}",
         err_string
     );

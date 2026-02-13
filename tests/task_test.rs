@@ -1,6 +1,6 @@
 use camino::Utf8Path;
 use rsdebstrap::RsdebstrapError;
-use rsdebstrap::task::{MitamaeTask, ScriptSource, ShellTask, TaskDefinition};
+use rsdebstrap::phase::{MitamaeTask, ProvisionTask, ScriptSource, ShellTask};
 use tempfile::tempdir;
 
 #[test]
@@ -192,17 +192,17 @@ fn test_validate_mitamae_recipe_symlink_rejected() {
 }
 
 // =============================================================================
-// T1: TaskDefinition::resolve_paths unit tests
+// T1: ProvisionTask::resolve_paths unit tests
 // =============================================================================
 
 #[test]
 fn test_resolve_paths_joins_relative_script_with_base_dir() {
     let mut task =
-        TaskDefinition::Shell(ShellTask::new(ScriptSource::Script("scripts/test.sh".into())));
+        ProvisionTask::Shell(ShellTask::new(ScriptSource::Script("scripts/test.sh".into())));
     task.resolve_paths(Utf8Path::new("/home/user/project"));
 
     match &task {
-        TaskDefinition::Shell(shell) => {
+        ProvisionTask::Shell(shell) => {
             assert_eq!(shell.script_path().unwrap().as_str(), "/home/user/project/scripts/test.sh");
         }
         other => panic!("Expected Shell task, got: {:?}", other),
@@ -211,13 +211,12 @@ fn test_resolve_paths_joins_relative_script_with_base_dir() {
 
 #[test]
 fn test_resolve_paths_preserves_absolute_script_path() {
-    let mut task = TaskDefinition::Shell(ShellTask::new(ScriptSource::Script(
-        "/absolute/path/test.sh".into(),
-    )));
+    let mut task =
+        ProvisionTask::Shell(ShellTask::new(ScriptSource::Script("/absolute/path/test.sh".into())));
     task.resolve_paths(Utf8Path::new("/home/user/project"));
 
     match &task {
-        TaskDefinition::Shell(shell) => {
+        ProvisionTask::Shell(shell) => {
             assert_eq!(shell.script_path().unwrap().as_str(), "/absolute/path/test.sh");
         }
         other => panic!("Expected Shell task, got: {:?}", other),
@@ -227,11 +226,11 @@ fn test_resolve_paths_preserves_absolute_script_path() {
 #[test]
 fn test_resolve_paths_does_not_modify_content_source() {
     let mut task =
-        TaskDefinition::Shell(ShellTask::new(ScriptSource::Content("echo hello".to_string())));
+        ProvisionTask::Shell(ShellTask::new(ScriptSource::Content("echo hello".to_string())));
     task.resolve_paths(Utf8Path::new("/home/user/project"));
 
     match &task {
-        TaskDefinition::Shell(shell) => {
+        ProvisionTask::Shell(shell) => {
             assert_eq!(shell.script_path(), None);
             assert_eq!(shell.source(), &ScriptSource::Content("echo hello".to_string()));
         }
@@ -302,7 +301,7 @@ fn test_shell_task_deserialize_rejects_neither_script_nor_content() {
 }
 
 // =============================================================================
-// T3: TaskDefinition YAML deserialization tests
+// T3: ProvisionTask YAML deserialization tests
 // =============================================================================
 
 #[test]
@@ -310,7 +309,7 @@ fn test_task_definition_deserialize_rejects_unknown_type() {
     let yaml = r#"type: ansible
 content: echo hello
 "#;
-    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ProvisionTask, _> = serde_yaml::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -324,7 +323,7 @@ content: echo hello
 fn test_task_definition_deserialize_rejects_missing_type() {
     let yaml = r#"content: echo hello
 "#;
-    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ProvisionTask, _> = serde_yaml::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -444,10 +443,10 @@ content: |
   end
 "#;
     // editorconfig-checker-enable
-    let task: TaskDefinition =
+    let task: ProvisionTask =
         serde_yaml::from_str(yaml).expect("should parse mitamae with content");
     match &task {
-        TaskDefinition::Mitamae(m) => {
+        ProvisionTask::Mitamae(m) => {
             assert_eq!(m.binary().unwrap().as_str(), "/usr/local/bin/mitamae");
             assert!(matches!(m.source(), ScriptSource::Content(_)));
         }
@@ -463,10 +462,9 @@ binary: /usr/local/bin/mitamae
 script: ./recipe.rb
 "#;
     // editorconfig-checker-enable
-    let task: TaskDefinition =
-        serde_yaml::from_str(yaml).expect("should parse mitamae with script");
+    let task: ProvisionTask = serde_yaml::from_str(yaml).expect("should parse mitamae with script");
     match &task {
-        TaskDefinition::Mitamae(m) => {
+        ProvisionTask::Mitamae(m) => {
             assert_eq!(m.binary().unwrap().as_str(), "/usr/local/bin/mitamae");
             assert_eq!(m.script_path(), Some(Utf8Path::new("./recipe.rb")));
         }
@@ -481,10 +479,10 @@ fn test_task_definition_deserialize_mitamae_without_binary() {
 content: echo test
 "#;
     // editorconfig-checker-enable
-    let task: TaskDefinition =
+    let task: ProvisionTask =
         serde_yaml::from_str(yaml).expect("should parse mitamae without binary");
     match &task {
-        TaskDefinition::Mitamae(m) => {
+        ProvisionTask::Mitamae(m) => {
             assert_eq!(m.binary(), None, "binary should be None when not specified");
             assert!(matches!(m.source(), ScriptSource::Content(_)));
         }
@@ -501,7 +499,7 @@ script: ./recipe.rb
 content: echo test
 "#;
     // editorconfig-checker-enable
-    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ProvisionTask, _> = serde_yaml::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -518,7 +516,7 @@ fn test_task_definition_deserialize_mitamae_rejects_neither() {
 binary: /usr/local/bin/mitamae
 "#;
     // editorconfig-checker-enable
-    let result: std::result::Result<TaskDefinition, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ProvisionTask, _> = serde_yaml::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -699,14 +697,13 @@ fn test_mitamae_name_script() {
 
 #[test]
 fn test_task_definition_name_shell_prefix() {
-    let task =
-        TaskDefinition::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
+    let task = ProvisionTask::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
     assert_eq!(task.name().as_ref(), "shell:<inline>");
 }
 
 #[test]
 fn test_task_definition_name_mitamae_prefix() {
-    let task = TaskDefinition::Mitamae(MitamaeTask::new(
+    let task = ProvisionTask::Mitamae(MitamaeTask::new(
         ScriptSource::Content("package 'vim'".to_string()),
         "/usr/local/bin/mitamae".into(),
     ));
@@ -715,14 +712,13 @@ fn test_task_definition_name_mitamae_prefix() {
 
 #[test]
 fn test_task_definition_binary_path_shell_none() {
-    let task =
-        TaskDefinition::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
+    let task = ProvisionTask::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
     assert_eq!(task.binary_path(), None);
 }
 
 #[test]
 fn test_task_definition_binary_path_mitamae_some() {
-    let task = TaskDefinition::Mitamae(MitamaeTask::new(
+    let task = ProvisionTask::Mitamae(MitamaeTask::new(
         ScriptSource::Content("package 'vim'".to_string()),
         "/usr/local/bin/mitamae".into(),
     ));
@@ -855,7 +851,7 @@ fn test_mitamae_resolve_paths_with_none_binary() {
 
 #[test]
 fn test_task_definition_binary_path_mitamae_none_when_unset() {
-    let task = TaskDefinition::Mitamae(MitamaeTask::new_without_binary(ScriptSource::Content(
+    let task = ProvisionTask::Mitamae(MitamaeTask::new_without_binary(ScriptSource::Content(
         "package 'vim'".to_string(),
     )));
     assert_eq!(task.binary_path(), None);
@@ -959,7 +955,7 @@ isolation: false
 fn test_task_definition_resolve_isolation_dispatches_to_shell() {
     use rsdebstrap::config::IsolationConfig;
     let mut task =
-        TaskDefinition::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
+        ProvisionTask::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
     task.resolve_isolation(&IsolationConfig::chroot());
     assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
 }
@@ -967,7 +963,7 @@ fn test_task_definition_resolve_isolation_dispatches_to_shell() {
 #[test]
 fn test_task_definition_resolve_isolation_dispatches_to_mitamae() {
     use rsdebstrap::config::IsolationConfig;
-    let mut task = TaskDefinition::Mitamae(MitamaeTask::new(
+    let mut task = ProvisionTask::Mitamae(MitamaeTask::new(
         ScriptSource::Content("package 'vim'".to_string()),
         "/usr/local/bin/mitamae".into(),
     ));

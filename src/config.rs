@@ -24,9 +24,9 @@ use crate::bootstrap::{
 use crate::error::RsdebstrapError;
 use crate::executor::CommandSpec;
 use crate::isolation::{ChrootProvider, IsolationProvider};
+use crate::phase::{AssembleTask, PrepareTask, ProvisionTask};
 use crate::pipeline::Pipeline;
 use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
-use crate::task::TaskDefinition;
 
 /// Static regex for removing duplicate location info from serde_yaml error messages.
 static YAML_LOCATION_RE: LazyLock<Regex> =
@@ -269,7 +269,7 @@ impl MountEntry {
             )));
         }
 
-        crate::task::validate_no_parent_dirs(&self.target, "mount target")?;
+        crate::phase::validate_no_parent_dirs(&self.target, "mount target")?;
 
         if self.is_bind_mount() {
             let source_path = Utf8Path::new(&self.source);
@@ -279,7 +279,7 @@ impl MountEntry {
                     self.source
                 )));
             }
-            crate::task::validate_no_parent_dirs(source_path, "bind mount source")?;
+            crate::phase::validate_no_parent_dirs(source_path, "bind mount source")?;
         } else if !self.is_pseudo_fs() {
             let source_path = Utf8Path::new(&self.source);
             if !source_path.starts_with("/") {
@@ -290,7 +290,7 @@ impl MountEntry {
                     PSEUDO_FS_TYPES.join(", ")
                 )));
             }
-            crate::task::validate_no_parent_dirs(source_path, "mount source")?;
+            crate::phase::validate_no_parent_dirs(source_path, "mount source")?;
         }
 
         Ok(())
@@ -497,21 +497,21 @@ pub struct Profile {
     pub defaults: Defaults,
     /// Bootstrap tool configuration
     pub bootstrap: Bootstrap,
-    /// Pre-processors to run before provisioning (optional)
+    /// Prepare tasks to run before provisioning (optional)
     #[serde(default)]
-    pub pre_processors: Vec<TaskDefinition>,
+    pub prepare: Vec<PrepareTask>,
     /// Main provisioning tasks (optional)
     #[serde(default)]
-    pub provisioners: Vec<TaskDefinition>,
-    /// Post-processors to run after provisioning (optional)
+    pub provision: Vec<ProvisionTask>,
+    /// Assemble tasks to run after provisioning (optional)
     #[serde(default)]
-    pub post_processors: Vec<TaskDefinition>,
+    pub assemble: Vec<AssembleTask>,
 }
 
 impl Profile {
     /// Creates a `Pipeline` from this profile's task phases.
     pub fn pipeline(&self) -> Pipeline<'_> {
-        Pipeline::new(&self.pre_processors, &self.provisioners, &self.post_processors)
+        Pipeline::new(&self.prepare, &self.provision, &self.assemble)
     }
 
     /// Validate configuration semantics beyond basic deserialization.
@@ -675,23 +675,19 @@ fn parse_profile_yaml(
 fn validate_task_isolation_no_mounts(profile: &Profile) -> Result<(), RsdebstrapError> {
     use crate::isolation::TaskIsolation;
 
-    for (phase_name, tasks) in [
-        ("pre-processor", profile.pre_processors.as_slice()),
-        ("provisioner", profile.provisioners.as_slice()),
-        ("post-processor", profile.post_processors.as_slice()),
-    ] {
-        for (index, task) in tasks.iter().enumerate() {
-            if let TaskIsolation::Config(config) = task.task_isolation()
-                && config.has_mounts()
-            {
-                return Err(RsdebstrapError::Validation(format!(
-                    "{} {} has preset or mounts in task-level isolation, \
-                    which is not supported. Mounts must be configured at \
-                    the profile level (defaults.isolation)",
-                    phase_name,
-                    index + 1,
-                )));
-            }
+    // Check provision tasks for task-level mounts
+    // (prepare and assemble are currently empty enums, so iteration is a no-op,
+    // but included for future-proofing)
+    for (index, task) in profile.provision.iter().enumerate() {
+        if let TaskIsolation::Config(config) = task.task_isolation()
+            && config.has_mounts()
+        {
+            return Err(RsdebstrapError::Validation(format!(
+                "provision {} has preset or mounts in task-level isolation, \
+                which is not supported. Mounts must be configured at \
+                the profile level (defaults.isolation)",
+                index + 1,
+            )));
         }
     }
     Ok(())
@@ -719,13 +715,8 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
     // Validate task-level isolation does not specify preset/mounts (before resolution)
     validate_task_isolation_no_mounts(profile)?;
 
-    for task in profile
-        .pre_processors
-        .iter_mut()
-        .chain(profile.provisioners.iter_mut())
-        .chain(profile.post_processors.iter_mut())
-    {
-        if let TaskDefinition::Mitamae(mitamae_task) = task
+    for task in profile.provision.iter_mut() {
+        if let ProvisionTask::Mitamae(mitamae_task) = task
             && let Some(binary) = default_binary
         {
             mitamae_task.set_binary_if_absent(binary);
@@ -749,12 +740,7 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
         }
     }
 
-    for task in profile
-        .pre_processors
-        .iter_mut()
-        .chain(profile.provisioners.iter_mut())
-        .chain(profile.post_processors.iter_mut())
-    {
+    for task in profile.provision.iter_mut() {
         task.resolve_paths(profile_dir);
     }
 }

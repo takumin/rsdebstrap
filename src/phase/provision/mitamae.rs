@@ -13,10 +13,10 @@ use serde::Deserialize;
 use std::fs;
 use tracing::{debug, info};
 
-use super::{ScriptSource, TempFileGuard};
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
+use crate::phase::{ScriptSource, TempFileGuard};
 use crate::privilege::{Privilege, PrivilegeDefaults};
 
 /// Mitamae task data and execution logic.
@@ -63,7 +63,7 @@ impl<'de> Deserialize<'de> for MitamaeTask {
         }
 
         let raw = RawMitamaeTask::deserialize(deserializer)?;
-        let source = super::resolve_script_source::<D::Error>(raw.script, raw.content)?;
+        let source = crate::phase::resolve_script_source::<D::Error>(raw.script, raw.content)?;
         Ok(MitamaeTask {
             source,
             binary: raw.binary,
@@ -188,8 +188,8 @@ impl MitamaeTask {
             ));
         }
 
-        super::validate_no_parent_dirs(binary, "mitamae binary")?;
-        super::validate_host_file_exists(binary, "mitamae binary")?;
+        crate::phase::validate_no_parent_dirs(binary, "mitamae binary")?;
+        crate::phase::validate_host_file_exists(binary, "mitamae binary")?;
 
         // Validate recipe source
         self.source.validate("mitamae recipe")
@@ -215,7 +215,7 @@ impl MitamaeTask {
         // binary is copied from the host side — there is no rootfs-resident binary
         // to verify. Only /tmp validation is required for the copy destination.
         if !dry_run {
-            super::validate_tmp_directory(rootfs).context("rootfs validation failed")?;
+            crate::phase::validate_tmp_directory(rootfs).context("rootfs validation failed")?;
         }
 
         info!("running mitamae recipe: {} (isolation: {})", self.name(), context.name());
@@ -230,14 +230,14 @@ impl MitamaeTask {
         let _binary_guard = TempFileGuard::new(target_binary.clone(), dry_run);
         let _recipe_guard = TempFileGuard::new(target_recipe.clone(), dry_run);
 
-        super::prepare_files_with_toctou_check(rootfs, dry_run, || {
+        crate::phase::prepare_files_with_toctou_check(rootfs, dry_run, || {
             info!("copying mitamae binary from {} to rootfs", binary);
             fs::copy(binary, &target_binary).with_context(|| {
                 format!("failed to copy mitamae binary {} to {}", binary, target_binary)
             })?;
             #[cfg(unix)]
-            super::set_file_mode(&target_binary, 0o700)?;
-            super::prepare_source_file(&self.source, &target_recipe, 0o600, "recipe")
+            crate::phase::set_file_mode(&target_binary, 0o700)?;
+            crate::phase::prepare_source_file(&self.source, &target_recipe, 0o600, "recipe")
         })?;
 
         let binary_path_in_isolation = format!("/tmp/{}", binary_name);
@@ -248,13 +248,13 @@ impl MitamaeTask {
             recipe_path_in_isolation,
         ];
 
-        let result = super::execute_in_context(
+        let result = crate::phase::execute_in_context(
             context,
             &command,
             "mitamae",
             self.privilege.resolved_method(),
         )?;
-        super::check_execution_result(&result, &command, context.name(), dry_run)?;
+        crate::phase::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("mitamae recipe completed successfully");
         Ok(())
