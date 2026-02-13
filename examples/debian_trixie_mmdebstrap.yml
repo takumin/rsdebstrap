@@ -17,10 +17,10 @@ defaults:
     # Predefined mount set: proc, sysfs, devtmpfs, devpts, tmpfs(/tmp), tmpfs(/run)
     preset: recommends
     # Custom mount entries (override preset entries with the same target)
-    mounts:
-    - source: /dev
-      target: /dev
-      options: [bind]
+    # mounts:
+    # - source: /dev
+    #   target: /dev
+    #   options: [bind]
     # Copy host's /etc/resolv.conf into the chroot for DNS resolution.
     # Needed because the 'recommends' preset mounts tmpfs on /run,
     # which breaks the systemd symlink /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf
