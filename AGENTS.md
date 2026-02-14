@@ -72,9 +72,18 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - Methods: `name()`, `validate()`, `execute()`, `resolved_isolation_config()`
   - Implemented by `PrepareTask`, `ProvisionTask`, `AssembleTask`
 
-- **`PrepareTask`** enum (`src/phase/prepare.rs`) - Preparation tasks before provisioning
-  - `#[non_exhaustive]` empty enum — no task types available yet
-  - `PhaseItem` impl uses `match *self {}` for exhaustive matching
+- **`PrepareTask`** enum (`src/phase/prepare/mod.rs`) - Preparation tasks before provisioning
+  - `Mount` variant (`src/phase/prepare/mount.rs`) - Declares filesystem mounts for the rootfs
+  - `mount_task()` returns `Option<&MountTask>` for accessing the inner mount task
+  - `PhaseItem::execute()` is a no-op for Mount — lifecycle managed at pipeline level
+
+- **`MountTask`** struct (`src/phase/prepare/mount.rs`) - Mount declaration for prepare phase
+  - `preset: Option<MountPreset>`, `mounts: Vec<MountEntry>`
+  - `resolved_mounts()` merges preset + custom mounts (same logic as former `IsolationConfig::resolved_mounts()`)
+  - `has_mounts()` returns true if preset or custom mounts are specified
+  - `validate()` checks entries and mount order
+  - `name()` returns "preset", "custom", "preset+custom", or "empty"
+  - At most one mount task allowed in prepare phase (validated by `Profile::validate_mounts()`)
 
 - **`AssembleTask`** enum (`src/phase/assemble.rs`) - Finalization tasks after provisioning
   - `#[non_exhaustive]` empty enum — no task types available yet
@@ -114,14 +123,11 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - Note: `UseDefault` and `Inherit` produce identical behavior because `IsolationConfig` always has a default (`Chroot`). Both exist for API symmetry with `Privilege` enum.
 
 - **`IsolationConfig`** enum (`src/config.rs`) - Isolation backend configuration
-  - `Chroot { preset, mounts, resolv_conf }` - chroot with optional filesystem mounts and resolv.conf setup
-  - `preset: Option<MountPreset>` — predefined mount set (e.g., `recommends`)
-  - `mounts: Vec<MountEntry>` — custom mount entries
+  - `Chroot { resolv_conf }` - chroot with optional resolv.conf setup
   - `resolv_conf: Option<ResolvConfConfig>` — optional resolv.conf configuration for DNS resolution
-  - `resolved_mounts()` merges preset + custom mounts (custom overrides preset at original position)
-  - `has_mounts()` returns true if preset or custom mounts are specified
   - `resolv_conf()` returns `Option<&ResolvConfConfig>`
-  - `chroot()` convenience constructor returns default chroot (no preset, no mounts, no resolv_conf)
+  - `chroot()` convenience constructor returns default chroot (no resolv_conf)
+  - Note: mount configuration has moved to `MountTask` in the prepare phase
 
 - **`ResolvConfConfig`** struct (`src/config.rs`) - resolv.conf configuration
   - `copy: bool` — copy host's /etc/resolv.conf into the chroot (following symlinks)
@@ -186,11 +192,6 @@ dir: /output/path           # Base output directory
 defaults:                   # Optional default settings
   isolation:
     type: chroot            # Isolation backend: chroot (default)
-    preset: recommends      # Optional: predefined mount set
-    mounts:                 # Optional: custom mount entries
-      - source: /dev
-        target: /dev
-        options: [bind]
     resolv_conf:            # Optional: resolv.conf setup for DNS in chroot
       copy: true            # Copy host's /etc/resolv.conf
       # OR
@@ -208,7 +209,13 @@ bootstrap:
   target: rootfs            # Output name (directory or archive)
   privilege: true           # Use default privilege method
   # Backend-specific options...
-prepare: []                 # Optional preparation steps (no task types yet)
+prepare:                    # Optional preparation steps
+  - type: mount             # Filesystem mounts for the rootfs
+    preset: recommends      # Optional: predefined mount set
+    mounts:                 # Optional: custom mount entries
+      - source: /dev
+        target: /dev
+        options: [bind]
 provision:                  # Optional main provisioning steps
   - type: shell
     content: "..."          # Inline script
@@ -251,8 +258,9 @@ assemble: []                # Optional finalization steps (no task types yet)
 
 #### Mount configuration rules
 
-- Mounts are configured at profile level (`defaults.isolation`), not at task level
-- When `preset` or `mounts` are specified, `defaults.privilege` must be configured
+- Mounts are configured in the `prepare` phase as a `type: mount` task
+- At most one mount task is allowed in the prepare phase
+- When mounts are specified, `defaults.privilege` must be configured
 - Mount targets must be absolute paths without `..` components
 - Bind mount sources must exist on the host
 - Mount order must satisfy parent-before-child ordering

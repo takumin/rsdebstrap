@@ -2,9 +2,9 @@
 # Comprehensive example profile for Debian Trixie
 #
 # This profile demonstrates all available features:
-#   - defaults: isolation (chroot + mounts + resolv_conf), privilege, mitamae
+#   - defaults: isolation (chroot + resolv_conf), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
-#   - pipeline: prepare, provision (shell + mitamae), assemble
+#   - pipeline: prepare (mount), provision (shell + mitamae), assemble
 
 dir: /tmp/debian-trixie-server-amd64
 
@@ -14,13 +14,6 @@ defaults:
   # Currently only 'chroot' is supported (bwrap/systemd-nspawn planned)
   isolation:
     type: chroot
-    # Predefined mount set: proc, sysfs, devtmpfs, devpts, tmpfs(/tmp), tmpfs(/run)
-    preset: recommends
-    # Custom mount entries (override preset entries with the same target)
-    # mounts:
-    # - source: /dev
-    #   target: /dev
-    #   options: [bind]
     # Copy host's /etc/resolv.conf into the chroot for DNS resolution.
     # Needed because the 'recommends' preset mounts tmpfs on /run,
     # which breaks the systemd symlink /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf
@@ -74,8 +67,17 @@ bootstrap:
   - ca-certificates
   privilege: true # Use defaults.privilege method
 
-# Prepare phase runs before provisioning (no task types available yet)
-# prepare: []
+# Prepare phase: filesystem mounts for the rootfs
+prepare:
+# Mount task declares filesystems to mount before provisioning
+- type: mount
+  # Predefined mount set: proc, sysfs, devtmpfs, devpts, tmpfs(/tmp), tmpfs(/run)
+  preset: recommends
+  # Custom mount entries (override preset entries with the same target)
+  # mounts:
+  # - source: /dev
+  #   target: /dev
+  #   options: [bind]
 
 # Main provisioning steps
 provision:

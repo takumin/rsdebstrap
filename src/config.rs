@@ -360,12 +360,6 @@ impl Bootstrap {
 pub enum IsolationConfig {
     /// chroot isolation (default)
     Chroot {
-        /// Optional preset for predefined mount sets.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        preset: Option<MountPreset>,
-        /// Custom mount entries.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        mounts: Vec<MountEntry>,
         /// Optional resolv.conf configuration for DNS resolution inside chroot.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolv_conf: Option<ResolvConfConfig>,
@@ -375,73 +369,20 @@ pub enum IsolationConfig {
 
 impl Default for IsolationConfig {
     fn default() -> Self {
-        Self::Chroot {
-            preset: None,
-            mounts: vec![],
-            resolv_conf: None,
-        }
+        Self::Chroot { resolv_conf: None }
     }
 }
 
 impl IsolationConfig {
-    /// Creates a default chroot config without preset or mounts.
+    /// Creates a default chroot config.
     pub fn chroot() -> Self {
         Self::default()
-    }
-
-    /// Returns the resolved list of mount entries.
-    ///
-    /// If a preset is set, expands the preset entries first. Custom mounts
-    /// with the same target as a preset entry replace the preset entry
-    /// at its original position, preserving mount order (parent before child).
-    /// Non-overlapping custom mounts are appended in YAML definition order.
-    pub fn resolved_mounts(&self) -> Vec<MountEntry> {
-        match self {
-            Self::Chroot { preset, mounts, .. } => {
-                let mut preset_entries =
-                    preset.as_ref().map(|p| p.to_entries()).unwrap_or_default();
-
-                if mounts.is_empty() {
-                    return preset_entries;
-                }
-                if preset_entries.is_empty() {
-                    return mounts.clone();
-                }
-
-                // Build lookup from target path to custom mount entry
-                let mut custom_by_target: HashMap<&Utf8Path, &MountEntry> =
-                    mounts.iter().map(|m| (m.target.as_path(), m)).collect();
-
-                // Replace preset entries in-place where custom overrides exist
-                for entry in &mut preset_entries {
-                    if let Some(custom) = custom_by_target.remove(entry.target.as_path()) {
-                        *entry = custom.clone();
-                    }
-                }
-
-                // Append non-overlapping custom mounts in YAML definition order
-                for m in mounts {
-                    if custom_by_target.contains_key(m.target.as_path()) {
-                        preset_entries.push(m.clone());
-                    }
-                }
-
-                preset_entries
-            }
-        }
-    }
-
-    /// Returns true if this config has any mount entries (preset or custom).
-    pub fn has_mounts(&self) -> bool {
-        match self {
-            Self::Chroot { preset, mounts, .. } => preset.is_some() || !mounts.is_empty(),
-        }
     }
 
     /// Returns the resolv.conf configuration, if any.
     pub fn resolv_conf(&self) -> Option<&ResolvConfConfig> {
         match self {
-            Self::Chroot { resolv_conf, .. } => resolv_conf.as_ref(),
+            Self::Chroot { resolv_conf } => resolv_conf.as_ref(),
         }
     }
 
@@ -558,11 +499,20 @@ impl Profile {
 
     /// Validates mount-related configuration.
     fn validate_mounts(&self) -> Result<(), RsdebstrapError> {
-        let resolved_mounts = self.defaults.isolation.resolved_mounts();
+        // Collect mount tasks from prepare phase
+        let mount_tasks: Vec<_> = self.prepare.iter().filter_map(|t| t.mount_task()).collect();
 
-        if resolved_mounts.is_empty() {
-            return Ok(());
+        // At most one mount task allowed
+        if mount_tasks.len() > 1 {
+            return Err(RsdebstrapError::Validation(
+                "at most one mount task is allowed in the prepare phase".to_string(),
+            ));
         }
+
+        match mount_tasks.first() {
+            Some(task) if task.has_mounts() => {}
+            _ => return Ok(()),
+        };
 
         // mounts require privilege to be configured
         if self.defaults.privilege.is_none() {
@@ -577,24 +527,9 @@ impl Profile {
         validate_command_in_path("mount", "mount command")?;
         validate_command_in_path("umount", "umount command")?;
 
-        // Validate each mount entry
-        for entry in &resolved_mounts {
-            entry.validate()?;
-
-            // Validate bind mount source exists on host
-            if entry.is_bind_mount() {
-                let source_path = Utf8Path::new(&entry.source);
-                if !source_path.exists() {
-                    return Err(RsdebstrapError::Validation(format!(
-                        "bind mount source '{}' does not exist on host",
-                        entry.source
-                    )));
-                }
-            }
-        }
-
-        // Validate mount order: parent directories must come before children
-        validate_mount_order(&resolved_mounts)?;
+        // Mount entry validation and mount order are handled by MountTask::validate()
+        // which is called by the pipeline validation path.
+        // Here we only need to check privilege requirements.
 
         Ok(())
     }
@@ -609,7 +544,7 @@ fn validate_command_in_path(command: &str, label: &str) -> Result<(), Rsdebstrap
 }
 
 /// Validates that mount entries are in correct order (parent before child).
-fn validate_mount_order(mounts: &[MountEntry]) -> Result<(), RsdebstrapError> {
+pub(crate) fn validate_mount_order(mounts: &[MountEntry]) -> Result<(), RsdebstrapError> {
     for (i, entry) in mounts.iter().enumerate() {
         for earlier in &mounts[..i] {
             // If this entry's target is a parent of an earlier entry's target,
@@ -668,32 +603,6 @@ fn parse_profile_yaml(
     serde_yaml::from_reader(reader).map_err(|e| format_yaml_parse_error(e, file_path))
 }
 
-/// Validates that task-level isolation configs do not specify preset or mounts.
-///
-/// Must be called before `resolve_isolation()` so we can distinguish explicit
-/// task-level config from inherited defaults.
-fn validate_task_isolation_no_mounts(profile: &Profile) -> Result<(), RsdebstrapError> {
-    use crate::isolation::TaskIsolation;
-
-    // Check provision tasks for task-level mounts.
-    // NOTE: This check currently only applies to the 'provision' phase.
-    // If 'prepare' or 'assemble' phases gain tasks with isolation settings
-    // in the future, this function MUST be updated to check them as well.
-    for (index, task) in profile.provision.iter().enumerate() {
-        if let TaskIsolation::Config(config) = task.task_isolation()
-            && config.has_mounts()
-        {
-            return Err(RsdebstrapError::Validation(format!(
-                "provision {} has preset or mounts in task-level isolation, \
-                which is not supported. Mounts must be configured at \
-                the profile level (defaults.isolation)",
-                index + 1,
-            )));
-        }
-    }
-    Ok(())
-}
-
 fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError> {
     let arch = std::env::consts::ARCH;
     let default_binary = profile.defaults.mitamae.binary.get(arch);
@@ -712,9 +621,6 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
 
     // Resolve privilege for bootstrap
     profile.bootstrap.resolve_privilege(privilege_defaults)?;
-
-    // Validate task-level isolation does not specify preset/mounts (before resolution)
-    validate_task_isolation_no_mounts(profile)?;
 
     for task in profile.provision.iter_mut() {
         if let ProvisionTask::Mitamae(mitamae_task) = task
@@ -1173,124 +1079,12 @@ mod tests {
     }
 
     // =========================================================================
-    // IsolationConfig mount tests
+    // IsolationConfig tests
     // =========================================================================
 
     #[test]
-    fn test_isolation_config_resolved_mounts_empty() {
-        let config = IsolationConfig::chroot();
-        assert!(config.resolved_mounts().is_empty());
-    }
-
-    #[test]
-    fn test_isolation_config_resolved_mounts_preset_only() {
-        let config = IsolationConfig::Chroot {
-            preset: Some(MountPreset::Recommends),
-            mounts: vec![],
-            resolv_conf: None,
-        };
-        let mounts = config.resolved_mounts();
-        assert_eq!(mounts.len(), 6);
-    }
-
-    #[test]
-    fn test_isolation_config_resolved_mounts_custom_only() {
-        let config = IsolationConfig::Chroot {
-            preset: None,
-            mounts: vec![MountEntry {
-                source: "proc".to_string(),
-                target: "/proc".into(),
-                options: vec![],
-            }],
-            resolv_conf: None,
-        };
-        let mounts = config.resolved_mounts();
-        assert_eq!(mounts.len(), 1);
-    }
-
-    #[test]
-    fn test_isolation_config_resolved_mounts_merge_replaces_preset() {
-        let config = IsolationConfig::Chroot {
-            preset: Some(MountPreset::Recommends),
-            mounts: vec![MountEntry {
-                source: "/dev".to_string(),
-                target: "/dev".into(),
-                options: vec!["bind".to_string()],
-            }],
-            resolv_conf: None,
-        };
-        let mounts = config.resolved_mounts();
-
-        // Original preset has 6, custom replaces /dev (devtmpfs), so 5 preset + 1 custom = 6
-        assert_eq!(mounts.len(), 6);
-
-        // The /dev entry should be the custom bind mount, not the preset devtmpfs
-        let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
-        assert_eq!(dev_entry.source, "/dev");
-        assert!(dev_entry.is_bind_mount());
-    }
-
-    #[test]
-    fn test_isolation_config_has_mounts() {
-        assert!(!IsolationConfig::chroot().has_mounts());
-        assert!(
-            IsolationConfig::Chroot {
-                preset: Some(MountPreset::Recommends),
-                mounts: vec![],
-                resolv_conf: None,
-            }
-            .has_mounts()
-        );
-        assert!(
-            IsolationConfig::Chroot {
-                preset: None,
-                mounts: vec![MountEntry {
-                    source: "proc".to_string(),
-                    target: "/proc".into(),
-                    options: vec![],
-                }],
-                resolv_conf: None,
-            }
-            .has_mounts()
-        );
-    }
-
-    #[test]
-    fn test_isolation_config_chroot_with_preset_deserialize() {
-        let yaml = "type: chroot\npreset: recommends\n";
-        let config: IsolationConfig = serde_yaml::from_str(yaml).unwrap();
-        match config {
-            IsolationConfig::Chroot { preset, mounts, .. } => {
-                assert_eq!(preset, Some(MountPreset::Recommends));
-                assert!(mounts.is_empty());
-            }
-        }
-    }
-
-    #[test]
-    fn test_isolation_config_chroot_with_mounts_deserialize() {
-        let yaml = "type: chroot\nmounts:\n  - source: proc\n    target: /proc\n";
-        let config: IsolationConfig = serde_yaml::from_str(yaml).unwrap();
-        match config {
-            IsolationConfig::Chroot { preset, mounts, .. } => {
-                assert!(preset.is_none());
-                assert_eq!(mounts.len(), 1);
-                assert_eq!(mounts[0].source, "proc");
-            }
-        }
-    }
-
-    #[test]
     fn test_isolation_config_serialize_deserialize_roundtrip() {
-        let config = IsolationConfig::Chroot {
-            preset: Some(MountPreset::Recommends),
-            mounts: vec![MountEntry {
-                source: "/dev".to_string(),
-                target: "/dev".into(),
-                options: vec!["bind".to_string()],
-            }],
-            resolv_conf: None,
-        };
+        let config = IsolationConfig::Chroot { resolv_conf: None };
         let yaml = serde_yaml::to_string(&config).unwrap();
         let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);
@@ -1300,9 +1094,7 @@ mod tests {
     fn test_isolation_config_serialize_skips_empty_fields() {
         let config = IsolationConfig::chroot();
         let yaml = serde_yaml::to_string(&config).unwrap();
-        // Empty mounts and None preset should be omitted
-        assert!(!yaml.contains("preset"));
-        assert!(!yaml.contains("mounts"));
+        assert!(!yaml.contains("resolv_conf"));
     }
 
     // =========================================================================
@@ -1443,104 +1235,6 @@ mod tests {
     fn test_mount_preset_recommends_entries_satisfy_mount_order() {
         let entries = MountPreset::Recommends.to_entries();
         validate_mount_order(&entries).unwrap();
-    }
-
-    #[test]
-    fn test_resolved_mounts_merge_preserves_mount_order() {
-        // Custom /dev override should be placed at the original /dev position
-        // (before /dev/pts), not appended at the end
-        let config = IsolationConfig::Chroot {
-            preset: Some(MountPreset::Recommends),
-            mounts: vec![MountEntry {
-                source: "/dev".to_string(),
-                target: "/dev".into(),
-                options: vec!["bind".to_string()],
-            }],
-            resolv_conf: None,
-        };
-        let mounts = config.resolved_mounts();
-        assert_eq!(mounts.len(), 6);
-
-        // /dev should come before /dev/pts
-        let dev_pos = mounts
-            .iter()
-            .position(|m| m.target.as_str() == "/dev")
-            .unwrap();
-        let devpts_pos = mounts
-            .iter()
-            .position(|m| m.target.as_str() == "/dev/pts")
-            .unwrap();
-        assert!(
-            dev_pos < devpts_pos,
-            "/dev (pos {}) should come before /dev/pts (pos {})",
-            dev_pos,
-            devpts_pos
-        );
-
-        // The merged result should pass mount order validation
-        validate_mount_order(&mounts).unwrap();
-    }
-
-    #[test]
-    fn test_resolved_mounts_merge_multiple_overrides() {
-        let config = IsolationConfig::Chroot {
-            preset: Some(MountPreset::Recommends),
-            mounts: vec![
-                MountEntry {
-                    source: "tmpfs".to_string(),
-                    target: "/tmp".into(),
-                    options: vec!["size=2G".to_string()],
-                },
-                MountEntry {
-                    source: "/dev".to_string(),
-                    target: "/dev".into(),
-                    options: vec!["bind".to_string()],
-                },
-            ],
-            resolv_conf: None,
-        };
-        let mounts = config.resolved_mounts();
-        assert_eq!(mounts.len(), 6);
-
-        // Verify custom entries replaced the presets
-        let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
-        assert!(dev_entry.is_bind_mount());
-
-        let tmp_entry = mounts.iter().find(|m| m.target.as_str() == "/tmp").unwrap();
-        assert!(tmp_entry.options.contains(&"size=2G".to_string()));
-
-        // The merged result should pass mount order validation
-        validate_mount_order(&mounts).unwrap();
-    }
-
-    #[test]
-    fn test_resolved_mounts_appends_non_overlapping_custom_mounts() {
-        // Custom mount with a target not in the preset should be appended
-        let config = IsolationConfig::Chroot {
-            preset: Some(MountPreset::Recommends),
-            mounts: vec![MountEntry {
-                source: "tmpfs".to_string(),
-                target: "/var/tmp".into(),
-                options: vec![],
-            }],
-            resolv_conf: None,
-        };
-        let mounts = config.resolved_mounts();
-        // 6 preset entries + 1 new custom = 7
-        assert_eq!(mounts.len(), 7);
-
-        // The new custom mount should be at the end
-        let last = mounts.last().unwrap();
-        assert_eq!(last.target.as_str(), "/var/tmp");
-        assert_eq!(last.source, "tmpfs");
-
-        // All original preset entries should still be present
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/proc"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/sys"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/dev"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/dev/pts"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/tmp"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/run"));
     }
 
     #[test]
@@ -1751,8 +1445,6 @@ mod tests {
     #[test]
     fn test_resolv_conf_accessor_some() {
         let config = IsolationConfig::Chroot {
-            preset: None,
-            mounts: vec![],
             resolv_conf: Some(ResolvConfConfig {
                 copy: true,
                 name_servers: vec![],
@@ -1804,8 +1496,6 @@ mod tests {
     #[test]
     fn test_isolation_config_with_resolv_conf_roundtrip() {
         let config = IsolationConfig::Chroot {
-            preset: Some(MountPreset::Recommends),
-            mounts: vec![],
             resolv_conf: Some(ResolvConfConfig {
                 copy: false,
                 name_servers: vec!["8.8.8.8".parse().unwrap()],

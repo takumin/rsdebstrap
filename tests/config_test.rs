@@ -827,7 +827,10 @@ fn test_load_profile_prepare_rejects_unknown_task_type() -> Result<()> {
     ));
     // editorconfig-checker-enable
 
-    assert!(result.is_err(), "PrepareTask has no variants, should fail to parse shell type");
+    assert!(
+        result.is_err(),
+        "PrepareTask does not have a shell variant, should fail to parse"
+    );
 
     Ok(())
 }
@@ -1603,15 +1606,12 @@ provision:
 // =============================================================================
 
 #[test]
-fn test_load_profile_with_isolation_preset() -> Result<()> {
+fn test_load_profile_with_mount_preset() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 defaults:
-  isolation:
-    type: chroot
-    preset: recommends
   privilege:
     method: sudo
 bootstrap:
@@ -1619,18 +1619,20 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: mount
+    preset: recommends
 "#
     ))?;
     // editorconfig-checker-enable
 
-    use rsdebstrap::config::IsolationConfig;
-    match &profile.defaults.isolation {
-        IsolationConfig::Chroot { preset, .. } => {
-            assert!(preset.is_some(), "Expected preset to be set");
-        }
-    }
+    assert_eq!(profile.prepare.len(), 1);
+    let mount_task = profile.prepare[0]
+        .mount_task()
+        .expect("Expected mount task");
+    assert!(mount_task.preset.is_some(), "Expected preset to be set");
 
-    let mounts = profile.defaults.isolation.resolved_mounts();
+    let mounts = mount_task.resolved_mounts();
     assert_eq!(mounts.len(), 6, "Recommends preset should have 6 entries");
 
     Ok(())
@@ -1643,13 +1645,6 @@ fn test_load_profile_with_custom_mounts() -> Result<()> {
         r#"---
 dir: /tmp/test
 defaults:
-  isolation:
-    type: chroot
-    mounts:
-      - source: proc
-        target: /proc
-      - source: sysfs
-        target: /sys
   privilege:
     method: sudo
 bootstrap:
@@ -1657,11 +1652,21 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: mount
+    mounts:
+      - source: proc
+        target: /proc
+      - source: sysfs
+        target: /sys
 "#
     ))?;
     // editorconfig-checker-enable
 
-    let mounts = profile.defaults.isolation.resolved_mounts();
+    let mount_task = profile.prepare[0]
+        .mount_task()
+        .expect("Expected mount task");
+    let mounts = mount_task.resolved_mounts();
     assert_eq!(mounts.len(), 2);
     assert_eq!(mounts[0].source, "proc");
     assert_eq!(mounts[1].source, "sysfs");
@@ -1676,14 +1681,6 @@ fn test_load_profile_with_preset_and_custom_mounts() -> Result<()> {
         r#"---
 dir: /tmp/test
 defaults:
-  isolation:
-    type: chroot
-    preset: recommends
-    mounts:
-      - source: /dev
-        target: /dev
-        options:
-          - bind
   privilege:
     method: sudo
 bootstrap:
@@ -1691,11 +1688,22 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: mount
+    preset: recommends
+    mounts:
+      - source: /dev
+        target: /dev
+        options:
+          - bind
 "#
     ))?;
     // editorconfig-checker-enable
 
-    let mounts = profile.defaults.isolation.resolved_mounts();
+    let mount_task = profile.prepare[0]
+        .mount_task()
+        .expect("Expected mount task");
+    let mounts = mount_task.resolved_mounts();
     // Recommends has 6, custom replaces /dev entry => 6
     assert_eq!(mounts.len(), 6);
 
@@ -1713,15 +1721,14 @@ fn test_profile_validation_mounts_require_privilege() -> Result<()> {
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
-defaults:
-  isolation:
-    type: chroot
-    preset: recommends
 bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: mount
+    preset: recommends
 "#
     ))?;
     // editorconfig-checker-enable
@@ -1742,58 +1749,12 @@ bootstrap:
 }
 
 #[test]
-fn test_profile_validation_rejects_task_level_mounts() -> Result<()> {
-    // editorconfig-checker-disable
-    let err = helpers::load_profile_from_yaml_typed(crate::yaml!(
-        r#"---
-dir: /tmp/test
-defaults:
-  privilege:
-    method: sudo
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs
-  format: directory
-provision:
-  - type: shell
-    content: echo "hello"
-    isolation:
-      type: chroot
-      preset: recommends
-"#
-    ))
-    .unwrap_err();
-    // editorconfig-checker-enable
-
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected Validation error, got: {:?}",
-        err
-    );
-    assert!(
-        err.to_string().contains("task-level isolation"),
-        "Expected error about task-level isolation, got: {}",
-        err
-    );
-
-    Ok(())
-}
-
-#[test]
 fn test_profile_validation_mount_order_error() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 defaults:
-  isolation:
-    type: chroot
-    mounts:
-      - source: devpts
-        target: /dev/pts
-      - source: devtmpfs
-        target: /dev
   privilege:
     method: sudo
 bootstrap:
@@ -1801,6 +1762,13 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: mount
+    mounts:
+      - source: devpts
+        target: /dev/pts
+      - source: devtmpfs
+        target: /dev
 "#
     ))?;
     // editorconfig-checker-enable
@@ -1827,11 +1795,6 @@ fn test_profile_validation_accepts_mounts_with_privilege() -> Result<()> {
         r#"---
 dir: /tmp/test
 defaults:
-  isolation:
-    type: chroot
-    mounts:
-      - source: proc
-        target: /proc
   privilege:
     method: sudo
 bootstrap:
@@ -1839,6 +1802,11 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: mount
+    mounts:
+      - source: proc
+        target: /proc
 "#
     ))?;
     // editorconfig-checker-enable
@@ -1855,13 +1823,6 @@ fn test_profile_validation_rejects_pseudo_fs_with_bind_mount() -> Result<()> {
         r#"---
 dir: /tmp/test
 defaults:
-  isolation:
-    type: chroot
-    mounts:
-      - source: proc
-        target: /proc
-        options:
-          - bind
   privilege:
     method: sudo
 bootstrap:
@@ -1869,6 +1830,13 @@ bootstrap:
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: mount
+    mounts:
+      - source: proc
+        target: /proc
+        options:
+          - bind
 "#
     ))?;
     // editorconfig-checker-enable
@@ -1901,7 +1869,6 @@ dir: /tmp/test
 defaults:
   isolation:
     type: chroot
-    preset: recommends
     resolv_conf:
       copy: true
   privilege:
@@ -2145,6 +2112,86 @@ bootstrap:
     assert!(
         err.to_string().contains("newline"),
         "Expected error about newline characters, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// PrepareTask mount tests
+// =============================================================================
+
+#[test]
+fn test_load_profile_prepare_mount_task() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+prepare:
+  - type: mount
+    preset: recommends
+    mounts:
+      - source: tmpfs
+        target: /var/tmp
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert_eq!(profile.prepare.len(), 1);
+    let mount_task = profile.prepare[0]
+        .mount_task()
+        .expect("Expected mount task");
+    assert!(mount_task.preset.is_some());
+    let mounts = mount_task.resolved_mounts();
+    // 6 preset + 1 custom = 7
+    assert_eq!(mounts.len(), 7);
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_prepare_rejects_multiple_mount_tasks() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+prepare:
+  - type: mount
+    preset: recommends
+  - type: mount
+    mounts:
+      - source: proc
+        target: /proc
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("at most one mount task"),
+        "Expected error about multiple mount tasks, got: {}",
         err
     );
 
