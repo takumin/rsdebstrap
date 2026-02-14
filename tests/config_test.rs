@@ -1721,6 +1721,9 @@ fn test_profile_validation_mounts_require_privilege() -> Result<()> {
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
+defaults:
+  isolation:
+    type: chroot
 bootstrap:
   type: mmdebstrap
   suite: bookworm
@@ -1755,6 +1758,8 @@ fn test_profile_validation_mount_order_error() -> Result<()> {
         r#"---
 dir: /tmp/test
 defaults:
+  isolation:
+    type: chroot
   privilege:
     method: sudo
 bootstrap:
@@ -1789,12 +1794,14 @@ prepare:
 }
 
 #[test]
-fn test_profile_validation_accepts_mounts_with_privilege() -> Result<()> {
+fn test_profile_validation_accepts_mounts_with_chroot_and_privilege() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 defaults:
+  isolation:
+    type: chroot
   privilege:
     method: sudo
 bootstrap:
@@ -1823,6 +1830,8 @@ fn test_profile_validation_rejects_pseudo_fs_with_bind_mount() -> Result<()> {
         r#"---
 dir: /tmp/test
 defaults:
+  isolation:
+    type: chroot
   privilege:
     method: sudo
 bootstrap:

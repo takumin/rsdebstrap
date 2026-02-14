@@ -260,6 +260,7 @@ assemble: []                # Optional finalization steps (no task types yet)
 
 - Mounts are configured in the `prepare` phase as a `type: mount` task
 - At most one mount task is allowed in the prepare phase
+- When mounts are specified, `defaults.isolation` must be chroot (validated by `validate_mounts()`)
 - When mounts are specified, `defaults.privilege` must be configured
 - Mount targets must be absolute paths without `..` components
 - Bind mount sources must exist on the host
