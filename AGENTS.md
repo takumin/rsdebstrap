@@ -30,7 +30,7 @@ cargo run -- validate -f examples/debian_trixie_mmdebstrap.yml
 
 ## Architecture Overview
 
-rsdebstrap is a declarative CLI tool for building Debian-based rootfs images using YAML manifest files. It wraps bootstrap tools (mmdebstrap, debootstrap) and provides post-bootstrap provisioning with privilege escalation support.
+rsdebstrap is a declarative CLI tool for building Debian-based rootfs images using YAML manifest files. It wraps bootstrap tools (`mmdebstrap`, `debootstrap`) and provides post-bootstrap provisioning with privilege escalation support.
 
 ### Core Flow
 
@@ -39,7 +39,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
 3. **Privilege** (`src/privilege.rs`) - Privilege escalation configuration and resolution (sudo/doas)
 4. **Error** (`src/error.rs`) - Typed error handling with `RsdebstrapError`
 5. **Bootstrap** (`src/bootstrap/`) - Executes bootstrap backends to create the rootfs
-6. **Pipeline** (`src/pipeline.rs`) - Orchestrates prepare, provision, and assemble phases in order
+6. **Pipeline** (`src/pipeline.rs`) - Orchestrates `prepare`, `provision`, and `assemble` phases in order
 
 ### Key Abstractions
 
@@ -137,7 +137,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - `Chroot` - chroot isolation (unit variant, no fields)
   - `chroot()` convenience constructor returns `Self::Chroot`
   - `as_provider()` returns the corresponding `IsolationProvider`
-  - Note: mount and resolv_conf configuration have moved to the prepare phase
+  - Note: `mount` and `resolv_conf` configuration have moved to the prepare phase
 
 - **`ResolvConfConfig`** struct (`src/config.rs`) - resolv.conf configuration
   - `copy: bool` — copy host's /etc/resolv.conf into the chroot (following symlinks)
@@ -259,10 +259,10 @@ assemble: []                # Optional finalization steps (no task types yet)
 - `isolation: false` → `Disabled`: no isolation (direct execution on host via `DirectProvider`)
 - `isolation: { type: chroot }` → `Config`: use the specified isolation backend explicitly
 
-#### resolv_conf task fields (prepare phase)
+#### `resolv_conf` task fields (prepare phase)
 
-- `copy: true` → copy host's /etc/resolv.conf into the chroot
-- `name_servers: [...]` → generate resolv.conf with specified nameservers
+- `copy: true` → copy host's /etc/resolv.conf into the `chroot`
+- `name_servers: [...]` → generate `resolv.conf` with specified nameservers
 - `name_servers: [...], search: [...]` → generate with nameservers + search domains
 - `copy` and `name_servers`/`search` are mutually exclusive
 
@@ -270,7 +270,7 @@ assemble: []                # Optional finalization steps (no task types yet)
 
 - Mounts are configured in the `prepare` phase as a `type: mount` task
 - At most one mount task is allowed in the prepare phase
-- When mounts are specified, `defaults.isolation` must be chroot (validated by `validate_mounts()`)
+- When mounts are specified, `defaults.isolation` must be `chroot` (validated by `validate_mounts()`)
 - When mounts are specified, `defaults.privilege` must be configured
 - Mount targets must be absolute paths without `..` components
 - Bind mount sources must exist on the host
@@ -278,9 +278,9 @@ assemble: []                # Optional finalization steps (no task types yet)
 - Custom mounts override preset entries with the same target at their original position (preserving mount order)
 - `RootfsMounts` handles mount/unmount lifecycle around the entire pipeline phase
 - `RootfsResolvConf` handles resolv.conf setup/restore between mount and pipeline execution
-- resolv_conf is configured in the `prepare` phase as a `type: resolv_conf` task
-- At most one resolv_conf task is allowed in the prepare phase
-- Mount tasks must come before resolv_conf tasks in the prepare phase (validated by `validate_prepare_order()`)
+- `resolv_conf` is configured in the `prepare` phase as a `type: resolv_conf` task
+- At most one `resolv_conf` task is allowed in the prepare phase
+- Mount tasks must come before `resolv_conf` tasks in the prepare phase (validated by `validate_prepare_order()`)
 
 ### Testing Pattern
 
