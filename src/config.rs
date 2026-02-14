@@ -514,6 +514,13 @@ impl Profile {
             _ => return Ok(()),
         };
 
+        // mounts require chroot isolation
+        if !matches!(self.defaults.isolation, IsolationConfig::Chroot { .. }) {
+            return Err(RsdebstrapError::Validation(
+                "mounts require chroot isolation (defaults.isolation must be chroot)".to_string(),
+            ));
+        }
+
         // mounts require privilege to be configured
         if self.defaults.privilege.is_none() {
             return Err(RsdebstrapError::Validation(

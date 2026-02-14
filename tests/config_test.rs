@@ -1789,7 +1789,7 @@ prepare:
 }
 
 #[test]
-fn test_profile_validation_accepts_mounts_with_privilege() -> Result<()> {
+fn test_profile_validation_accepts_mounts_with_chroot_and_privilege() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
