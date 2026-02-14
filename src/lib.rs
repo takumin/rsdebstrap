@@ -90,8 +90,12 @@ fn run_pipeline_phase(
         .into());
     };
 
-    // Set up filesystem mounts (if configured)
-    let mount_entries = profile.defaults.isolation.resolved_mounts();
+    // Set up filesystem mounts (if configured in prepare phase)
+    let mount_entries = profile
+        .prepare
+        .iter()
+        .find_map(|t| t.mount_task().map(|m| m.resolved_mounts()))
+        .unwrap_or_default();
     let privilege = profile.defaults.privilege.as_ref().map(|d| d.method);
     let mut mounts =
         RootfsMounts::new(&rootfs, mount_entries, executor.clone(), privilege, dry_run);
