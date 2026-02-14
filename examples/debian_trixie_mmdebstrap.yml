@@ -2,9 +2,9 @@
 # Comprehensive example profile for Debian Trixie
 #
 # This profile demonstrates all available features:
-#   - defaults: isolation (chroot + resolv_conf), privilege, mitamae
+#   - defaults: isolation (chroot), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
-#   - pipeline: prepare (mount), provision (shell + mitamae), assemble
+#   - pipeline: prepare (mount, resolv_conf), provision (shell + mitamae), assemble
 
 dir: /tmp/debian-trixie-server-amd64
 
@@ -14,16 +14,6 @@ defaults:
   # Currently only 'chroot' is supported (bwrap/systemd-nspawn planned)
   isolation:
     type: chroot
-    # Copy host's /etc/resolv.conf into the chroot for DNS resolution.
-    # Needed because the 'recommends' preset mounts tmpfs on /run,
-    # which breaks the systemd symlink /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf
-    #
-    # Alternative: generate resolv.conf with explicit nameservers
-    #   resolv_conf:
-    #     name_servers: [8.8.8.8, 8.8.4.4]
-    #     search: [example.com]
-    resolv_conf:
-      copy: true
 
   # Privilege escalation for commands that require root access
   # Required when mounts are configured. Supported methods: sudo, doas
@@ -67,7 +57,7 @@ bootstrap:
   - ca-certificates
   privilege: true # Use defaults.privilege method
 
-# Prepare phase: filesystem mounts for the rootfs
+# Prepare phase: filesystem mounts and resolv.conf for the rootfs
 prepare:
 # Mount task declares filesystems to mount before provisioning
 - type: mount
@@ -78,6 +68,17 @@ prepare:
   # - source: /dev
   #   target: /dev
   #   options: [bind]
+
+# Copy host's /etc/resolv.conf into the chroot for DNS resolution.
+# Needed because the 'recommends' preset mounts tmpfs on /run,
+# which breaks the systemd symlink /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf
+#
+# Alternative: generate resolv.conf with explicit nameservers
+#   - type: resolv_conf
+#     name_servers: [8.8.8.8, 8.8.4.4]
+#     search: [example.com]
+- type: resolv_conf
+  copy: true
 
 # Main provisioning steps
 provision:

@@ -355,35 +355,19 @@ impl Bootstrap {
 /// This enum represents the different isolation mechanisms that can be used
 /// to execute commands within a rootfs. The `type` field in YAML determines
 /// which variant is used. If not specified, defaults to chroot.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum IsolationConfig {
     /// chroot isolation (default)
-    Chroot {
-        /// Optional resolv.conf configuration for DNS resolution inside chroot.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        resolv_conf: Option<ResolvConfConfig>,
-    },
+    #[default]
+    Chroot,
     // Future: Bwrap(BwrapConfig), Nspawn(NspawnConfig)
-}
-
-impl Default for IsolationConfig {
-    fn default() -> Self {
-        Self::Chroot { resolv_conf: None }
-    }
 }
 
 impl IsolationConfig {
     /// Creates a default chroot config.
     pub fn chroot() -> Self {
-        Self::default()
-    }
-
-    /// Returns the resolv.conf configuration, if any.
-    pub fn resolv_conf(&self) -> Option<&ResolvConfConfig> {
-        match self {
-            Self::Chroot { resolv_conf } => resolv_conf.as_ref(),
-        }
+        Self::Chroot
     }
 
     /// Returns a boxed isolation provider instance.
@@ -392,7 +376,7 @@ impl IsolationConfig {
     /// on each variant explicitly.
     pub fn as_provider(&self) -> Box<dyn IsolationProvider> {
         match self {
-            IsolationConfig::Chroot { .. } => Box::new(ChrootProvider),
+            IsolationConfig::Chroot => Box::new(ChrootProvider),
         }
     }
 }
@@ -468,9 +452,10 @@ impl Profile {
         self.validate_mounts()?;
 
         // Validate resolv_conf configuration
-        if let Some(resolv_conf) = self.defaults.isolation.resolv_conf() {
-            resolv_conf.validate()?;
-        }
+        self.validate_resolv_conf()?;
+
+        // Validate prepare task ordering
+        self.validate_prepare_order()?;
 
         // Validate all tasks across phases
         let pipeline = self.pipeline();
@@ -515,7 +500,7 @@ impl Profile {
         };
 
         // mounts require chroot isolation
-        if !matches!(self.defaults.isolation, IsolationConfig::Chroot { .. }) {
+        if !matches!(self.defaults.isolation, IsolationConfig::Chroot) {
             return Err(RsdebstrapError::Validation(
                 "mounts require chroot isolation (defaults.isolation must be chroot)".to_string(),
             ));
@@ -538,6 +523,55 @@ impl Profile {
         // which is called by the pipeline validation path.
         // Here we only need to check privilege requirements.
 
+        Ok(())
+    }
+
+    /// Validates resolv_conf-related configuration.
+    fn validate_resolv_conf(&self) -> Result<(), RsdebstrapError> {
+        let resolv_conf_tasks: Vec<_> = self
+            .prepare
+            .iter()
+            .filter_map(|t| t.resolv_conf_task())
+            .collect();
+
+        // At most one resolv_conf task allowed
+        if resolv_conf_tasks.len() > 1 {
+            return Err(RsdebstrapError::Validation(
+                "at most one resolv_conf task is allowed in the prepare phase".to_string(),
+            ));
+        }
+
+        if let Some(task) = resolv_conf_tasks.first() {
+            // resolv_conf requires chroot isolation
+            if !matches!(self.defaults.isolation, IsolationConfig::Chroot) {
+                return Err(RsdebstrapError::Validation(
+                    "resolv_conf requires chroot isolation \
+                    (defaults.isolation must be chroot)"
+                        .to_string(),
+                ));
+            }
+
+            task.config().validate()?;
+        }
+
+        Ok(())
+    }
+
+    /// Validates that prepare tasks are in correct order.
+    ///
+    /// Mount tasks must come before resolv_conf tasks.
+    fn validate_prepare_order(&self) -> Result<(), RsdebstrapError> {
+        let mut seen_resolv_conf = false;
+        for task in &self.prepare {
+            if task.mount_task().is_some() && seen_resolv_conf {
+                return Err(RsdebstrapError::Validation(
+                    "mount task must come before resolv_conf task in the prepare phase".to_string(),
+                ));
+            }
+            if task.resolv_conf_task().is_some() {
+                seen_resolv_conf = true;
+            }
+        }
         Ok(())
     }
 }
@@ -1091,17 +1125,10 @@ mod tests {
 
     #[test]
     fn test_isolation_config_serialize_deserialize_roundtrip() {
-        let config = IsolationConfig::Chroot { resolv_conf: None };
+        let config = IsolationConfig::Chroot;
         let yaml = serde_yaml::to_string(&config).unwrap();
         let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);
-    }
-
-    #[test]
-    fn test_isolation_config_serialize_skips_empty_fields() {
-        let config = IsolationConfig::chroot();
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        assert!(!yaml.contains("resolv_conf"));
     }
 
     // =========================================================================
@@ -1444,25 +1471,6 @@ mod tests {
     }
 
     #[test]
-    fn test_resolv_conf_accessor_none() {
-        let config = IsolationConfig::chroot();
-        assert!(config.resolv_conf().is_none());
-    }
-
-    #[test]
-    fn test_resolv_conf_accessor_some() {
-        let config = IsolationConfig::Chroot {
-            resolv_conf: Some(ResolvConfConfig {
-                copy: true,
-                name_servers: vec![],
-                search: vec![],
-            }),
-        };
-        let rc = config.resolv_conf().unwrap();
-        assert!(rc.copy);
-    }
-
-    #[test]
     fn test_resolv_conf_serialize_deserialize_roundtrip() {
         use std::net::IpAddr;
         let config = ResolvConfConfig {
@@ -1475,42 +1483,6 @@ mod tests {
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
         let deserialized: ResolvConfConfig = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(config, deserialized);
-    }
-
-    #[test]
-    fn test_isolation_config_with_resolv_conf_deserialize() {
-        let yaml = "type: chroot\nresolv_conf:\n  copy: true\n";
-        let config: IsolationConfig = serde_yaml::from_str(yaml).unwrap();
-        let rc = config.resolv_conf().unwrap();
-        assert!(rc.copy);
-    }
-
-    #[test]
-    fn test_isolation_config_without_resolv_conf_deserialize() {
-        let yaml = "type: chroot\n";
-        let config: IsolationConfig = serde_yaml::from_str(yaml).unwrap();
-        assert!(config.resolv_conf().is_none());
-    }
-
-    #[test]
-    fn test_isolation_config_serialize_skips_none_resolv_conf() {
-        let config = IsolationConfig::chroot();
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        assert!(!yaml.contains("resolv_conf"));
-    }
-
-    #[test]
-    fn test_isolation_config_with_resolv_conf_roundtrip() {
-        let config = IsolationConfig::Chroot {
-            resolv_conf: Some(ResolvConfConfig {
-                copy: false,
-                name_servers: vec!["8.8.8.8".parse().unwrap()],
-                search: vec!["example.com".to_string()],
-            }),
-        };
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);
     }
 }

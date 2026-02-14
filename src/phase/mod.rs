@@ -28,6 +28,7 @@ use tracing::info;
 pub use assemble::AssembleTask;
 pub use prepare::MountTask;
 pub use prepare::PrepareTask;
+pub use prepare::ResolvConfTask;
 pub use provision::MitamaeTask;
 pub use provision::ProvisionTask;
 pub use provision::ShellTask;

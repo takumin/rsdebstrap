@@ -581,7 +581,7 @@ bootstrap:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot { .. }));
+    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot));
 
     Ok(())
 }
@@ -602,7 +602,7 @@ bootstrap:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot { .. }));
+    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot));
 
     Ok(())
 }
@@ -1875,26 +1875,26 @@ fn test_load_profile_with_resolv_conf_copy() -> Result<()> {
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
-defaults:
-  isolation:
-    type: chroot
-    resolv_conf:
-      copy: true
-  privilege:
-    method: sudo
 bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: resolv_conf
+    copy: true
 "#
     ))?;
     // editorconfig-checker-enable
 
-    let rc = profile.defaults.isolation.resolv_conf().unwrap();
-    assert!(rc.copy);
-    assert!(rc.name_servers.is_empty());
-    assert!(rc.search.is_empty());
+    let rc_task = profile
+        .prepare
+        .iter()
+        .find_map(|t| t.resolv_conf_task())
+        .expect("Expected resolv_conf task");
+    assert!(rc_task.copy);
+    assert!(rc_task.name_servers.is_empty());
+    assert!(rc_task.search.is_empty());
 
     Ok(())
 }
@@ -1905,28 +1905,30 @@ fn test_load_profile_with_resolv_conf_name_servers() -> Result<()> {
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
-defaults:
-  isolation:
-    type: chroot
-    resolv_conf:
-      name_servers:
-        - 8.8.8.8
-        - 8.8.4.4
-      search:
-        - example.com
 bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: resolv_conf
+    name_servers:
+      - 8.8.8.8
+      - 8.8.4.4
+    search:
+      - example.com
 "#
     ))?;
     // editorconfig-checker-enable
 
-    let rc = profile.defaults.isolation.resolv_conf().unwrap();
-    assert!(!rc.copy);
-    assert_eq!(rc.name_servers.len(), 2);
-    assert_eq!(rc.search, vec!["example.com"]);
+    let rc_task = profile
+        .prepare
+        .iter()
+        .find_map(|t| t.resolv_conf_task())
+        .expect("Expected resolv_conf task");
+    assert!(!rc_task.copy);
+    assert_eq!(rc_task.name_servers.len(), 2);
+    assert_eq!(rc_task.search, vec!["example.com"]);
 
     Ok(())
 }
@@ -1949,7 +1951,13 @@ bootstrap:
     ))?;
     // editorconfig-checker-enable
 
-    assert!(profile.defaults.isolation.resolv_conf().is_none());
+    assert!(
+        profile
+            .prepare
+            .iter()
+            .find_map(|t| t.resolv_conf_task())
+            .is_none()
+    );
 
     Ok(())
 }
@@ -1960,18 +1968,16 @@ fn test_profile_validation_rejects_resolv_conf_copy_with_name_servers() -> Resul
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
-defaults:
-  isolation:
-    type: chroot
-    resolv_conf:
-      copy: true
-      name_servers:
-        - 8.8.8.8
 bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: resolv_conf
+    copy: true
+    name_servers:
+      - 8.8.8.8
 "#
     ))?;
     // editorconfig-checker-enable
@@ -1997,16 +2003,14 @@ fn test_profile_validation_rejects_resolv_conf_empty_config() -> Result<()> {
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
-defaults:
-  isolation:
-    type: chroot
-    resolv_conf:
-      copy: false
 bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: resolv_conf
+    copy: false
 "#
     ))?;
     // editorconfig-checker-enable
@@ -2032,16 +2036,14 @@ fn test_profile_validation_accepts_resolv_conf_copy() -> Result<()> {
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
-defaults:
-  isolation:
-    type: chroot
-    resolv_conf:
-      copy: true
 bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: resolv_conf
+    copy: true
 "#
     ))?;
     // editorconfig-checker-enable
@@ -2057,19 +2059,17 @@ fn test_profile_validation_rejects_resolv_conf_search_with_newline() -> Result<(
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
-defaults:
-  isolation:
-    type: chroot
-    resolv_conf:
-      name_servers:
-        - 8.8.8.8
-      search:
-        - "evil.com\nnameserver 6.6.6.6"
 bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: resolv_conf
+    name_servers:
+      - 8.8.8.8
+    search:
+      - "evil.com\nnameserver 6.6.6.6"
 "#
     ))?;
     // editorconfig-checker-enable
@@ -2095,19 +2095,17 @@ fn test_profile_validation_rejects_resolv_conf_search_with_carriage_return() -> 
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
-defaults:
-  isolation:
-    type: chroot
-    resolv_conf:
-      name_servers:
-        - 8.8.8.8
-      search:
-        - "evil.com\rnameserver 6.6.6.6"
 bootstrap:
   type: mmdebstrap
   suite: bookworm
   target: rootfs
   format: directory
+prepare:
+  - type: resolv_conf
+    name_servers:
+      - 8.8.8.8
+    search:
+      - "evil.com\rnameserver 6.6.6.6"
 "#
     ))?;
     // editorconfig-checker-enable
@@ -2203,6 +2201,140 @@ prepare:
         "Expected error about multiple mount tasks, got: {}",
         err
     );
+
+    Ok(())
+}
+
+// =============================================================================
+// PrepareTask resolv_conf tests
+// =============================================================================
+
+#[test]
+fn test_load_profile_prepare_rejects_multiple_resolv_conf_tasks() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+prepare:
+  - type: resolv_conf
+    copy: true
+  - type: resolv_conf
+    name_servers:
+      - 8.8.8.8
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string().contains("at most one resolv_conf task"),
+        "Expected error about multiple resolv_conf tasks, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_accepts_mount_before_resolv_conf() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+prepare:
+  - type: mount
+    mounts:
+      - source: proc
+        target: /proc
+  - type: resolv_conf
+    copy: true
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert!(profile.validate().is_ok());
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_rejects_resolv_conf_before_mount() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+prepare:
+  - type: resolv_conf
+    copy: true
+  - type: mount
+    mounts:
+      - source: proc
+        target: /proc
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected Validation error, got: {:?}",
+        err
+    );
+    assert!(
+        err.to_string()
+            .contains("mount task must come before resolv_conf"),
+        "Expected error about task order, got: {}",
+        err
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_profile_validation_accepts_resolv_conf_without_mount() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+prepare:
+  - type: resolv_conf
+    copy: true
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert!(profile.validate().is_ok());
 
     Ok(())
 }

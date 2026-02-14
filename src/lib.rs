@@ -103,11 +103,15 @@ fn run_pipeline_phase(
         .mount()
         .context("failed to mount filesystems in rootfs")?;
 
-    // Set up resolv.conf (if configured)
+    // Set up resolv.conf (if configured in prepare phase)
     // setup failure is handled by Drop guards for mounts cleanup
+    let resolv_conf_config = profile
+        .prepare
+        .iter()
+        .find_map(|t| t.resolv_conf_task().map(|rc| rc.config()));
     let mut resolv_conf = RootfsResolvConf::new(
         &rootfs,
-        profile.defaults.isolation.resolv_conf().cloned(),
+        resolv_conf_config,
         Utf8Path::new("/etc/resolv.conf"),
         executor.clone(),
         privilege,
