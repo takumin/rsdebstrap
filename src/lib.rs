@@ -94,9 +94,7 @@ fn run_pipeline_phase(
     let mount_entries = profile
         .prepare
         .iter()
-        .filter_map(|t| t.mount_task())
-        .next()
-        .map(|m| m.resolved_mounts())
+        .find_map(|t| t.mount_task().map(|m| m.resolved_mounts()))
         .unwrap_or_default();
     let privilege = profile.defaults.privilege.as_ref().map(|d| d.method);
     let mut mounts =

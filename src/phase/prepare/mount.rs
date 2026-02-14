@@ -5,7 +5,7 @@
 //! Mount entries are processed at the pipeline level (not per-task),
 //! bracketing the entire pipeline execution.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
@@ -95,6 +95,17 @@ impl MountTask {
     ///
     /// Checks each mount entry and validates mount order.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
+        // Check for duplicate targets in custom mounts
+        let mut seen_targets = HashSet::new();
+        for entry in &self.mounts {
+            if !seen_targets.insert(&entry.target) {
+                return Err(RsdebstrapError::Validation(format!(
+                    "duplicate mount target '{}' in custom mounts is not allowed",
+                    entry.target
+                )));
+            }
+        }
+
         let resolved_mounts = self.resolved_mounts();
 
         for entry in &resolved_mounts {
@@ -344,6 +355,37 @@ mod tests {
         assert!(mounts.iter().any(|m| m.target.as_str() == "/dev/pts"));
         assert!(mounts.iter().any(|m| m.target.as_str() == "/tmp"));
         assert!(mounts.iter().any(|m| m.target.as_str() == "/run"));
+    }
+
+    // =========================================================================
+    // validate() tests
+    // =========================================================================
+
+    #[test]
+    fn validate_duplicate_custom_mount_targets() {
+        let task = MountTask {
+            preset: None,
+            mounts: vec![
+                MountEntry {
+                    source: "proc".to_string(),
+                    target: "/proc".into(),
+                    options: vec![],
+                },
+                MountEntry {
+                    source: "proc".to_string(),
+                    target: "/proc".into(),
+                    options: vec!["nosuid".to_string()],
+                },
+            ],
+        };
+        let err = task.validate().unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                RsdebstrapError::Validation(msg) if msg.contains("duplicate mount target '/proc'")
+            ),
+            "expected duplicate target error, got: {err}"
+        );
     }
 
     // =========================================================================
