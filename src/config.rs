@@ -457,6 +457,9 @@ impl Profile {
         // Validate prepare task ordering
         self.validate_prepare_order()?;
 
+        // Validate assemble resolv_conf configuration
+        self.validate_assemble_resolv_conf()?;
+
         // Validate all tasks across phases
         let pipeline = self.pipeline();
         pipeline.validate()?;
@@ -552,6 +555,23 @@ impl Profile {
             }
 
             task.config().validate()?;
+        }
+
+        Ok(())
+    }
+
+    /// Validates assemble resolv_conf configuration.
+    fn validate_assemble_resolv_conf(&self) -> Result<(), RsdebstrapError> {
+        let resolv_conf_count = self
+            .assemble
+            .iter()
+            .filter(|t| t.resolv_conf_task().is_some())
+            .count();
+
+        if resolv_conf_count > 1 {
+            return Err(RsdebstrapError::Validation(
+                "at most one resolv_conf task is allowed in the assemble phase".to_string(),
+            ));
         }
 
         Ok(())
