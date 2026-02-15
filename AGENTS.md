@@ -96,9 +96,20 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - At most one resolv_conf task allowed in prepare phase (validated by `Profile::validate_resolv_conf()`)
   - Mount tasks must come before resolv_conf tasks (validated by `Profile::validate_prepare_order()`)
 
-- **`AssembleTask`** enum (`src/phase/assemble.rs`) - Finalization tasks after provisioning
-  - `#[non_exhaustive]` empty enum — no task types available yet
-  - Same structure as `PrepareTask`
+- **`AssembleTask`** enum (`src/phase/assemble/mod.rs`) - Finalization tasks after provisioning
+  - `ResolvConf` variant (`src/phase/assemble/resolv_conf.rs`) - Writes a permanent `/etc/resolv.conf`
+  - `resolv_conf_task()` returns `Option<&AssembleResolvConfTask>` for accessing the inner task
+  - `PhaseItem::execute()` delegates to inner task's `execute()`
+  - `resolved_isolation_config()` returns `None` (operates directly on rootfs filesystem via `DirectProvider`)
+
+- **`AssembleResolvConfTask`** struct (`src/phase/assemble/resolv_conf.rs`) - Permanent resolv.conf for assemble phase
+  - Fields: `link: Option<String>`, `name_servers: Vec<IpAddr>`, `search: Vec<String>`
+  - `#[serde(deny_unknown_fields)]` for strict YAML parsing
+  - `link` and `name_servers`/`search` are mutually exclusive
+  - `name()` returns `"link"` or `"generate"`
+  - `validate()` checks mutual exclusivity, link validation (empty/newline/null), delegates to `ResolvConfConfig::validate()` for generate mode
+  - `execute()` writes file via `generate_resolv_conf()` or creates symlink via `std::os::unix::fs::symlink()`
+  - At most one `resolv_conf` task allowed in assemble phase (validated by `Profile::validate_assemble_resolv_conf()`)
 
 - **`ProvisionTask`** enum (`src/phase/provision/mod.rs`) - Declarative task definition for provision pipeline steps
   - `Shell` variant (`src/phase/provision/shell.rs`) - Runs shell scripts within an isolation context
@@ -242,7 +253,12 @@ provision:                  # Optional main provisioning steps
       method: doas
     isolation:               # Optional: override defaults.isolation
       type: chroot
-assemble: []                # Optional finalization steps (no task types yet)
+assemble:                   # Optional finalization steps
+  - type: resolv_conf       # Permanent /etc/resolv.conf in final rootfs
+    name_servers: [8.8.8.8, 8.8.4.4]  # Generate resolv.conf with nameservers
+    search: [example.com]   # Optional search domains
+    # OR
+    # link: ../run/systemd/resolve/stub-resolv.conf  # Create symlink instead
 ```
 
 #### Privilege field values
@@ -281,6 +297,10 @@ assemble: []                # Optional finalization steps (no task types yet)
 - `resolv_conf` is configured in the `prepare` phase as a `type: resolv_conf` task
 - At most one `resolv_conf` task is allowed in the prepare phase
 - Mount tasks must come before `resolv_conf` tasks in the prepare phase (validated by `validate_prepare_order()`)
+- Assemble `resolv_conf` writes a permanent `/etc/resolv.conf` (file or symlink) to the final rootfs
+- At most one `resolv_conf` task is allowed in the assemble phase (validated by `validate_assemble_resolv_conf()`)
+- `link` and `name_servers`/`search` are mutually exclusive in assemble `resolv_conf`
+- Prepare and assemble can both have `resolv_conf` tasks (no constraint — different roles: temporary DNS vs permanent config)
 
 ### Testing Pattern
 
