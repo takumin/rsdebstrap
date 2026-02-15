@@ -61,6 +61,10 @@ impl IsolationContext for ChrootContext {
         self.dry_run
     }
 
+    fn executor(&self) -> &dyn CommandExecutor {
+        &*self.executor
+    }
+
     fn execute(
         &self,
         command: &[String],

@@ -693,6 +693,11 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
         task.resolve_isolation(&isolation_defaults);
     }
 
+    // Resolve privilege for assemble tasks
+    for task in profile.assemble.iter_mut() {
+        task.resolve_privilege(privilege_defaults)?;
+    }
+
     Ok(())
 }
 

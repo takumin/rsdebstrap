@@ -62,6 +62,10 @@ impl IsolationContext for DirectContext {
         self.dry_run
     }
 
+    fn executor(&self) -> &dyn CommandExecutor {
+        &*self.executor
+    }
+
     /// Executes a command directly on the host filesystem.
     ///
     /// All arguments that start with '/' are translated to rootfs-prefixed paths.

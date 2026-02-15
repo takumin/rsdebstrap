@@ -103,12 +103,13 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
   - `resolved_isolation_config()` returns `None` (operates directly on rootfs filesystem via `DirectProvider`)
 
 - **`AssembleResolvConfTask`** struct (`src/phase/assemble/resolv_conf.rs`) - Permanent resolv.conf for assemble phase
-  - Fields: `link: Option<String>`, `name_servers: Vec<IpAddr>`, `search: Vec<String>`
+  - Fields: `privilege: Privilege`, `link: Option<String>`, `name_servers: Vec<IpAddr>`, `search: Vec<String>`
   - `#[serde(deny_unknown_fields)]` for strict YAML parsing
   - `link` and `name_servers`/`search` are mutually exclusive
   - `name()` returns `"link"` or `"generate"`
+  - `resolve_privilege()` / `resolved_privilege_method()` — same pattern as provision tasks
   - `validate()` checks mutual exclusivity, link validation (empty/newline/null), delegates to `ResolvConfConfig::validate()` for generate mode
-  - `execute()` writes file via `generate_resolv_conf()` or creates symlink via `std::os::unix::fs::symlink()`
+  - `execute()` uses TOCTOU-safe `/etc` validation via `openat(O_NOFOLLOW)`, `CommandExecutor` via `ctx.executor()` for `cp`/`chmod`/`rm`/`ln` with privilege escalation, atomic file operations via temp file + `cp`
   - At most one `resolv_conf` task allowed in assemble phase (validated by `Profile::validate_assemble_resolv_conf()`)
 
 - **`ProvisionTask`** enum (`src/phase/provision/mod.rs`) - Declarative task definition for provision pipeline steps
@@ -198,6 +199,7 @@ rsdebstrap is a declarative CLI tool for building Debian-based rootfs images usi
     - Translates absolute paths to rootfs-prefixed paths (e.g., `/bin/sh` → `<rootfs>/bin/sh`)
     - Guards against empty commands and post-teardown execution
   - `IsolationContext::execute()` takes `privilege: Option<PrivilegeMethod>` parameter
+  - `IsolationContext::executor()` returns `&dyn CommandExecutor` for direct command execution with privilege support
 
 - **`CommandExecutor`** trait / **`CommandSpec`** struct (`src/executor/mod.rs`) - Command execution
   - `RealCommandExecutor` - Actual execution with dry-run support
@@ -257,6 +259,7 @@ assemble:                   # Optional finalization steps
   - type: resolv_conf       # Permanent /etc/resolv.conf in final rootfs
     name_servers: [8.8.8.8, 8.8.4.4]  # Generate resolv.conf with nameservers
     search: [example.com]   # Optional search domains
+    privilege: true          # Optional: use default privilege method
     # OR
     # link: ../run/systemd/resolve/stub-resolv.conf  # Create symlink instead
 ```

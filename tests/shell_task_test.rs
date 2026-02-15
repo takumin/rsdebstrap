@@ -449,6 +449,9 @@ fn test_execute_inline_script_verifies_file_written() {
         fn dry_run(&self) -> bool {
             false
         }
+        fn executor(&self) -> &dyn rsdebstrap::executor::CommandExecutor {
+            unimplemented!("CapturingContext does not provide a real executor")
+        }
         fn execute(
             &self,
             command: &[String],
@@ -540,6 +543,9 @@ fn test_execute_external_script_verifies_file_copied() {
         }
         fn dry_run(&self) -> bool {
             false
+        }
+        fn executor(&self) -> &dyn rsdebstrap::executor::CommandExecutor {
+            unimplemented!("CapturingContext does not provide a real executor")
         }
         fn execute(
             &self,
