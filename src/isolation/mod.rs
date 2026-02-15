@@ -101,6 +101,13 @@ pub trait IsolationContext: Send {
         privilege: Option<PrivilegeMethod>,
     ) -> Result<ExecutionResult>;
 
+    /// Returns a reference to the underlying command executor.
+    ///
+    /// This allows tasks to execute commands directly via the executor
+    /// (e.g., `cp`, `chmod`, `ln`) with privilege escalation support,
+    /// without going through the isolation context's `execute()` method.
+    fn executor(&self) -> &dyn CommandExecutor;
+
     /// Tears down the isolation environment and releases resources.
     ///
     /// This method is idempotent - calling it multiple times has no effect
