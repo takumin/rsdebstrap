@@ -42,16 +42,18 @@ fn execute_checked_returns_error_for_non_zero_exit() {
     let executor = RealCommandExecutor { dry_run: false };
     let spec = CommandSpec::new("sh", vec!["-c".into(), "exit 7".into()]);
 
-    let result = executor.execute_checked(&spec);
+    let err = executor
+        .execute_checked(&spec)
+        .expect_err("command should have failed");
 
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    let typed = err.downcast_ref::<rsdebstrap::RsdebstrapError>();
-    assert!(typed.is_some(), "Expected RsdebstrapError, got: {:#}", err);
+    let typed_err = err
+        .downcast_ref::<rsdebstrap::RsdebstrapError>()
+        .expect("error should be a RsdebstrapError");
+
     assert!(
-        matches!(typed.unwrap(), rsdebstrap::RsdebstrapError::Execution { .. }),
+        matches!(typed_err, rsdebstrap::RsdebstrapError::Execution { .. }),
         "Expected Execution variant, got: {:?}",
-        typed.unwrap()
+        typed_err
     );
     assert!(
         err.to_string().contains("exit status: 7"),
