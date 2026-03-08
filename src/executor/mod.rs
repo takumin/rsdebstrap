@@ -14,6 +14,7 @@ use std::process::ExitStatus;
 use anyhow::Result;
 use camino::Utf8PathBuf;
 
+use crate::RsdebstrapError;
 use crate::privilege::PrivilegeMethod;
 
 pub use real::RealCommandExecutor;
@@ -124,4 +125,17 @@ impl ExecutionResult {
 pub trait CommandExecutor: Send + Sync {
     /// Executes a command with the given specification.
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult>;
+
+    /// Executes a command and returns an error for non-zero exit status.
+    ///
+    /// This is the preferred API for ordinary command execution paths where
+    /// callers do not need to inspect the raw exit status.
+    fn execute_checked(&self, spec: &CommandSpec) -> Result<()> {
+        let result = self.execute(spec)?;
+        match result.status {
+            Some(status) if status.success() => Ok(()),
+            Some(status) => Err(RsdebstrapError::execution(spec, status.to_string()).into()),
+            None => Ok(()),
+        }
+    }
 }

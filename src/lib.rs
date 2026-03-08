@@ -51,17 +51,9 @@ fn run_bootstrap_phase(
 
     let privilege = profile.bootstrap.resolved_privilege_method();
     let spec = executor::CommandSpec::new(command_name, args).with_privilege(privilege);
-    let result = executor
-        .execute(&spec)
+    executor
+        .execute_checked(&spec)
         .with_context(|| format!("failed to execute {}", command_name))?;
-
-    if !result.success() {
-        let status_display = result
-            .status
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "unknown (no status available)".to_string());
-        return Err(RsdebstrapError::execution(&spec, status_display).into());
-    }
 
     Ok(())
 }

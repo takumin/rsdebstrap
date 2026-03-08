@@ -172,7 +172,7 @@ impl AssembleResolvConfTask {
                 let rm_spec =
                     CommandSpec::new("rm", vec!["-f".to_string(), resolv_conf_path.to_string()])
                         .with_privilege(privilege);
-                executor.execute(&rm_spec)?;
+                executor.execute_checked(&rm_spec)?;
 
                 let ln_spec = CommandSpec::new(
                     "ln",
@@ -183,7 +183,7 @@ impl AssembleResolvConfTask {
                     ],
                 )
                 .with_privilege(privilege);
-                executor.execute(&ln_spec)?;
+                executor.execute_checked(&ln_spec)?;
 
                 info!("created symlink {} -> {}", resolv_conf_path, target);
             }
@@ -210,14 +210,14 @@ impl AssembleResolvConfTask {
 
                 let cp_spec = CommandSpec::new("cp", vec![temp_path, resolv_conf_path.to_string()])
                     .with_privilege(privilege);
-                executor.execute(&cp_spec)?;
+                executor.execute_checked(&cp_spec)?;
 
                 let chmod_spec = CommandSpec::new(
                     "chmod",
                     vec!["644".to_string(), resolv_conf_path.to_string()],
                 )
                 .with_privilege(privilege);
-                executor.execute(&chmod_spec)?;
+                executor.execute_checked(&chmod_spec)?;
 
                 info!("wrote resolv.conf to {}", resolv_conf_path);
             }
@@ -231,6 +231,8 @@ impl AssembleResolvConfTask {
 mod tests {
     use super::*;
     use crate::executor::{CommandExecutor, ExecutionResult};
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
     use std::sync::{Arc, Mutex};
 
     // =========================================================================
@@ -725,6 +727,38 @@ mod tests {
         assert_eq!(privileges[1], Some(PrivilegeMethod::Doas));
     }
 
+    #[test]
+    fn execute_generate_errors_on_non_zero_cp_exit() {
+        let temp = tempfile::tempdir().unwrap();
+        let rootfs = camino::Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(rootfs.join("etc")).unwrap();
+
+        let task = make_task_generate_resolved(vec!["8.8.8.8"], vec![]);
+
+        let ctx = MockAssembleContext::new(&rootfs, false);
+        ctx.executor.fail_on_command("cp");
+        let err = task.execute(&ctx).unwrap_err();
+
+        assert!(err.to_string().contains("command execution failed"));
+        assert!(err.to_string().contains("cp"));
+    }
+
+    #[test]
+    fn execute_link_errors_on_non_zero_ln_exit() {
+        let temp = tempfile::tempdir().unwrap();
+        let rootfs = camino::Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(rootfs.join("etc")).unwrap();
+
+        let task = make_task_link_resolved("/run/systemd/resolve/stub-resolv.conf");
+
+        let ctx = MockAssembleContext::new(&rootfs, false);
+        ctx.executor.fail_on_command("ln");
+        let err = task.execute(&ctx).unwrap_err();
+
+        assert!(err.to_string().contains("command execution failed"));
+        assert!(err.to_string().contains("ln"));
+    }
+
     // =========================================================================
     // Test helpers
     // =========================================================================
@@ -775,18 +809,41 @@ mod tests {
     /// Records executed commands for assertion.
     struct MockCommandExecutor {
         commands: Mutex<Vec<RecordedCommand>>,
+        fail_on_command: Mutex<Option<String>>,
     }
 
     impl MockCommandExecutor {
         fn new() -> Self {
             Self {
                 commands: Mutex::new(Vec::new()),
+                fail_on_command: Mutex::new(None),
             }
+        }
+
+        fn fail_on_command(&self, command: &str) {
+            *self.fail_on_command.lock().unwrap() = Some(command.to_string());
         }
     }
 
     impl CommandExecutor for MockCommandExecutor {
         fn execute(&self, spec: &crate::executor::CommandSpec) -> anyhow::Result<ExecutionResult> {
+            if self
+                .fail_on_command
+                .lock()
+                .unwrap()
+                .as_deref()
+                .is_some_and(|command| command == spec.command)
+            {
+                self.commands.lock().unwrap().push((
+                    spec.command.clone(),
+                    spec.args.clone(),
+                    spec.privilege,
+                ));
+                return Ok(ExecutionResult {
+                    status: Some(ExitStatus::from_raw(1 << 8)),
+                });
+            }
+
             // Actually execute the command so tests can verify file effects
             let mut cmd = std::process::Command::new(&spec.command);
             cmd.args(&spec.args);

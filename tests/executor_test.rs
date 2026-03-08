@@ -36,3 +36,28 @@ fn non_dry_run_fails_for_nonexistent_command() {
         );
     }
 }
+
+#[test]
+fn execute_checked_returns_error_for_non_zero_exit() {
+    let executor = RealCommandExecutor { dry_run: false };
+    let spec = CommandSpec::new("sh", vec!["-c".into(), "exit 7".into()]);
+
+    let err = executor
+        .execute_checked(&spec)
+        .expect_err("command should have failed");
+
+    let typed_err = err
+        .downcast_ref::<rsdebstrap::RsdebstrapError>()
+        .expect("error should be a RsdebstrapError");
+
+    assert!(
+        matches!(typed_err, rsdebstrap::RsdebstrapError::Execution { .. }),
+        "Expected Execution variant, got: {:?}",
+        typed_err
+    );
+    assert!(
+        err.to_string().contains("exit status: 7"),
+        "Expected exit status in error, got: {}",
+        err
+    );
+}
