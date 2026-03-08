@@ -94,19 +94,6 @@ impl RootfsResolvConf {
         self.rootfs.join("etc")
     }
 
-    /// Executes a command and checks for success.
-    fn execute_and_check(&self, spec: &CommandSpec) -> Result<()> {
-        let result = self.executor.execute(spec)?;
-        if !result.success() {
-            let status = result
-                .status
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            return Err(RsdebstrapError::execution(spec, status).into());
-        }
-        Ok(())
-    }
-
     /// Sets up resolv.conf in the rootfs.
     ///
     /// 1. Validates that `<rootfs>/etc` exists and is not a symlink
@@ -167,7 +154,7 @@ impl RootfsResolvConf {
             let spec =
                 CommandSpec::new("mv", vec![resolv_path.to_string(), backup_path.to_string()])
                     .with_privilege(self.privilege);
-            self.execute_and_check(&spec)?;
+            self.executor.execute_checked(&spec)?;
         }
 
         // Write new resolv.conf
@@ -177,7 +164,7 @@ impl RootfsResolvConf {
                 vec![self.host_resolv_conf.to_string(), resolv_path.to_string()],
             )
             .with_privilege(self.privilege);
-            self.execute_and_check(&spec)
+            self.executor.execute_checked(&spec)
         } else {
             let content = generate_resolv_conf(config);
             let temp = tempfile::NamedTempFile::new().map_err(|e| {
@@ -195,7 +182,7 @@ impl RootfsResolvConf {
             let temp_path = temp.path().to_string_lossy().to_string();
             let spec = CommandSpec::new("cp", vec![temp_path, resolv_path.to_string()])
                 .with_privilege(self.privilege);
-            self.execute_and_check(&spec)
+            self.executor.execute_checked(&spec)
         };
 
         if let Err(write_err) = write_result {
@@ -204,7 +191,7 @@ impl RootfsResolvConf {
                 let rollback_spec =
                     CommandSpec::new("mv", vec![backup_path.to_string(), resolv_path.to_string()])
                         .with_privilege(self.privilege);
-                if let Err(rollback_err) = self.execute_and_check(&rollback_spec) {
+                if let Err(rollback_err) = self.executor.execute_checked(&rollback_spec) {
                     tracing::error!(
                         "failed to roll back resolv.conf backup after write failure: {}",
                         rollback_err
@@ -218,7 +205,7 @@ impl RootfsResolvConf {
         let chmod_spec =
             CommandSpec::new("chmod", vec!["644".to_string(), resolv_path.to_string()])
                 .with_privilege(self.privilege);
-        if let Err(e) = self.execute_and_check(&chmod_spec) {
+        if let Err(e) = self.executor.execute_checked(&chmod_spec) {
             tracing::warn!("failed to set permissions on {}: {}", resolv_path, e);
         }
 
@@ -241,14 +228,14 @@ impl RootfsResolvConf {
         // Remove the written resolv.conf
         let rm_spec = CommandSpec::new("rm", vec!["-f".to_string(), resolv_path.to_string()])
             .with_privilege(self.privilege);
-        self.execute_and_check(&rm_spec)?;
+        self.executor.execute_checked(&rm_spec)?;
 
         // Restore backup if it exists
         if backup_path.exists() {
             let spec =
                 CommandSpec::new("mv", vec![backup_path.to_string(), resolv_path.to_string()])
                     .with_privilege(self.privilege);
-            self.execute_and_check(&spec)?;
+            self.executor.execute_checked(&spec)?;
         }
 
         info!("restored resolv.conf in {}", self.rootfs);
