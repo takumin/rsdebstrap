@@ -1,5 +1,5 @@
 ---
 packages:
-- name: uutils/coreutils@0.7.0
+- name: uutils/coreutils@0.8.0
   tags:
   - coreutils
