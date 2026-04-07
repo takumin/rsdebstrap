@@ -1,5 +1,5 @@
 ---
 packages:
-- name: mvdan/sh@v3.13.0
+- name: mvdan/sh@v3.13.1
   tags:
   - shfmt
