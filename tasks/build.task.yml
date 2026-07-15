@@ -135,5 +135,6 @@ tasks:
       cosign sign-blob {{.ARTIFACT}}
       -y
       --use-signing-config=false
+      --new-bundle-format=false
       --output-certificate {{.ARTIFACT}}.cert
       --output-signature {{.ARTIFACT}}.sig
