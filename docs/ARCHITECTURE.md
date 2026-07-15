@@ -72,12 +72,15 @@ different roles (temporary DNS during provisioning vs. the permanent installed f
 The rootfs is an untrusted directory tree we mutate with elevated privileges, so two
 patterns run throughout `src/isolation/`:
 
-- **TOCTOU-safe path traversal.** `safe_create_mount_point()` and the assemble
-  `resolv_conf` `/etc` handling never trust a resolved path string. They open the
-  rootfs with `O_NOFOLLOW`, then walk each component with `openat(O_NOFOLLOW)` /
-  `mkdirat`, treating `ELOOP`/`ENOTDIR` as a symlink attack (`RsdebstrapError::Isolation`).
-  Verified absolute paths are cached and reused for the matching `umount` to avoid
-  re-traversal. Implemented with the `rustix` crate for memory-safe syscall wrappers.
+- **TOCTOU-safe path traversal.** `safe_create_mount_point()` never trusts a resolved
+  path string: it opens the rootfs with `O_NOFOLLOW`, then walks each component with
+  `openat(O_NOFOLLOW)` / `mkdirat`, treating `ELOOP`/`ENOTDIR` as a symlink attack
+  (`RsdebstrapError::Isolation`). Verified absolute paths are cached and reused for the
+  matching `umount` to avoid re-traversal. The assemble `resolv_conf` `/etc` handling
+  applies a narrower fd-based check — a single `openat(O_NOFOLLOW)` on `<rootfs>/etc` to
+  reject a symlinked `/etc` — but a TOCTOU window remains before the subsequent
+  `mv`/`cp`/`ln` path-string commands, inherent to privilege escalation via external
+  commands. Implemented with the `rustix` crate for memory-safe syscall wrappers.
 - **RAII lifecycle managers.** `RootfsMounts`, `RootfsResolvConf`, and `TempFileGuard`
   all guarantee cleanup via `Drop`, including on error paths. Mounts unmount in reverse
   order and `unmount()` is idempotent, collecting errors across entries.
