@@ -15,6 +15,13 @@
 //! comes from the compiled validator. This is precisely the layer where schema generation could
 //! diverge from serde.
 
+// The whole crate is compiled out without the default-on `schema` feature: it exercises the
+// generated schema, which does not exist in a schema-less build. Gated in-file rather than
+// via a Cargo `[[test]]` stanza with `required-features` because an explicit test target
+// makes manifest parsing require the file to exist, breaking CI's sparse checkouts (the
+// fetch/build jobs check out the manifest without `tests/`).
+#![cfg(feature = "schema")]
+
 use std::sync::LazyLock;
 
 use jsonschema::Validator;

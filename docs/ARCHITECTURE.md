@@ -136,11 +136,14 @@ is compiled behind the **default-on `schema` cargo feature**: `schemars`/`serde_
 optional dependencies enabled by it, every `JsonSchema` derive and `#[schemars(...)]` attribute
 is `cfg_attr`-gated, and the `schema` subcommand plus `profile_json_schema*()` do not exist
 under `--no-default-features` (for size-constrained `apply`/`validate`-only builds). The schema
-test suites declare `required-features = ["schema"]`, so a default `cargo test` — and CI's
-`--all-features` runs — still exercise every drift guard, while `--no-default-features` skips
-them instead of failing to compile. A missed `cfg_attr` on a new field only surfaces in the
-schema-less build, which is why `cargo check --all-targets --no-default-features` is part of the
-routine command set in AGENTS.md.
+test suites carry a crate-level `#![cfg(feature = "schema")]`, so a default `cargo test` — and
+CI's `--all-features` runs — still exercise every drift guard, while `--no-default-features`
+compiles them to empty crates instead of failing. (In-file gating, not a Cargo `[[test]]` stanza
+with `required-features`: an explicit test target makes manifest parsing require the file, which
+breaks CI's sparse checkouts that fetch/build without `tests/`.) A missed `cfg_attr` on a new
+field only surfaces in the schema-less build, which is why
+`cargo check --all-targets --no-default-features` is part of the routine command set in
+AGENTS.md.
 
 The non-obvious parts are all about keeping the schema faithful to the *deserializer*:
 

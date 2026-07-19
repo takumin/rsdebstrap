@@ -13,6 +13,13 @@
 //!    (e.g. mitamae binary resolution, mount/privilege cross-checks) live in `Profile::validate`
 //!    and are intentionally out of scope here — JSON Schema cannot express them.
 
+// The whole crate is compiled out without the default-on `schema` feature: it exercises the
+// generated schema, which does not exist in a schema-less build. Gated in-file rather than
+// via a Cargo `[[test]]` stanza with `required-features` because an explicit test target
+// makes manifest parsing require the file to exist, breaking CI's sparse checkouts (the
+// fetch/build jobs check out the manifest without `tests/`).
+#![cfg(feature = "schema")]
+
 use jsonschema::Validator;
 use rsdebstrap::config::Profile;
 use serde_json::Value;

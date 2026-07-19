@@ -39,14 +39,3 @@ which = "8.0.0"
 [dev-dependencies]
 jsonschema = "0.48.1"
 proptest = "1.11.0"
-
-# The schema suites exercise the generated schema, so they only build when the
-# `schema` feature (default-on) is active; `cargo test --no-default-features`
-# skips them instead of failing to compile.
-[[test]]
-name = "schema_test"
-required-features = ["schema"]
-
-[[test]]
-name = "schema_proptest"
-required-features = ["schema"]
