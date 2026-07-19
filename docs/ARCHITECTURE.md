@@ -184,7 +184,9 @@ Drift guards (all in `cargo test`, so CI fails on drift):
 - **`schema/rsdebstrap.schema.json` is committed** and byte-compared against generator output by
   `committed_schema_is_up_to_date`. It is rendered with tab indentation (via
   `profile_json_schema_pretty()`) to satisfy `.editorconfig`. Regenerate after any config-type
-  change with `cargo run -- schema > schema/rsdebstrap.schema.json`.
+  change with `task schema` (wraps `cargo run -- schema > schema/rsdebstrap.schema.json`). The
+  autofix.ci workflow runs `task schema` on every pull request and auto-commits the regenerated
+  file, so drift normally fixes itself; this byte-compare test remains the enforcement backstop.
 - **Differential + property tests** (`tests/schema_test.rs`, `tests/schema_proptest.rs`) assert the
   critical safety invariant: whenever the structural deserializer accepts a document, the schema
   must accept it too (no false rejections that would make editor tooling flag valid configs).

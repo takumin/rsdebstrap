@@ -29,7 +29,8 @@ cargo run -- validate -f examples/debian_trixie_mmdebstrap.yml
 
 # Generate the profile JSON Schema (derived from the Rust config types).
 # Regenerate the committed copy after any config-type change, or `cargo test` fails.
-cargo run -- schema > schema/rsdebstrap.schema.json
+# The autofix.ci workflow also runs this on PRs and auto-commits any drift.
+task schema  # equivalent to: cargo run -- schema > schema/rsdebstrap.schema.json
 ```
 
 ## Architecture Overview
@@ -54,7 +55,9 @@ filesystem-safety code — it captures decisions that are not obvious from the s
 A machine-readable JSON Schema for this format is committed at
 [`schema/rsdebstrap.schema.json`](schema/rsdebstrap.schema.json) (usable for editor
 completion/validation). It is generated from the Rust config types — regenerate it with
-`cargo run -- schema` after any config-type change (see
+`task schema` (or `cargo run -- schema > schema/rsdebstrap.schema.json`) after any
+config-type change; the autofix.ci workflow also regenerates it and auto-commits drift
+to pull requests (see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#json-schema-generation)).
 
 ```yaml

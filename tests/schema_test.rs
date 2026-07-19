@@ -99,8 +99,8 @@ fn committed_schema_is_up_to_date() {
     assert_eq!(
         committed, generated,
         concat!(
-            "committed schema/rsdebstrap.schema.json is stale; ",
-            "regenerate with `cargo run -- schema > schema/rsdebstrap.schema.json`",
+            "committed schema/rsdebstrap.schema.json is stale; regenerate with `task schema` ",
+            "(or `cargo run -- schema > schema/rsdebstrap.schema.json`)",
         )
     );
 }
