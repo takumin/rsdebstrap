@@ -159,14 +159,20 @@ struct PrivilegeMethodMap {
 
 // Schema-only mirror of the accepted YAML shapes: `true`/`false`, `{ method: ... }`, or an
 // explicit null (which — like field absence — resolves to `Inherit`).
-// Never deserialized directly — `Privilege`'s `Deserialize` performs the strict dispatch.
-// Exists solely so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
-#[derive(JsonSchema)]
+// Not on the production parse path — `Privilege`'s `Deserialize` performs the strict
+// dispatch. `Deserialize` is derived here solely so the `wire_parity` tests can prove this
+// enum accepts exactly what `PrivilegeVisitor` accepts: the variants below and the
+// visitor's `visit_*` methods must change in lockstep, and those tests fail on any drift.
+// Exists so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
-#[allow(dead_code)]
 enum PrivilegeWire {
-    Toggle(bool),
-    Method(PrivilegeMethodMap),
+    // The payloads are written by the derived `Deserialize` and read only as *types* by
+    // schema generation, never as values — hence the field-level allows. Unlike the
+    // previous enum-level allow, these keep "variant is never constructed" armed, so
+    // dropping the `Deserialize` derive that ties this enum to the tests is a warning.
+    Toggle(#[allow(dead_code)] bool),
+    Method(#[allow(dead_code)] PrivilegeMethodMap),
     // Unit variant → `{ "type": "null" }` in the generated `anyOf`, mirroring that an
     // explicit null deserializes to `Inherit` (see `visit_unit`).
     Inherit,
@@ -179,6 +185,8 @@ impl<'de> Deserialize<'de> for Privilege {
     {
         use serde::de;
 
+        // The set of `visit_*` methods below must stay in lockstep with `PrivilegeWire`'s
+        // variants (the schema mirror); the `wire_parity` tests enforce the equivalence.
         struct PrivilegeVisitor;
 
         impl<'de> de::Visitor<'de> for PrivilegeVisitor {
@@ -521,5 +529,49 @@ mod tests {
             roundtrip(&Privilege::Method(PrivilegeMethod::Doas)),
             Privilege::Method(PrivilegeMethod::Doas)
         );
+    }
+
+    // =========================================================================
+    // Wire-enum parity tests
+    // =========================================================================
+
+    // `PrivilegeWire` is the schema-side mirror of the hand-written visitor. These
+    // tests pin the two acceptance sets together: adding or removing a `visit_*`
+    // method without the matching wire-variant change (or vice versa) makes a
+    // battery value below diverge and fail.
+    mod wire_parity {
+        use super::super::{Privilege, PrivilegeWire};
+        use serde_json::{Value, json};
+
+        fn battery() -> Vec<Value> {
+            vec![
+                json!(null),
+                json!(true),
+                json!(false),
+                json!({"method": "sudo"}),
+                json!({"method": "doas"}),
+                json!({"method": "pkexec"}),
+                json!({"methd": "sudo"}),
+                json!({"method": "sudo", "extra": 1}),
+                json!({}),
+                json!("sudo"),
+                json!([]),
+                json!(42),
+                json!(42.5),
+            ]
+        }
+
+        #[test]
+        fn wire_accepts_exactly_what_the_visitor_accepts() {
+            for value in battery() {
+                let wire = serde_json::from_value::<PrivilegeWire>(value.clone()).is_ok();
+                let visitor = serde_json::from_value::<Privilege>(value.clone()).is_ok();
+                assert_eq!(
+                    wire, visitor,
+                    "PrivilegeWire and Privilege's visitor disagree on {value}: \
+                     wire accepts = {wire}, visitor accepts = {visitor}"
+                );
+            }
+        }
     }
 }

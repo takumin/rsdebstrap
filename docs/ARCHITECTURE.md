@@ -144,8 +144,12 @@ The non-obvious parts are all about keeping the schema faithful to the *deserial
   `TaskIsolation` hand-write `Deserialize` for the `true`/`false`/map/null shorthand, so their
   `JsonSchema` forwards to a `#[serde(untagged)]` wire enum (`PrivilegeWire` / `TaskIsolationWire`)
   that carries the same map type plus a null unit variant — the schema's `anyOf[bool, map, null]`
-  then mirrors deserialization exactly. `ShellTask` / `MitamaeTask` similarly forward to their
-  hoisted `Raw*` DTOs (the actual deserialize path), so schema and parsing share one definition.
+  then mirrors deserialization. The map branch genuinely shares one definition with the visitor
+  (`PrivilegeMethodMap` / `IsolationConfig`), but the *outer* acceptance set (bool/map/null) exists
+  twice — as the wire enum's variants and as the visitor's `visit_*` methods — with no compile-time
+  tie; the in-file `wire_parity` tests pin the two sets together by asserting acceptance
+  equivalence over a battery of shapes. `ShellTask` / `MitamaeTask` have no such split: they
+  forward to their hoisted `Raw*` DTOs, which *are* the actual deserialize path.
 - **`script` xor `content`** is enforced at runtime by `resolve_script_source`; the schema mirrors
   it as a `oneOf` on the `Raw*` DTO. Each branch constrains the source to a *string*, not mere key
   presence, because `serde` treats an explicit `null` on an `Option` field as absent — so
