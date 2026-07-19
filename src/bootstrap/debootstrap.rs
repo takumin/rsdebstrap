@@ -12,6 +12,9 @@ use strum::Display;
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
+// Distinct schema name so it does not collide with mmdebstrap's `Variant` (which would make
+// schemars auto-suffix one to the non-descriptive `Variant2`).
+#[schemars(rename = "DebootstrapVariant")]
 pub enum Variant {
     /// Minimal base system (default)
     #[serde(alias = "")]

@@ -17,6 +17,9 @@ const KNOWN_ARCHIVE_EXTENSIONS: &[&str] =
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
+// Distinct schema name so it does not collide with debootstrap's `Variant` (which would make
+// schemars auto-suffix one to the non-descriptive `Variant2`).
+#[schemars(rename = "MmdebstrapVariant")]
 pub enum Variant {
     /// The `required` set plus all packages with `Priority:important` (default)
     #[serde(alias = "")]
