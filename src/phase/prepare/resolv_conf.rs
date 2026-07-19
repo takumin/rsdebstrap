@@ -8,6 +8,7 @@
 use std::borrow::Cow;
 use std::net::IpAddr;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{IsolationConfig, ResolvConfConfig};
@@ -22,7 +23,7 @@ use crate::phase::PhaseItem;
 /// managed at the pipeline level, not by the task's `execute()` method.
 ///
 /// At most one `ResolvConfTask` may appear in the prepare phase.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvConfTask {
     /// Copy host's /etc/resolv.conf into the chroot (following symlinks).

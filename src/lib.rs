@@ -7,6 +7,7 @@ pub mod isolation;
 pub mod phase;
 pub mod pipeline;
 pub mod privilege;
+pub mod schema;
 
 pub use error::RsdebstrapError;
 
@@ -172,5 +173,22 @@ pub fn run_validate(opts: &cli::ValidateArgs) -> Result<()> {
         .with_context(|| format!("failed to load profile from {}", opts.common.file))?;
     profile.validate().context("profile validation failed")?;
     info!("validation successful:\n{:#?}", profile);
+    Ok(())
+}
+
+/// Generates the JSON Schema for the YAML profile format.
+///
+/// The schema is derived directly from the [`config::Profile`] Rust types, so it always
+/// tracks what `apply`/`validate` accept — there is no separately maintained schema to
+/// drift out of sync.
+pub fn profile_json_schema() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(config::Profile))
+        .expect("Profile JSON Schema must serialize to JSON")
+}
+
+/// Prints the profile JSON Schema (pretty-printed) to stdout.
+pub fn run_schema() -> Result<()> {
+    let schema = profile_json_schema();
+    println!("{}", serde_json::to_string_pretty(&schema)?);
     Ok(())
 }

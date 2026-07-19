@@ -8,7 +8,9 @@
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::fs;
 use tracing::{debug, info};
 
@@ -54,24 +56,32 @@ fn default_shell() -> String {
     "/bin/sh".to_string()
 }
 
+// Wire shape of a shell task.
+//
+// Single source of truth for the YAML shape, shared by both deserialization (via
+// `ShellTask`'s `Deserialize`) and schema generation (via `ShellTask`'s `JsonSchema`).
+// `deny_unknown_fields` keeps typo'd keys rejected; the `script`/`content` mutual-exclusion
+// is enforced afterwards by `resolve_script_source`. Plain `//` (not `///`) so the note does
+// not leak into the schema's `description`.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RawShellTask {
+    #[schemars(with = "Option<crate::schema::Utf8PathSchema>")]
+    script: Option<Utf8PathBuf>,
+    content: Option<String>,
+    #[serde(default = "default_shell")]
+    shell: String,
+    #[serde(default)]
+    privilege: Privilege,
+    #[serde(default)]
+    isolation: TaskIsolation,
+}
+
 impl<'de> Deserialize<'de> for ShellTask {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct RawShellTask {
-            script: Option<Utf8PathBuf>,
-            content: Option<String>,
-            #[serde(default = "default_shell")]
-            shell: String,
-            #[serde(default)]
-            privilege: Privilege,
-            #[serde(default)]
-            isolation: TaskIsolation,
-        }
-
         let raw = RawShellTask::deserialize(deserializer)?;
         let source = crate::phase::resolve_script_source::<D::Error>(raw.script, raw.content)?;
         Ok(ShellTask {
@@ -80,6 +90,16 @@ impl<'de> Deserialize<'de> for ShellTask {
             privilege: raw.privilege,
             isolation: raw.isolation,
         })
+    }
+}
+
+impl JsonSchema for ShellTask {
+    fn schema_name() -> Cow<'static, str> {
+        "ShellTask".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        RawShellTask::json_schema(generator)
     }
 }
 

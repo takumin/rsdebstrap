@@ -13,6 +13,7 @@ use std::io::BufReader;
 use std::net::IpAddr;
 
 use camino::{Utf8Path, Utf8PathBuf};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -32,7 +33,7 @@ use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 const PSEUDO_FS_TYPES: &[&str] = &["proc", "sysfs", "devpts", "devtmpfs", "tmpfs"];
 
 /// Mount preset defining a predefined set of mount entries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MountPreset {
     /// Recommended mount set for typical Debian rootfs operations.
@@ -87,7 +88,7 @@ impl MountPreset {
 ///
 /// Limits follow the resolv.conf specification: max 3 nameservers,
 /// max 6 search domains (total 256 characters).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ResolvConfConfig {
     /// Copy host's /etc/resolv.conf into the chroot (following symlinks).
     #[serde(default)]
@@ -168,11 +169,12 @@ impl ResolvConfConfig {
 }
 
 /// A single mount entry specifying what to mount into the rootfs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MountEntry {
     /// Device name or path (e.g., "proc", "sysfs", "/dev").
     pub source: String,
     /// Mount point inside the rootfs (absolute path).
+    #[schemars(with = "crate::schema::Utf8PathSchema")]
     pub target: Utf8PathBuf,
     /// Mount options (e.g., "bind", "nosuid"). Joined with "," for `-o`.
     #[serde(default)]
@@ -295,7 +297,7 @@ impl MountEntry {
 ///
 /// This enum represents the different bootstrap tools that can be used.
 /// The `type` field in YAML determines which variant is used.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Bootstrap {
     /// mmdebstrap backend
@@ -344,24 +346,41 @@ impl Bootstrap {
     }
 }
 
-/// Isolation backend configuration.
+/// Isolation backend kind.
 ///
-/// This enum represents the different isolation mechanisms that can be used
-/// to execute commands within a rootfs. The `type` field in YAML determines
-/// which variant is used. If not specified, defaults to chroot.
-#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum IsolationConfig {
+/// The `type` field in the YAML `isolation` map selects the backend. If not specified,
+/// defaults to chroot.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum IsolationKind {
     /// chroot isolation (default)
     #[default]
     Chroot,
-    // Future: Bwrap(BwrapConfig), Nspawn(NspawnConfig)
+    // Future: Bwrap, Nspawn
+}
+
+/// Isolation backend configuration.
+///
+/// The `type` field selects the isolation backend used to run commands in the rootfs
+/// (default: chroot).
+// Implementation note: this is a struct (rather than an internally tagged enum) so that
+// `deny_unknown_fields` is actually enforced by serde — internally tagged enums silently
+// ignore it, which would let typo'd keys through and diverge from the generated schema's
+// `additionalProperties: false`.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IsolationConfig {
+    /// Isolation backend type.
+    #[serde(rename = "type")]
+    pub kind: IsolationKind,
 }
 
 impl IsolationConfig {
     /// Creates a default chroot config.
     pub fn chroot() -> Self {
-        Self::Chroot
+        Self {
+            kind: IsolationKind::Chroot,
+        }
     }
 
     /// Returns a boxed isolation provider instance.
@@ -369,8 +388,8 @@ impl IsolationConfig {
     /// This allows calling `IsolationProvider` methods without matching
     /// on each variant explicitly.
     pub fn as_provider(&self) -> Box<dyn IsolationProvider> {
-        match self {
-            IsolationConfig::Chroot => Box::new(ChrootProvider),
+        match self.kind {
+            IsolationKind::Chroot => Box::new(ChrootProvider),
         }
     }
 }
@@ -379,10 +398,11 @@ impl IsolationConfig {
 ///
 /// Allows specifying architecture-specific binary paths that apply to all
 /// mitamae tasks unless overridden at the task level.
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
 pub struct MitamaeDefaults {
     /// Architecture-specific binary paths (key: "x86_64", "aarch64", etc.)
     #[serde(default)]
+    #[schemars(with = "std::collections::HashMap<String, crate::schema::Utf8PathSchema>")]
     pub binary: HashMap<String, Utf8PathBuf>,
 }
 
@@ -390,7 +410,7 @@ pub struct MitamaeDefaults {
 ///
 /// Groups configuration defaults like isolation backend.
 /// If omitted in YAML, all fields use their respective defaults.
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
 pub struct Defaults {
     /// Isolation backend for running commands in rootfs (default: chroot)
     #[serde(default)]
@@ -407,9 +427,10 @@ pub struct Defaults {
 ///
 /// A profile contains the target directory and bootstrap tool configuration
 /// details needed to create a Debian-based system.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct Profile {
     /// Target directory path for the bootstrap operation
+    #[schemars(with = "crate::schema::Utf8PathSchema")]
     pub dir: Utf8PathBuf,
     /// Default settings (isolation backend, etc.)
     #[serde(default)]
@@ -482,7 +503,7 @@ impl Profile {
         };
 
         // mounts require chroot isolation
-        if !matches!(self.defaults.isolation, IsolationConfig::Chroot) {
+        if !matches!(self.defaults.isolation.kind, IsolationKind::Chroot) {
             return Err(RsdebstrapError::Validation(
                 "mounts require chroot isolation (defaults.isolation must be chroot)".to_string(),
             ));
@@ -513,7 +534,7 @@ impl Profile {
         // The named-field `prepare.resolv_conf` guarantees at most one task.
         if let Some(task) = &self.prepare.resolv_conf {
             // resolv_conf requires chroot isolation
-            if !matches!(self.defaults.isolation, IsolationConfig::Chroot) {
+            if !matches!(self.defaults.isolation.kind, IsolationKind::Chroot) {
                 return Err(RsdebstrapError::Validation(
                     "resolv_conf requires chroot isolation \
                     (defaults.isolation must be chroot)"
@@ -1090,7 +1111,7 @@ mod tests {
 
     #[test]
     fn test_isolation_config_serialize_deserialize_roundtrip() {
-        let config = IsolationConfig::Chroot;
+        let config = IsolationConfig::chroot();
         let yaml = serde_yaml::to_string(&config).unwrap();
         let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);
