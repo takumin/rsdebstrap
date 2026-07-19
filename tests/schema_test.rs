@@ -225,6 +225,40 @@ fn schema_matches_structural_deserializer() {
             with_provision("{type: shell, content: hi, isolation: {type: bogus}}"),
             false,
         ),
+        // Scalar-string and sequence forms of `privilege`/`isolation`: not a shorthand on
+        // either side. These pin the anyOf[boolean, map, null] surface against the visitors —
+        // a visit_str/visit_seq added to one side only would flip exactly one verdict here.
+        (
+            "string privilege",
+            with_provision("{type: shell, content: hi, privilege: sudo}"),
+            false,
+        ),
+        (
+            "array privilege",
+            with_provision("{type: shell, content: hi, privilege: []}"),
+            false,
+        ),
+        (
+            "string isolation",
+            with_provision("{type: shell, content: hi, isolation: chroot}"),
+            false,
+        ),
+        (
+            "array isolation",
+            with_provision("{type: shell, content: hi, isolation: []}"),
+            false,
+        ),
+        // Structural shape of the isolation map itself: `type` is required, extras rejected.
+        (
+            "isolation extra key",
+            with_provision("{type: shell, content: hi, isolation: {type: chroot, extra: 1}}"),
+            false,
+        ),
+        (
+            "isolation missing type",
+            with_provision("{type: shell, content: hi, isolation: {}}"),
+            false,
+        ),
         // Unknown/typo'd keys rejected by deny_unknown_fields (#5) / additionalProperties:false.
         (
             "typo'd privilege key",

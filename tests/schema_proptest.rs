@@ -61,6 +61,10 @@ fn privilege_field() -> impl Strategy<Value = Option<Value>> {
             .prop_map(|m| Some(json!({ "method": m }))),
         Just(Some(json!({ "methd": "sudo" }))), // typo'd key
         Just(Some(json!({ "method": "sudo", "extra": 1 }))), // unknown extra key
+        // Scalar/sequence forms: rejected by both sides today. They guard the likeliest
+        // drift — e.g. a visit_str shorthand added to the visitor without a wire variant.
+        Just(Some(json!("sudo"))),
+        Just(Some(json!([]))),
     ]
 }
 
@@ -72,6 +76,11 @@ fn isolation_field() -> impl Strategy<Value = Option<Value>> {
         any::<bool>().prop_map(|b| Some(json!(b))),
         prop_oneof![Just("chroot"), Just("bogus")].prop_map(|t| Some(json!({ "type": t }))),
         Just(Some(json!({ "typ": "chroot" }))), // typo'd key
+        Just(Some(json!({ "type": "chroot", "extra": 1 }))), // unknown extra key
+        // Scalar/sequence forms: rejected by both sides today. They guard the likeliest
+        // drift — e.g. a visit_str shorthand added to the visitor without a wire variant.
+        Just(Some(json!("chroot"))),
+        Just(Some(json!([]))),
     ]
 }
 
