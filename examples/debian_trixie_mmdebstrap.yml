@@ -57,28 +57,30 @@ bootstrap:
   - ca-certificates
   privilege: true # Use defaults.privilege method
 
-# Prepare phase: filesystem mounts and resolv.conf for the rootfs
+# Prepare phase: filesystem mounts and resolv.conf for the rootfs.
+# Named-field form: each role is a single optional key (not a list).
+# The pipeline always runs mount before resolv_conf, regardless of key order.
 prepare:
-# Mount task declares filesystems to mount before provisioning
-- type: mount
-  # Predefined mount set: proc, sysfs, devtmpfs, devpts, tmpfs(/tmp), tmpfs(/run)
-  preset: recommends
-  # Custom mount entries (override preset entries with the same target)
-  # mounts:
-  # - source: /dev
-  #   target: /dev
-  #   options: [bind]
+  # Mount task declares filesystems to mount before provisioning
+  mount:
+    # Predefined mount set: proc, sysfs, devtmpfs, devpts, tmpfs(/tmp), tmpfs(/run)
+    preset: recommends
+    # Custom mount entries (override preset entries with the same target)
+    # mounts:
+    # - source: /dev
+    #   target: /dev
+    #   options: [bind]
 
-# Copy host's /etc/resolv.conf into the chroot for DNS resolution.
-# Needed because the 'recommends' preset mounts tmpfs on /run,
-# which breaks the systemd symlink /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf
-#
-# Alternative: generate resolv.conf with explicit nameservers
-#   - type: resolv_conf
-#     name_servers: [8.8.8.8, 8.8.4.4]
-#     search: [example.com]
-- type: resolv_conf
-  copy: true
+  # Copy host's /etc/resolv.conf into the chroot for DNS resolution.
+  # Needed because the 'recommends' preset mounts tmpfs on /run,
+  # which breaks the systemd symlink /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf
+  #
+  # Alternative: generate resolv.conf with explicit nameservers
+  #   resolv_conf:
+  #     name_servers: [8.8.8.8, 8.8.4.4]
+  #     search: [example.com]
+  resolv_conf:
+    copy: true
 
 # Main provisioning steps
 provision:
@@ -108,10 +110,17 @@ provision:
 #   External recipe alternative:
 #     script: ./recipes/setup.rb
 
-# Assemble phase runs after provisioning (no task types available yet)
-# assemble: []
+# Assemble phase runs after provisioning. Named-field form with a single
+# optional `resolv_conf` key that writes a permanent /etc/resolv.conf into
+# the final rootfs (a generated file or a symlink):
+# assemble:
+#   resolv_conf:
+#     name_servers: [8.8.8.8, 8.8.4.4]
+#     search: [example.com]
+#     # OR, instead of name_servers/search, restore the systemd stub symlink:
+#     # link: ../run/systemd/resolve/stub-resolv.conf
 
-# Cleanup step (moved to provision phase until assemble gets task types)
+# Cleanup step (kept in the provision phase)
 - type: shell
   content: |-
     #!/bin/sh

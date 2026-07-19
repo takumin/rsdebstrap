@@ -17,7 +17,7 @@ use tracing::{debug, info};
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
 use crate::isolation::{DirectProvider, IsolationProvider};
-use crate::phase::{AssembleTask, PhaseItem, PrepareTask, ProvisionTask};
+use crate::phase::{AssembleConfig, PhaseItem, PrepareConfig, ProvisionTask};
 
 // Phase name constants to avoid duplication between validate() and run_phases()
 const PHASE_PREPARE: &str = "prepare";
@@ -32,17 +32,17 @@ const PHASE_ASSEMBLE: &str = "assemble";
 /// - Executing tasks in the correct phase order
 /// - Error handling with guaranteed teardown per task
 pub struct Pipeline<'a> {
-    prepare: &'a [PrepareTask],
+    prepare: &'a PrepareConfig,
     provision: &'a [ProvisionTask],
-    assemble: &'a [AssembleTask],
+    assemble: &'a AssembleConfig,
 }
 
 impl<'a> Pipeline<'a> {
     /// Creates a new pipeline with the given task phases.
     pub fn new(
-        prepare: &'a [PrepareTask],
+        prepare: &'a PrepareConfig,
         provision: &'a [ProvisionTask],
-        assemble: &'a [AssembleTask],
+        assemble: &'a AssembleConfig,
     ) -> Self {
         Self {
             prepare,
@@ -63,9 +63,9 @@ impl<'a> Pipeline<'a> {
 
     /// Validates all tasks in the pipeline.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        validate_phase_items(PHASE_PREPARE, self.prepare)?;
-        validate_phase_items(PHASE_PROVISION, self.provision)?;
-        validate_phase_items(PHASE_ASSEMBLE, self.assemble)?;
+        validate_phase_items(PHASE_PREPARE, &self.prepare.items())?;
+        validate_phase_items(PHASE_PROVISION, &provision_items(self.provision))?;
+        validate_phase_items(PHASE_ASSEMBLE, &self.assemble.items())?;
         Ok(())
     }
 
@@ -96,16 +96,28 @@ impl<'a> Pipeline<'a> {
         executor: &Arc<dyn CommandExecutor>,
         dry_run: bool,
     ) -> Result<()> {
-        run_phase_items(PHASE_PREPARE, self.prepare, rootfs, executor, dry_run)?;
-        run_phase_items(PHASE_PROVISION, self.provision, rootfs, executor, dry_run)?;
-        run_phase_items(PHASE_ASSEMBLE, self.assemble, rootfs, executor, dry_run)?;
+        run_phase_items(PHASE_PREPARE, &self.prepare.items(), rootfs, executor, dry_run)?;
+        run_phase_items(
+            PHASE_PROVISION,
+            &provision_items(self.provision),
+            rootfs,
+            executor,
+            dry_run,
+        )?;
+        run_phase_items(PHASE_ASSEMBLE, &self.assemble.items(), rootfs, executor, dry_run)?;
         Ok(())
     }
 }
 
-fn run_phase_items<T: PhaseItem>(
+/// Borrows the provision tasks as `PhaseItem` trait objects for uniform handling
+/// with the named-field prepare/assemble phases.
+fn provision_items(tasks: &[ProvisionTask]) -> Vec<&dyn PhaseItem> {
+    tasks.iter().map(|t| t as &dyn PhaseItem).collect()
+}
+
+fn run_phase_items(
     phase_name: &str,
-    tasks: &[T],
+    tasks: &[&dyn PhaseItem],
     rootfs: &Utf8Path,
     executor: &Arc<dyn CommandExecutor>,
     dry_run: bool,
@@ -119,7 +131,7 @@ fn run_phase_items<T: PhaseItem>(
 
     for (index, task) in tasks.iter().enumerate() {
         info!("running {} {}/{}: {}", phase_name, index + 1, tasks.len(), task.name());
-        run_task_item(task, rootfs, executor, dry_run)
+        run_task_item(*task, rootfs, executor, dry_run)
             .with_context(|| format!("failed to run {} {}", phase_name, index + 1))?;
     }
 
@@ -130,8 +142,8 @@ fn run_phase_items<T: PhaseItem>(
 ///
 /// Creates the appropriate provider based on the task's resolved isolation
 /// config, sets up the context, executes the task, and ensures teardown.
-fn run_task_item<T: PhaseItem>(
-    task: &T,
+fn run_task_item(
+    task: &dyn PhaseItem,
     rootfs: &Utf8Path,
     executor: &Arc<dyn CommandExecutor>,
     dry_run: bool,
@@ -165,10 +177,7 @@ fn run_task_item<T: PhaseItem>(
 /// preserving the `source` for programmatic inspection.
 /// Other error variants are wrapped in `Validation` with phase context for
 /// forward-compatibility, ensuring no future variant loses phase information.
-fn validate_phase_items<T: PhaseItem>(
-    phase_name: &str,
-    tasks: &[T],
-) -> Result<(), RsdebstrapError> {
+fn validate_phase_items(phase_name: &str, tasks: &[&dyn PhaseItem]) -> Result<(), RsdebstrapError> {
     for (index, task) in tasks.iter().enumerate() {
         task.validate().map_err(|e| match e {
             RsdebstrapError::Validation(msg) => RsdebstrapError::Validation(format!(

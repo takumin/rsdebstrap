@@ -5,12 +5,15 @@
 //! The actual setup/teardown lifecycle is managed at the pipeline level
 //! (not per-task), similar to mount tasks.
 
+use std::borrow::Cow;
 use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::ResolvConfConfig;
+use crate::config::{IsolationConfig, ResolvConfConfig};
 use crate::error::RsdebstrapError;
+use crate::isolation::IsolationContext;
+use crate::phase::PhaseItem;
 
 /// resolv_conf task for declaring DNS configuration in the prepare phase.
 ///
@@ -53,6 +56,28 @@ impl ResolvConfTask {
     /// Delegates to `ResolvConfConfig::validate()`.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
         self.config().validate()
+    }
+}
+
+impl PhaseItem for ResolvConfTask {
+    fn name(&self) -> Cow<'_, str> {
+        // `self.name()` resolves to the inherent method (inherent methods take
+        // precedence over trait methods), so this is not recursive.
+        Cow::Owned(format!("resolv_conf:{}", self.name()))
+    }
+
+    fn validate(&self) -> Result<(), RsdebstrapError> {
+        ResolvConfTask::validate(self)
+    }
+
+    fn execute(&self, _ctx: &dyn IsolationContext) -> anyhow::Result<()> {
+        // resolv_conf lifecycle is managed at the pipeline level, not per-task.
+        Ok(())
+    }
+
+    fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
+        // resolv_conf tasks don't use per-task isolation.
+        None
     }
 }
 

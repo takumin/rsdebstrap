@@ -1,18 +1,20 @@
 //! Phase module for pipeline task definitions.
 //!
-//! This module provides phase-specific task enums and the internal `PhaseItem`
+//! This module provides phase-specific task types and the internal `PhaseItem`
 //! trait used by the pipeline to process tasks generically across phases.
 //!
 //! ## Phase structure
 //!
-//! - [`prepare`] — Preparation tasks before main provisioning (currently empty)
-//! - [`provision`] — Main provisioning tasks (Shell, Mitamae)
-//! - [`assemble`] — Finalization tasks after provisioning (currently empty)
+//! - [`prepare`] — Preparation tasks before main provisioning (named-field
+//!   [`PrepareConfig`]: `mount`, `resolv_conf`)
+//! - [`provision`] — Main provisioning tasks (Shell, Mitamae), an ordered `Vec`
+//! - [`assemble`] — Finalization tasks after provisioning (named-field
+//!   [`AssembleConfig`]: `resolv_conf`)
 //!
-//! Adding a new phase requires:
-//! 1. Creating a new module with a `#[non_exhaustive]` enum
-//! 2. Implementing `PhaseItem` for the enum
-//! 3. Adding a field to `Profile` and `Pipeline`
+//! Adding a new task to a named-field phase requires:
+//! 1. Adding an `Option<...>` field to the phase config struct
+//! 2. Implementing `PhaseItem` for the task struct
+//! 3. Emitting it from the config's `items()` in the desired execution order
 
 pub mod assemble;
 pub mod prepare;
@@ -25,10 +27,10 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use tracing::info;
 
+pub use assemble::AssembleConfig;
 pub use assemble::AssembleResolvConfTask;
-pub use assemble::AssembleTask;
 pub use prepare::MountTask;
-pub use prepare::PrepareTask;
+pub use prepare::PrepareConfig;
 pub use prepare::ResolvConfTask;
 pub use provision::MitamaeTask;
 pub use provision::ProvisionTask;

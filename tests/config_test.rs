@@ -821,7 +821,7 @@ fn test_load_profile_prepare_rejects_unknown_task_type() -> Result<()> {
           target: rootfs
           format: directory
         prepare:
-          - type: shell
+          shell:
             content: echo "pre-processing"
         "#
     ));
@@ -829,7 +829,7 @@ fn test_load_profile_prepare_rejects_unknown_task_type() -> Result<()> {
 
     assert!(
         result.is_err(),
-        "PrepareTask does not have a shell variant, should fail to parse"
+        "PrepareConfig has no `shell` field (deny_unknown_fields), should fail to parse"
     );
 
     Ok(())
@@ -847,13 +847,16 @@ fn test_load_profile_assemble_rejects_unknown_task_type() -> Result<()> {
           target: rootfs
           format: directory
         assemble:
-          - type: shell
+          shell:
             content: echo "post-processing"
         "#
     ));
     // editorconfig-checker-enable
 
-    assert!(result.is_err(), "AssembleTask has no variants, should fail to parse shell type");
+    assert!(
+        result.is_err(),
+        "AssembleConfig has no `shell` field (deny_unknown_fields), should fail to parse"
+    );
 
     Ok(())
 }
@@ -1620,16 +1623,13 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  mount:
     preset: recommends
 "#
     ))?;
     // editorconfig-checker-enable
 
-    assert_eq!(profile.prepare.len(), 1);
-    let mount_task = profile.prepare[0]
-        .mount_task()
-        .expect("Expected mount task");
+    let mount_task = profile.prepare.mount.as_ref().expect("Expected mount task");
     assert!(mount_task.preset.is_some(), "Expected preset to be set");
 
     let mounts = mount_task.resolved_mounts();
@@ -1653,7 +1653,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  mount:
     mounts:
       - source: proc
         target: /proc
@@ -1663,9 +1663,7 @@ prepare:
     ))?;
     // editorconfig-checker-enable
 
-    let mount_task = profile.prepare[0]
-        .mount_task()
-        .expect("Expected mount task");
+    let mount_task = profile.prepare.mount.as_ref().expect("Expected mount task");
     let mounts = mount_task.resolved_mounts();
     assert_eq!(mounts.len(), 2);
     assert_eq!(mounts[0].source, "proc");
@@ -1689,7 +1687,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  mount:
     preset: recommends
     mounts:
       - source: /dev
@@ -1700,9 +1698,7 @@ prepare:
     ))?;
     // editorconfig-checker-enable
 
-    let mount_task = profile.prepare[0]
-        .mount_task()
-        .expect("Expected mount task");
+    let mount_task = profile.prepare.mount.as_ref().expect("Expected mount task");
     let mounts = mount_task.resolved_mounts();
     // Recommends has 6, custom replaces /dev entry => 6
     assert_eq!(mounts.len(), 6);
@@ -1730,7 +1726,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  mount:
     preset: recommends
 "#
     ))?;
@@ -1768,7 +1764,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  mount:
     mounts:
       - source: devpts
         target: /dev/pts
@@ -1810,7 +1806,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  mount:
     mounts:
       - source: proc
         target: /proc
@@ -1840,7 +1836,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  mount:
     mounts:
       - source: proc
         target: /proc
@@ -1881,7 +1877,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: resolv_conf
+  resolv_conf:
     copy: true
 "#
     ))?;
@@ -1889,8 +1885,8 @@ prepare:
 
     let rc_task = profile
         .prepare
-        .iter()
-        .find_map(|t| t.resolv_conf_task())
+        .resolv_conf
+        .as_ref()
         .expect("Expected resolv_conf task");
     assert!(rc_task.copy);
     assert!(rc_task.name_servers.is_empty());
@@ -1911,7 +1907,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: resolv_conf
+  resolv_conf:
     name_servers:
       - 8.8.8.8
       - 8.8.4.4
@@ -1923,8 +1919,8 @@ prepare:
 
     let rc_task = profile
         .prepare
-        .iter()
-        .find_map(|t| t.resolv_conf_task())
+        .resolv_conf
+        .as_ref()
         .expect("Expected resolv_conf task");
     assert!(!rc_task.copy);
     assert_eq!(rc_task.name_servers.len(), 2);
@@ -1951,13 +1947,7 @@ bootstrap:
     ))?;
     // editorconfig-checker-enable
 
-    assert!(
-        profile
-            .prepare
-            .iter()
-            .find_map(|t| t.resolv_conf_task())
-            .is_none()
-    );
+    assert!(profile.prepare.resolv_conf.is_none());
 
     Ok(())
 }
@@ -1974,7 +1964,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: resolv_conf
+  resolv_conf:
     copy: true
     name_servers:
       - 8.8.8.8
@@ -2009,7 +1999,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: resolv_conf
+  resolv_conf:
     copy: false
 "#
     ))?;
@@ -2042,7 +2032,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: resolv_conf
+  resolv_conf:
     copy: true
 "#
     ))?;
@@ -2065,7 +2055,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: resolv_conf
+  resolv_conf:
     name_servers:
       - 8.8.8.8
     search:
@@ -2101,7 +2091,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: resolv_conf
+  resolv_conf:
     name_servers:
       - 8.8.8.8
     search:
@@ -2126,7 +2116,7 @@ prepare:
 }
 
 // =============================================================================
-// PrepareTask mount tests
+// PrepareConfig mount tests
 // =============================================================================
 
 #[test]
@@ -2144,7 +2134,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  mount:
     preset: recommends
     mounts:
       - source: tmpfs
@@ -2154,9 +2144,7 @@ prepare:
     // editorconfig-checker-enable
 
     assert_eq!(profile.prepare.len(), 1);
-    let mount_task = profile.prepare[0]
-        .mount_task()
-        .expect("Expected mount task");
+    let mount_task = profile.prepare.mount.as_ref().expect("Expected mount task");
     assert!(mount_task.preset.is_some());
     let mounts = mount_task.resolved_mounts();
     // 6 preset + 1 custom = 7
@@ -2166,9 +2154,11 @@ prepare:
 }
 
 #[test]
-fn test_load_profile_prepare_rejects_multiple_mount_tasks() -> Result<()> {
+fn test_load_profile_prepare_rejects_duplicate_mount_key() {
+    // Two `mount` keys are rejected at parse time (serde_yaml duplicate entry),
+    // so the "at most one mount" invariant is structural rather than validated.
     // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+    let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 defaults:
@@ -2180,39 +2170,28 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  mount:
     preset: recommends
-  - type: mount
+  mount:
     mounts:
       - source: proc
         target: /proc
 "#
-    ))?;
+    ));
     // editorconfig-checker-enable
 
-    let err = profile.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected Validation error, got: {:?}",
-        err
-    );
-    assert!(
-        err.to_string().contains("at most one mount task"),
-        "Expected error about multiple mount tasks, got: {}",
-        err
-    );
-
-    Ok(())
+    assert!(result.is_err(), "Expected a parse error for duplicate mount key, got Ok");
 }
 
 // =============================================================================
-// PrepareTask resolv_conf tests
+// PrepareConfig resolv_conf tests
 // =============================================================================
 
 #[test]
-fn test_load_profile_prepare_rejects_multiple_resolv_conf_tasks() -> Result<()> {
+fn test_load_profile_prepare_rejects_duplicate_resolv_conf_key() {
+    // Two `resolv_conf` keys are rejected at parse time (serde_yaml duplicate entry).
     // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+    let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
 bootstrap:
@@ -2221,32 +2200,22 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: resolv_conf
+  resolv_conf:
     copy: true
-  - type: resolv_conf
+  resolv_conf:
     name_servers:
       - 8.8.8.8
 "#
-    ))?;
+    ));
     // editorconfig-checker-enable
 
-    let err = profile.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected Validation error, got: {:?}",
-        err
-    );
-    assert!(
-        err.to_string().contains("at most one resolv_conf task"),
-        "Expected error about multiple resolv_conf tasks, got: {}",
-        err
-    );
-
-    Ok(())
+    assert!(result.is_err(), "Expected a parse error for duplicate resolv_conf key, got Ok");
 }
 
 #[test]
-fn test_profile_validation_accepts_mount_before_resolv_conf() -> Result<()> {
+fn test_profile_validation_accepts_mount_and_resolv_conf() -> Result<()> {
+    // Both prepare tasks present; key order is irrelevant (pipeline runs
+    // mount → resolv_conf structurally), so this validates successfully.
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
@@ -2260,58 +2229,17 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: mount
+  resolv_conf:
+    copy: true
+  mount:
     mounts:
       - source: proc
         target: /proc
-  - type: resolv_conf
-    copy: true
 "#
     ))?;
     // editorconfig-checker-enable
 
     assert!(profile.validate().is_ok());
-
-    Ok(())
-}
-
-#[test]
-fn test_profile_validation_rejects_resolv_conf_before_mount() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-dir: /tmp/test
-defaults:
-  privilege:
-    method: sudo
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs
-  format: directory
-prepare:
-  - type: resolv_conf
-    copy: true
-  - type: mount
-    mounts:
-      - source: proc
-        target: /proc
-"#
-    ))?;
-    // editorconfig-checker-enable
-
-    let err = profile.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected Validation error, got: {:?}",
-        err
-    );
-    assert!(
-        err.to_string()
-            .contains("mount task must come before resolv_conf"),
-        "Expected error about task order, got: {}",
-        err
-    );
 
     Ok(())
 }
@@ -2328,7 +2256,7 @@ bootstrap:
   target: rootfs
   format: directory
 prepare:
-  - type: resolv_conf
+  resolv_conf:
     copy: true
 "#
     ))?;

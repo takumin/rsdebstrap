@@ -85,8 +85,9 @@ fn run_pipeline_phase(
     // Set up filesystem mounts (if configured in prepare phase)
     let mount_entries = profile
         .prepare
-        .iter()
-        .find_map(|t| t.mount_task().map(|m| m.resolved_mounts()))
+        .mount
+        .as_ref()
+        .map(|m| m.resolved_mounts())
         .unwrap_or_default();
     let privilege = profile.defaults.privilege.as_ref().map(|d| d.method);
     let mut mounts =
@@ -97,10 +98,7 @@ fn run_pipeline_phase(
 
     // Set up resolv.conf (if configured in prepare phase)
     // setup failure is handled by Drop guards for mounts cleanup
-    let resolv_conf_config = profile
-        .prepare
-        .iter()
-        .find_map(|t| t.resolv_conf_task().map(|rc| rc.config()));
+    let resolv_conf_config = profile.prepare.resolv_conf.as_ref().map(|rc| rc.config());
     let mut resolv_conf = RootfsResolvConf::new(
         &rootfs,
         resolv_conf_config,

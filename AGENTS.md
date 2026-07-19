@@ -64,19 +64,19 @@ bootstrap:
   target: rootfs            # Output name (directory or archive)
   privilege: true           # Use default privilege method
   # Backend-specific options...
-prepare:                    # Optional preparation steps
-  - type: mount             # Filesystem mounts for the rootfs
+prepare:                    # Optional preparation steps (named-field struct)
+  mount:                    # Filesystem mounts for the rootfs (at most one)
     preset: recommends      # Optional: predefined mount set
     mounts:                 # Optional: custom mount entries
       - source: /dev
         target: /dev
         options: [bind]
-  - type: resolv_conf       # resolv.conf setup for DNS in chroot
+  resolv_conf:              # resolv.conf setup for DNS in chroot (at most one)
     copy: true              # Copy host's /etc/resolv.conf
     # OR
     # name_servers: [8.8.8.8]  # Generate with explicit nameservers
     # search: [example.com]    # Optional search domains
-provision:                  # Optional main provisioning steps
+provision:                  # Optional main provisioning steps (ordered list)
   - type: shell
     content: "..."          # Inline script
     # OR
@@ -92,14 +92,30 @@ provision:                  # Optional main provisioning steps
       method: doas
     isolation:               # Optional: override defaults.isolation
       type: chroot
-assemble:                   # Optional finalization steps
-  - type: resolv_conf       # Permanent /etc/resolv.conf in final rootfs
+assemble:                   # Optional finalization steps (named-field struct)
+  resolv_conf:              # Permanent /etc/resolv.conf in final rootfs (at most one)
     name_servers: [8.8.8.8, 8.8.4.4]  # Generate resolv.conf with nameservers
     search: [example.com]   # Optional search domains
     privilege: true          # Optional: use default privilege method
     # OR
     # link: ../run/systemd/resolve/stub-resolv.conf  # Create symlink instead
 ```
+
+> **Migration from list-form `prepare`/`assemble`.** `prepare` and `assemble` are named-field
+> maps, not lists of `{ type: ... }` items. Convert each former list item into a key named after
+> its old `type`, dropping the `type` field:
+>
+> ```yaml
+> # Before                          # After
+> prepare:                          prepare:
+>   - type: mount                     mount:
+>     preset: recommends                preset: recommends
+>   - type: resolv_conf               resolv_conf:
+>     copy: true                        copy: true
+> ```
+>
+> `provision` is unchanged (it stays an ordered list). Key order under `prepare` is irrelevant —
+> the pipeline always runs `mount` before `resolv_conf`.
 
 ### Privilege field values
 
@@ -124,8 +140,8 @@ assemble:                   # Optional finalization steps
 
 ### Mount configuration rules
 
-- Mounts are configured in the `prepare` phase as a `type: mount` task
-- At most one mount task is allowed in the prepare phase
+- Mounts are configured in the `prepare` phase under the `mount` key (a singleton `Option`, so
+  at most one mount task is structural — a duplicate `mount` key is a parse error)
 - When mounts are specified, `defaults.isolation` must be `chroot` and `defaults.privilege` must be configured
 - Mount targets must be absolute paths without `..` components
 - Bind mount sources must exist on the host
@@ -134,8 +150,10 @@ assemble:                   # Optional finalization steps
 
 ### resolv.conf task rules
 
-- `resolv_conf` is configured in the `prepare` phase as a `type: resolv_conf` task; at most one per phase
-- Mount tasks must come before `resolv_conf` tasks in the prepare phase
-- Assemble `resolv_conf` writes a permanent `/etc/resolv.conf` (file or symlink) to the final rootfs; at most one per phase
+- `resolv_conf` is configured in the `prepare` phase under the `resolv_conf` key (a singleton
+  `Option`; a duplicate key is a parse error)
+- The pipeline always applies `mount` before `resolv_conf`; key order in the YAML is irrelevant
+- Assemble `resolv_conf` writes a permanent `/etc/resolv.conf` (file or symlink) to the final
+  rootfs under the `assemble.resolv_conf` key (also a singleton `Option`)
 - `link` and `name_servers`/`search` are mutually exclusive in assemble `resolv_conf`
 - Prepare and assemble can both have `resolv_conf` tasks — different roles: temporary DNS vs permanent config

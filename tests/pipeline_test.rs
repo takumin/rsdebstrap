@@ -7,8 +7,20 @@ use camino::Utf8Path;
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
-use rsdebstrap::phase::{ProvisionTask, ScriptSource, ShellTask};
+use rsdebstrap::phase::{AssembleConfig, PrepareConfig, ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::pipeline::Pipeline;
+
+/// Empty prepare/assemble phases shared by the provision-focused pipeline tests.
+static EMPTY_PREPARE: PrepareConfig = PrepareConfig {
+    mount: None,
+    resolv_conf: None,
+};
+static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig { resolv_conf: None };
+
+/// Builds a pipeline with only provision tasks (empty prepare/assemble phases).
+fn provision_pipeline(tasks: &[ProvisionTask]) -> Pipeline<'_> {
+    Pipeline::new(&EMPTY_PREPARE, tasks, &EMPTY_ASSEMBLE)
+}
 
 // =============================================================================
 // Mock infrastructure
@@ -84,7 +96,7 @@ fn inline_task_direct(content: &str) -> ProvisionTask {
 
 #[test]
 fn test_pipeline_is_empty_when_all_phases_empty() {
-    let pipeline = Pipeline::new(&[], &[], &[]);
+    let pipeline = provision_pipeline(&[]);
     assert!(pipeline.is_empty());
     assert_eq!(pipeline.total_tasks(), 0);
 }
@@ -92,7 +104,7 @@ fn test_pipeline_is_empty_when_all_phases_empty() {
 #[test]
 fn test_pipeline_is_not_empty_with_only_provisioners() {
     let tasks = [inline_task("echo prov")];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
     assert!(!pipeline.is_empty());
     assert_eq!(pipeline.total_tasks(), 1);
 }
@@ -107,7 +119,7 @@ fn test_pipeline_total_tasks_counts_all_phases() {
         inline_task("echo 5"),
         inline_task("echo 6"),
     ];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
     assert!(!pipeline.is_empty());
     assert_eq!(pipeline.total_tasks(), 6);
 }
@@ -118,14 +130,14 @@ fn test_pipeline_total_tasks_counts_all_phases() {
 
 #[test]
 fn test_pipeline_validate_succeeds_for_empty_pipeline() {
-    let pipeline = Pipeline::new(&[], &[], &[]);
+    let pipeline = provision_pipeline(&[]);
     assert!(pipeline.validate().is_ok());
 }
 
 #[test]
 fn test_pipeline_validate_succeeds_for_valid_inline_tasks() {
     let tasks = [inline_task("echo hello")];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
     assert!(pipeline.validate().is_ok());
 }
 
@@ -134,7 +146,7 @@ fn test_pipeline_validate_fails_for_invalid_provisioner() {
     let bad_task = [ProvisionTask::Shell(ShellTask::new(ScriptSource::Script(
         "../../../etc/passwd".into(),
     )))];
-    let pipeline = Pipeline::new(&[], &bad_task, &[]);
+    let pipeline = provision_pipeline(&bad_task);
     let err = pipeline.validate().unwrap_err();
     let err_msg = format!("{:#}", err);
     assert!(
@@ -150,7 +162,7 @@ fn test_pipeline_validate_reports_correct_index() {
     let bad =
         ProvisionTask::Shell(ShellTask::new(ScriptSource::Script("../../../etc/passwd".into())));
     let tasks = [good, bad];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
     let err = pipeline.validate().unwrap_err();
     let err_msg = format!("{:#}", err);
     assert!(
@@ -166,7 +178,7 @@ fn test_pipeline_validate_reports_correct_index() {
 
 #[test]
 fn test_pipeline_run_empty_returns_ok_without_setup() {
-    let pipeline = Pipeline::new(&[], &[], &[]);
+    let pipeline = provision_pipeline(&[]);
     let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
 
     // Empty pipeline should return Ok without any setup
@@ -181,7 +193,7 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
         inline_task("echo 2"),
         inline_task("echo 3"),
     ];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -205,7 +217,7 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
 #[test]
 fn test_pipeline_run_phase_error_with_successful_teardown() {
     let tasks = [inline_task("echo hello")];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
 
     let mock_executor = Arc::new(MockExecutor::failing_on(0));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -223,7 +235,7 @@ fn test_pipeline_run_phase_error_with_successful_teardown() {
 #[test]
 fn test_pipeline_run_skips_empty_phases() {
     let prov = [inline_task("echo prov")];
-    let pipeline = Pipeline::new(&[], &prov, &[]);
+    let pipeline = provision_pipeline(&prov);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -252,7 +264,7 @@ fn test_pipeline_run_tasks_execute_in_order_within_phase() {
         ProvisionTask::Shell(task2),
         ProvisionTask::Shell(task3),
     ];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -277,7 +289,7 @@ fn test_pipeline_run_stops_within_phase_on_error() {
         inline_task("echo prov2"),
         inline_task("echo prov3"),
     ];
-    let pipeline = Pipeline::new(&[], &prov, &[]);
+    let pipeline = provision_pipeline(&prov);
 
     // failing_on(1): 2nd call (0-indexed) fails,
     // so task 1 succeeds, task 2 fails, task 3 never runs
@@ -296,7 +308,7 @@ fn test_pipeline_run_stops_on_first_task_error() {
         inline_task("echo 2"),
         inline_task("echo 3"),
     ];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
 
     let mock_executor = Arc::new(MockExecutor::failing_on(0));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -313,7 +325,7 @@ fn test_pipeline_run_error_stops_remaining_tasks() {
         inline_task("echo 2"),
         inline_task("echo 3"),
     ];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
 
     // failing_on(1): task 1 succeeds, task 2 fails, task 3 never runs
     let mock_executor = Arc::new(MockExecutor::failing_on(1));
@@ -339,7 +351,7 @@ fn test_pipeline_run_error_stops_remaining_tasks() {
 #[test]
 fn test_pipeline_run_task_isolation_disabled_uses_direct() {
     let tasks = [inline_task_direct("echo direct")];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -368,7 +380,7 @@ fn test_pipeline_run_task_isolation_disabled_uses_direct() {
 #[test]
 fn test_pipeline_run_task_isolation_enabled_uses_chroot() {
     let tasks = [inline_task("echo chroot")];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -409,7 +421,7 @@ fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
     let task3 = ProvisionTask::Shell(chroot2);
 
     let tasks = [task1, task2, task3];
-    let pipeline = Pipeline::new(&[], &tasks, &[]);
+    let pipeline = provision_pipeline(&tasks);
 
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
@@ -450,7 +462,7 @@ fn test_pipeline_validate_preserves_validation_variant() {
     let bad_task = [ProvisionTask::Shell(ShellTask::new(ScriptSource::Script(
         "../../../etc/passwd".into(),
     )))];
-    let pipeline = Pipeline::new(&[], &bad_task, &[]);
+    let pipeline = provision_pipeline(&bad_task);
     let err = pipeline.validate().unwrap_err();
     assert!(
         matches!(
@@ -468,7 +480,7 @@ fn test_pipeline_validate_preserves_io_variant() {
     let nonexistent_task = [ProvisionTask::Shell(ShellTask::new(ScriptSource::Script(
         "/nonexistent/path/to/script.sh".into(),
     )))];
-    let pipeline = Pipeline::new(&[], &nonexistent_task, &[]);
+    let pipeline = provision_pipeline(&nonexistent_task);
     let err = pipeline.validate().unwrap_err();
     match err {
         RsdebstrapError::Io {
