@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
+use serde::Serialize;
 use tracing::{info, warn};
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
@@ -173,5 +174,38 @@ pub fn run_validate(opts: &cli::ValidateArgs) -> Result<()> {
         .with_context(|| format!("failed to load profile from {}", opts.common.file))?;
     profile.validate().context("profile validation failed")?;
     info!("validation successful:\n{:#?}", profile);
+    Ok(())
+}
+
+/// Generates the JSON Schema for the YAML profile format.
+///
+/// The schema is derived directly from the [`config::Profile`] Rust types, so it always
+/// tracks what `apply`/`validate` accept — there is no separately maintained schema to
+/// drift out of sync.
+pub fn profile_json_schema() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(config::Profile))
+        .expect("Profile JSON Schema must serialize to JSON")
+}
+
+/// Canonical pretty-printed rendering of the profile JSON Schema (no trailing newline).
+///
+/// Uses tab indentation rather than `serde_json::to_string_pretty`'s hard-coded two spaces,
+/// matching the repository's JSON convention (e.g. `.renovaterc.json`, `.claude/settings.json`)
+/// and `.editorconfig`'s `[*] indent_style = tab`. Both the `schema` subcommand and the
+/// committed-schema drift test render through this function so they cannot diverge.
+pub fn profile_json_schema_pretty() -> String {
+    let value = profile_json_schema();
+    let mut buf = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"\t");
+    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+    value
+        .serialize(&mut ser)
+        .expect("Profile JSON Schema must serialize");
+    String::from_utf8(buf).expect("serde_json emits valid UTF-8")
+}
+
+/// Prints the profile JSON Schema (pretty-printed) to stdout.
+pub fn run_schema() -> Result<()> {
+    println!("{}", profile_json_schema_pretty());
     Ok(())
 }

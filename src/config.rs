@@ -301,7 +301,7 @@ impl MountEntry {
 ///
 /// This enum represents the different bootstrap tools that can be used.
 /// The `type` field in YAML determines which variant is used.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Bootstrap {
     /// mmdebstrap backend
@@ -414,7 +414,7 @@ pub struct MitamaeDefaults {
 ///
 /// Groups configuration defaults like isolation backend.
 /// If omitted in YAML, all fields use their respective defaults.
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
 pub struct Defaults {
     /// Isolation backend for running commands in rootfs (default: chroot)
     #[serde(default)]
@@ -431,9 +431,10 @@ pub struct Defaults {
 ///
 /// A profile contains the target directory and bootstrap tool configuration
 /// details needed to create a Debian-based system.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct Profile {
     /// Target directory path for the bootstrap operation
+    #[schemars(with = "crate::schema::Utf8PathSchema")]
     pub dir: Utf8PathBuf,
     /// Default settings (isolation backend, etc.)
     #[serde(default)]
