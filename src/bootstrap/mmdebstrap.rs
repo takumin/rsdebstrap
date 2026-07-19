@@ -105,7 +105,17 @@ pub enum Format {
 /// This structure contains all settings needed to customize the Debian
 /// bootstrapping process using mmdebstrap, including package selection,
 /// format, mode, and hook scripts.
+// `deny_unknown_fields` rejects typo'd keys (e.g. `customise_hook`) at parse time and is
+// mirrored as `additionalProperties: false` in the generated schema. It is honored even though
+// `Bootstrap` is internally tagged: serde's internally-tagged newtype-variant deserialization
+// consumes the `type` tag when selecting the variant and hands the *remaining* fields to this
+// struct, so the tag is not seen as an unknown field. This is serde-core behavior, not
+// parser-specific — it holds identically under `serde_json` (which the schema property test
+// relies on) and `serde_yaml`. (The well-known serde limitation is that `deny_unknown_fields`
+// is a no-op when placed on the internally-tagged *enum* itself, not — as here — on a
+// variant's struct.)
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MmdebstrapConfig {
     /// Debian suite name (e.g., "bookworm", "sid")
     pub suite: String,

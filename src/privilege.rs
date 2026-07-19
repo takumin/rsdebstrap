@@ -39,6 +39,7 @@ impl std::fmt::Display for PrivilegeMethod {
 
 /// Default privilege settings for the profile.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PrivilegeDefaults {
     /// The default privilege escalation method.
     pub method: PrivilegeMethod,

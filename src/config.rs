@@ -174,6 +174,7 @@ impl ResolvConfConfig {
 
 /// A single mount entry specifying what to mount into the rootfs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MountEntry {
     /// Device name or path (e.g., "proc", "sysfs", "/dev").
     pub source: String,
@@ -403,6 +404,7 @@ impl IsolationConfig {
 /// Allows specifying architecture-specific binary paths that apply to all
 /// mitamae tasks unless overridden at the task level.
 #[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MitamaeDefaults {
     /// Architecture-specific binary paths (key: "x86_64", "aarch64", etc.)
     #[serde(default)]
@@ -415,6 +417,7 @@ pub struct MitamaeDefaults {
 /// Groups configuration defaults like isolation backend.
 /// If omitted in YAML, all fields use their respective defaults.
 #[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Defaults {
     /// Isolation backend for running commands in rootfs (default: chroot)
     #[serde(default)]
@@ -432,6 +435,7 @@ pub struct Defaults {
 /// A profile contains the target directory and bootstrap tool configuration
 /// details needed to create a Debian-based system.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     /// Target directory path for the bootstrap operation
     #[schemars(with = "crate::schema::Utf8PathSchema")]
