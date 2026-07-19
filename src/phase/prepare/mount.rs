@@ -5,13 +5,16 @@
 //! Mount entries are processed at the pipeline level (not per-task),
 //! bracketing the entire pipeline execution.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{MountEntry, MountPreset};
+use crate::config::{IsolationConfig, MountEntry, MountPreset};
 use crate::error::RsdebstrapError;
+use crate::isolation::IsolationContext;
+use crate::phase::PhaseItem;
 
 /// Mount task for declaring filesystem mounts in the prepare phase.
 ///
@@ -127,6 +130,28 @@ impl MountTask {
         crate::config::validate_mount_order(&resolved_mounts)?;
 
         Ok(())
+    }
+}
+
+impl PhaseItem for MountTask {
+    fn name(&self) -> Cow<'_, str> {
+        // `self.name()` resolves to the inherent method (inherent methods take
+        // precedence over trait methods), so this is not recursive.
+        Cow::Owned(format!("mount:{}", self.name()))
+    }
+
+    fn validate(&self) -> Result<(), RsdebstrapError> {
+        MountTask::validate(self)
+    }
+
+    fn execute(&self, _ctx: &dyn IsolationContext) -> anyhow::Result<()> {
+        // Mount lifecycle is managed at the pipeline level, not per-task.
+        Ok(())
+    }
+
+    fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
+        // Mount tasks don't use per-task isolation.
+        None
     }
 }
 

@@ -5,17 +5,19 @@
 //! Unlike the prepare phase's `ResolvConfTask` (which is temporary and restored
 //! after provisioning), this task produces a persistent configuration.
 
+use std::borrow::Cow;
 use std::net::IpAddr;
 
 use rustix::fs::{self as rfs, CWD, Mode, OFlags};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::config::ResolvConfConfig;
+use crate::config::{IsolationConfig, ResolvConfConfig};
 use crate::error::RsdebstrapError;
 use crate::executor::CommandSpec;
 use crate::isolation::IsolationContext;
 use crate::isolation::resolv_conf::generate_resolv_conf;
+use crate::phase::PhaseItem;
 use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 
 /// Returns true if the privilege setting is the default (`Inherit`).
@@ -224,6 +226,27 @@ impl AssembleResolvConfTask {
         }
 
         Ok(())
+    }
+}
+
+impl PhaseItem for AssembleResolvConfTask {
+    fn name(&self) -> Cow<'_, str> {
+        // `self.name()` resolves to the inherent method (inherent methods take
+        // precedence over trait methods), so this is not recursive.
+        Cow::Owned(format!("resolv_conf:{}", self.name()))
+    }
+
+    fn validate(&self) -> Result<(), RsdebstrapError> {
+        AssembleResolvConfTask::validate(self)
+    }
+
+    fn execute(&self, ctx: &dyn IsolationContext) -> anyhow::Result<()> {
+        // Assemble resolv_conf operates directly on the final rootfs filesystem.
+        AssembleResolvConfTask::execute(self, ctx)
+    }
+
+    fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
+        None
     }
 }
 

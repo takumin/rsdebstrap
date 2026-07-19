@@ -24,7 +24,7 @@ use crate::bootstrap::{
 use crate::error::RsdebstrapError;
 use crate::executor::CommandSpec;
 use crate::isolation::{ChrootProvider, IsolationProvider};
-use crate::phase::{AssembleTask, PrepareTask, ProvisionTask};
+use crate::phase::{AssembleConfig, PrepareConfig, ProvisionTask};
 use crate::pipeline::Pipeline;
 use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 
@@ -424,13 +424,13 @@ pub struct Profile {
     pub bootstrap: Bootstrap,
     /// Prepare tasks to run before provisioning (optional)
     #[serde(default)]
-    pub prepare: Vec<PrepareTask>,
+    pub prepare: PrepareConfig,
     /// Main provisioning tasks (optional)
     #[serde(default)]
     pub provision: Vec<ProvisionTask>,
     /// Assemble tasks to run after provisioning (optional)
     #[serde(default)]
-    pub assemble: Vec<AssembleTask>,
+    pub assemble: AssembleConfig,
 }
 
 impl Profile {
@@ -453,12 +453,6 @@ impl Profile {
 
         // Validate resolv_conf configuration
         self.validate_resolv_conf()?;
-
-        // Validate prepare task ordering
-        self.validate_prepare_order()?;
-
-        // Validate assemble resolv_conf configuration
-        self.validate_assemble_resolv_conf()?;
 
         // Validate all tasks across phases
         let pipeline = self.pipeline();
@@ -487,17 +481,8 @@ impl Profile {
 
     /// Validates mount-related configuration.
     fn validate_mounts(&self) -> Result<(), RsdebstrapError> {
-        // Collect mount tasks from prepare phase
-        let mount_tasks: Vec<_> = self.prepare.iter().filter_map(|t| t.mount_task()).collect();
-
-        // At most one mount task allowed
-        if mount_tasks.len() > 1 {
-            return Err(RsdebstrapError::Validation(
-                "at most one mount task is allowed in the prepare phase".to_string(),
-            ));
-        }
-
-        match mount_tasks.first() {
+        // The named-field `prepare.mount` guarantees at most one mount task.
+        match &self.prepare.mount {
             Some(task) if task.has_mounts() => {}
             _ => return Ok(()),
         };
@@ -531,20 +516,8 @@ impl Profile {
 
     /// Validates resolv_conf-related configuration.
     fn validate_resolv_conf(&self) -> Result<(), RsdebstrapError> {
-        let resolv_conf_tasks: Vec<_> = self
-            .prepare
-            .iter()
-            .filter_map(|t| t.resolv_conf_task())
-            .collect();
-
-        // At most one resolv_conf task allowed
-        if resolv_conf_tasks.len() > 1 {
-            return Err(RsdebstrapError::Validation(
-                "at most one resolv_conf task is allowed in the prepare phase".to_string(),
-            ));
-        }
-
-        if let Some(task) = resolv_conf_tasks.first() {
+        // The named-field `prepare.resolv_conf` guarantees at most one task.
+        if let Some(task) = &self.prepare.resolv_conf {
             // resolv_conf requires chroot isolation
             if !matches!(self.defaults.isolation, IsolationConfig::Chroot) {
                 return Err(RsdebstrapError::Validation(
@@ -557,41 +530,6 @@ impl Profile {
             task.config().validate()?;
         }
 
-        Ok(())
-    }
-
-    /// Validates assemble resolv_conf configuration.
-    fn validate_assemble_resolv_conf(&self) -> Result<(), RsdebstrapError> {
-        let resolv_conf_count = self
-            .assemble
-            .iter()
-            .filter(|t| t.resolv_conf_task().is_some())
-            .count();
-
-        if resolv_conf_count > 1 {
-            return Err(RsdebstrapError::Validation(
-                "at most one resolv_conf task is allowed in the assemble phase".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Validates that prepare tasks are in correct order.
-    ///
-    /// Mount tasks must come before resolv_conf tasks.
-    fn validate_prepare_order(&self) -> Result<(), RsdebstrapError> {
-        let mut seen_resolv_conf = false;
-        for task in &self.prepare {
-            if task.mount_task().is_some() && seen_resolv_conf {
-                return Err(RsdebstrapError::Validation(
-                    "mount task must come before resolv_conf task in the prepare phase".to_string(),
-                ));
-            }
-            if task.resolv_conf_task().is_some() {
-                seen_resolv_conf = true;
-            }
-        }
         Ok(())
     }
 }
@@ -694,7 +632,7 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
     }
 
     // Resolve privilege for assemble tasks
-    for task in profile.assemble.iter_mut() {
+    if let Some(task) = profile.assemble.resolv_conf.as_mut() {
         task.resolve_privilege(privilege_defaults)?;
     }
 

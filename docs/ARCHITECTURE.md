@@ -44,10 +44,13 @@ the `prepare` phase. `IsolationConfig` is now just the backend selector (`Chroot
 
 ## Phases & the pipeline
 
-`Pipeline` (`src/pipeline.rs`) holds the three task slices and drives them uniformly
-through the `PhaseItem` trait (`src/phase/mod.rs`, `pub(crate)`) — `name`/`validate`/
-`execute`/`resolved_isolation_config`. Generic `run_phase_items`/`validate_phase_items`
-avoid per-phase duplication.
+`Pipeline` (`src/pipeline.rs`) borrows `prepare: &PrepareConfig`, `provision: &[ProvisionTask]`,
+and `assemble: &AssembleConfig`, and drives them uniformly through the `PhaseItem` trait
+(`src/phase/mod.rs`, `pub(crate)`) — `name`/`validate`/`execute`/`resolved_isolation_config`.
+Each phase is flattened to a `&[&dyn PhaseItem]` before running: `PrepareConfig::items()` and
+`AssembleConfig::items()` emit their present `Option` fields in a **fixed execution order**
+(`mount → resolv_conf`), and provision maps its `Vec` to trait objects. Generic
+`run_phase_items`/`validate_phase_items` avoid per-phase duplication.
 
 Key invariants:
 
@@ -55,17 +58,24 @@ Key invariants:
   provider → setup → execute → teardown. Teardown is guaranteed even when execute
   errors. Failure-injection for teardown paths is currently impractical (see
   [Known test gaps](#known-test-gaps)).
-- **Prepare tasks are declarative.** `PrepareTask::execute()` is a no-op for both
-  `Mount` and `ResolvConf`; their real effect is bracketed around the *whole* phase by
-  the RAII managers below, set up in `run_pipeline_phase()` between mount and execution.
-- **Assemble operates on the final rootfs directly.** `AssembleTask::resolved_isolation_config()`
+- **Prepare tasks are declarative.** `MountTask` and (prepare) `ResolvConfTask` implement
+  `PhaseItem` with a no-op `execute()`; their real effect is bracketed around the *whole*
+  phase by the RAII managers below, set up in `run_pipeline_phase()` between mount and execution.
+- **Assemble operates on the final rootfs directly.** `AssembleResolvConfTask::resolved_isolation_config()`
   returns `None`, so it runs via `DirectProvider` on the rootfs filesystem rather than
   inside an isolation context.
 
-Ordering rules enforced at validation time (`Profile::validate_*`): at most one mount
-task and one `resolv_conf` task per phase; mount tasks precede `resolv_conf` tasks in
-`prepare`. Prepare and assemble may each carry a `resolv_conf` task — they play
-different roles (temporary DNS during provisioning vs. the permanent installed file).
+`prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, resolv_conf }`,
+`AssembleConfig { resolv_conf }`), not lists. This makes the singleton invariants structural:
+"at most one mount" / "at most one resolv_conf" hold because each is an `Option` (a duplicate
+YAML key is a `serde_yaml` parse error, an unknown key a `deny_unknown_fields` error), and the
+`mount → resolv_conf` order is fixed by `items()` rather than by key order. The former
+count/order validators (`validate_prepare_order`, and the count checks in
+`validate_mounts`/`validate_resolv_conf`/`validate_assemble_resolv_conf`) were therefore
+removed; only cross-field checks remain in `Profile::validate_*` (mounts → chroot + privilege;
+prepare `resolv_conf` → chroot; `mount`/`umount` in `PATH`). Prepare and assemble may each
+carry a `resolv_conf` task — they play different roles (temporary DNS during provisioning vs.
+the permanent installed file).
 
 ## Filesystem safety: TOCTOU & RAII
 

@@ -1,77 +1,85 @@
 //! Assemble phase module for post-provisioning tasks.
 //!
-//! This module provides the `AssembleTask` enum for tasks that run after
-//! the main provisioning phase. Currently supports:
-//! - [`ResolvConf`](AssembleTask::ResolvConf) — writes a permanent `/etc/resolv.conf`
+//! This module provides the [`AssembleConfig`] named-field struct describing the
+//! tasks that run after the main provisioning phase. Currently the only role is:
+//! - [`resolv_conf`](AssembleConfig::resolv_conf) — writes a permanent `/etc/resolv.conf`
+//!
+//! The named-field shape makes "at most one resolv_conf" structural rather than
+//! validated after the fact.
 
 pub mod resolv_conf;
-
-use std::borrow::Cow;
 
 use serde::Deserialize;
 
 pub use resolv_conf::AssembleResolvConfTask;
 
-use crate::config::IsolationConfig;
-use crate::error::RsdebstrapError;
 use crate::phase::PhaseItem;
-use crate::privilege::PrivilegeDefaults;
 
-/// Assemble phase task definition.
+/// Assemble phase configuration (named-field, schema-first).
 ///
-/// The `#[non_exhaustive]` attribute ensures that adding variants in the
-/// future does not break downstream code.
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum AssembleTask {
-    /// resolv_conf task for writing a permanent `/etc/resolv.conf`
-    #[serde(rename = "resolv_conf")]
-    ResolvConf(AssembleResolvConfTask),
+/// The single field is an optional singleton; a duplicate YAML key is rejected
+/// by `serde_yaml` at parse time and an unknown key by `deny_unknown_fields`.
+#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AssembleConfig {
+    /// resolv_conf task writing a permanent `/etc/resolv.conf` into the final rootfs.
+    #[serde(default)]
+    pub resolv_conf: Option<AssembleResolvConfTask>,
 }
 
-impl AssembleTask {
-    /// Returns a reference to the inner `AssembleResolvConfTask` if this is a `ResolvConf` variant.
-    pub fn resolv_conf_task(&self) -> Option<&AssembleResolvConfTask> {
-        match self {
-            Self::ResolvConf(task) => Some(task),
+impl AssembleConfig {
+    /// Returns the present phase items in execution order.
+    pub(crate) fn items(&self) -> Vec<&dyn PhaseItem> {
+        let mut items: Vec<&dyn PhaseItem> = Vec::new();
+        if let Some(resolv_conf) = &self.resolv_conf {
+            items.push(resolv_conf);
         }
+        items
     }
 
-    /// Resolves the privilege setting against profile defaults.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        match self {
-            Self::ResolvConf(task) => task.resolve_privilege(defaults),
-        }
+    /// Returns true if no assemble tasks are configured.
+    pub fn is_empty(&self) -> bool {
+        self.resolv_conf.is_none()
+    }
+
+    /// Returns the number of configured assemble tasks.
+    pub fn len(&self) -> usize {
+        usize::from(self.resolv_conf.is_some())
     }
 }
 
-impl PhaseItem for AssembleTask {
-    fn name(&self) -> Cow<'_, str> {
-        match self {
-            Self::ResolvConf(task) => Cow::Owned(format!("resolv_conf:{}", task.name())),
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_resolv_conf_present() {
+        let yaml = "resolv_conf:\n  name_servers:\n  - 8.8.8.8\n";
+        let config: AssembleConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.resolv_conf.is_some());
+        assert_eq!(config.len(), 1);
+        assert!(!config.is_empty());
     }
 
-    fn validate(&self) -> Result<(), RsdebstrapError> {
-        match self {
-            Self::ResolvConf(task) => task.validate(),
-        }
+    #[test]
+    fn deserialize_absent_defaults_to_empty() {
+        let config: AssembleConfig = serde_yaml::from_str("{}").unwrap();
+        assert!(config.is_empty());
+        assert_eq!(config.len(), 0);
+        assert!(config.items().is_empty());
     }
 
-    fn execute(&self, ctx: &dyn crate::isolation::IsolationContext) -> anyhow::Result<()> {
-        match self {
-            Self::ResolvConf(task) => task.execute(ctx),
-        }
+    #[test]
+    fn deserialize_rejects_unknown_field() {
+        let yaml = "mount:\n  preset: recommends\n";
+        let result: Result<AssembleConfig, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_err(), "unknown key must be rejected");
     }
 
-    fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        match self {
-            // Assemble resolv_conf operates directly on rootfs filesystem
-            Self::ResolvConf(_) => None,
-        }
+    #[test]
+    fn deserialize_rejects_duplicate_resolv_conf_key() {
+        let yaml = "resolv_conf:\n  name_servers:\n  - 8.8.8.8\nresolv_conf:\n  link: ../run/x\n";
+        let result: Result<AssembleConfig, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_err(), "duplicate resolv_conf key must be rejected at parse time");
     }
 }
