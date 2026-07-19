@@ -31,9 +31,7 @@
 			"Bash(gh workflow list:*)",
 			"Bash(gh label list:*)",
 			"Bash(gh search:*)",
-			"Bash(gh status:*)",
-			"Bash(gh api --method GET:*)",
-			"Bash(gh api -X GET:*)"
+			"Bash(gh status:*)"
 		],
 		"deny": []
 	}
