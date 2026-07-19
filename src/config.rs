@@ -13,6 +13,7 @@ use std::io::BufReader;
 use std::net::IpAddr;
 
 use camino::{Utf8Path, Utf8PathBuf};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -32,7 +33,7 @@ use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 const PSEUDO_FS_TYPES: &[&str] = &["proc", "sysfs", "devpts", "devtmpfs", "tmpfs"];
 
 /// Mount preset defining a predefined set of mount entries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MountPreset {
     /// Recommended mount set for typical Debian rootfs operations.
@@ -87,6 +88,10 @@ impl MountPreset {
 ///
 /// Limits follow the resolv.conf specification: max 3 nameservers,
 /// max 6 search domains (total 256 characters).
+//
+// No `JsonSchema` derive: this is a runtime-only type (see `src/isolation/resolv_conf.rs`)
+// and is not reachable from `Profile`, so it contributes nothing to the generated schema.
+// The profile-facing DNS shapes are `prepare::ResolvConfTask` / `assemble::AssembleResolvConfTask`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvConfConfig {
     /// Copy host's /etc/resolv.conf into the chroot (following symlinks).
@@ -168,11 +173,12 @@ impl ResolvConfConfig {
 }
 
 /// A single mount entry specifying what to mount into the rootfs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MountEntry {
     /// Device name or path (e.g., "proc", "sysfs", "/dev").
     pub source: String,
     /// Mount point inside the rootfs (absolute path).
+    #[schemars(with = "crate::schema::Utf8PathSchema")]
     pub target: Utf8PathBuf,
     /// Mount options (e.g., "bind", "nosuid"). Joined with "," for `-o`.
     #[serde(default)]
@@ -348,7 +354,7 @@ impl Bootstrap {
 ///
 /// The `type` field in the YAML `isolation` map selects the backend. If not specified,
 /// defaults to chroot.
-#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IsolationKind {
     /// chroot isolation (default)
@@ -365,7 +371,7 @@ pub enum IsolationKind {
 // `deny_unknown_fields` is actually enforced by serde — internally tagged enums silently
 // ignore it, which would let typo'd keys through and diverge from the generated schema's
 // `additionalProperties: false`.
-#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IsolationConfig {
     /// Isolation backend type.
@@ -396,10 +402,11 @@ impl IsolationConfig {
 ///
 /// Allows specifying architecture-specific binary paths that apply to all
 /// mitamae tasks unless overridden at the task level.
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
 pub struct MitamaeDefaults {
     /// Architecture-specific binary paths (key: "x86_64", "aarch64", etc.)
     #[serde(default)]
+    #[schemars(with = "std::collections::HashMap<String, crate::schema::Utf8PathSchema>")]
     pub binary: HashMap<String, Utf8PathBuf>,
 }
 

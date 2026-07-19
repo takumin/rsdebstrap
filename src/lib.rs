@@ -7,6 +7,7 @@ pub mod isolation;
 pub mod phase;
 pub mod pipeline;
 pub mod privilege;
+pub mod schema;
 
 pub use error::RsdebstrapError;
 
