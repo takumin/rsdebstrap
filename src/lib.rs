@@ -206,7 +206,21 @@ pub fn profile_json_schema_pretty() -> String {
 }
 
 /// Prints the profile JSON Schema (pretty-printed) to stdout.
+///
+/// A closed stdout (e.g. `rsdebstrap schema | head`) is a normal way for a pipe
+/// consumer to stop reading, so `BrokenPipe` ends the command successfully instead
+/// of panicking the way `println!` would once the schema outgrows the pipe buffer.
 pub fn run_schema() -> Result<()> {
-    println!("{}", profile_json_schema_pretty());
-    Ok(())
+    use std::io::Write;
+
+    let mut stdout = std::io::stdout().lock();
+    let result = stdout
+        .write_all(profile_json_schema_pretty().as_bytes())
+        .and_then(|()| stdout.write_all(b"\n"))
+        .and_then(|()| stdout.flush());
+    match result {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other
+            .map_err(|e| RsdebstrapError::io("failed to write the profile JSON Schema", e).into()),
+    }
 }
