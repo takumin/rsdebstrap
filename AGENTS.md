@@ -26,6 +26,10 @@ cargo run -- <command>
 # Examples
 cargo run -- apply -f examples/debian_trixie_mmdebstrap.yml --dry-run
 cargo run -- validate -f examples/debian_trixie_mmdebstrap.yml
+
+# Generate the profile JSON Schema (derived from the Rust config types).
+# Regenerate the committed copy after any config-type change, or `cargo test` fails.
+cargo run -- schema > schema/rsdebstrap.schema.json
 ```
 
 ## Architecture Overview
@@ -46,6 +50,12 @@ resolution model, the phase pipeline, isolation/privilege plumbing, or the
 filesystem-safety code — it captures decisions that are not obvious from the source.
 
 ## Profile Structure (YAML)
+
+A machine-readable JSON Schema for this format is committed at
+[`schema/rsdebstrap.schema.json`](schema/rsdebstrap.schema.json) (usable for editor
+completion/validation). It is generated from the Rust config types — regenerate it with
+`cargo run -- schema` after any config-type change (see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#json-schema-generation)).
 
 ```yaml
 dir: /output/path           # Base output directory
