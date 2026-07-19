@@ -1,0 +1,900 @@
+{
+	"$defs": {
+		"AssembleConfig": {
+			"additionalProperties": false,
+			"description": "Assemble phase configuration (named-field, schema-first).\n\nThe single field is an optional singleton; a duplicate YAML key is rejected\nby `serde_yaml` at parse time and an unknown key by `deny_unknown_fields`.",
+			"properties": {
+				"resolv_conf": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/AssembleResolvConfTask"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "resolv_conf task writing a permanent `/etc/resolv.conf` into the final rootfs."
+				}
+			},
+			"type": "object"
+		},
+		"AssembleResolvConfTask": {
+			"additionalProperties": false,
+			"description": "Assemble phase resolv_conf task for writing a permanent `/etc/resolv.conf`.\n\nSupports two mutually exclusive modes:\n- **generate**: writes a resolv.conf file from `name_servers` and `search`\n- **link**: creates a symlink to the specified target path\n\nAt most one `AssembleResolvConfTask` may appear in the assemble phase.",
+			"properties": {
+				"link": {
+					"description": "Symlink target path (mutually exclusive with `name_servers`/`search`).",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"name_servers": {
+					"description": "Nameserver IP addresses to write to resolv.conf.",
+					"items": {
+						"anyOf": [
+							{
+								"format": "ipv4"
+							},
+							{
+								"format": "ipv6"
+							}
+						],
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"privilege": {
+					"$ref": "#/$defs/Privilege",
+					"description": "Privilege escalation setting (resolved during defaults application)."
+				},
+				"search": {
+					"description": "Search domains to write to resolv.conf.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				}
+			},
+			"type": "object"
+		},
+		"Bootstrap": {
+			"description": "Bootstrap backend configuration.\n\nThis enum represents the different bootstrap tools that can be used.\nThe `type` field in YAML determines which variant is used.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "mmdebstrap backend",
+					"properties": {
+						"aptopt": {
+							"default": [],
+							"description": "Additional APT options",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"architectures": {
+							"default": [],
+							"description": "Target architectures",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"components": {
+							"default": [],
+							"description": "Repository components to enable (e.g., \"main\", \"contrib\", \"non-free\")",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"customize_hook": {
+							"default": [],
+							"description": "Customize hook scripts",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"dpkgopt": {
+							"default": [],
+							"description": "Additional dpkg options",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"essential_hook": {
+							"default": [],
+							"description": "Essential hook scripts",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"extract_hook": {
+							"default": [],
+							"description": "Extract hook scripts",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"format": {
+							"$ref": "#/$defs/Format",
+							"default": "auto",
+							"description": "Output format (defaults to Auto)"
+						},
+						"include": {
+							"default": [],
+							"description": "Additional packages to include",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"keyring": {
+							"default": [],
+							"description": "Keyring paths for repository verification",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"mirrors": {
+							"default": [],
+							"description": "APT mirror URLs to use as package sources",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"mode": {
+							"$ref": "#/$defs/Mode",
+							"default": "auto",
+							"description": "Operation mode (defaults to Auto)"
+						},
+						"privilege": {
+							"$ref": "#/$defs/Privilege",
+							"default": null,
+							"description": "Privilege escalation setting"
+						},
+						"setup_hook": {
+							"default": [],
+							"description": "Setup hook scripts",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"suite": {
+							"description": "Debian suite name (e.g., \"bookworm\", \"sid\")",
+							"type": "string"
+						},
+						"target": {
+							"description": "Target output path",
+							"type": "string"
+						},
+						"type": {
+							"const": "mmdebstrap",
+							"type": "string"
+						},
+						"variant": {
+							"$ref": "#/$defs/MmdebstrapVariant",
+							"default": "debootstrap",
+							"description": "Package selection variant (defaults to Debootstrap)"
+						}
+					},
+					"required": [
+						"type",
+						"suite",
+						"target"
+					],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "debootstrap backend",
+					"properties": {
+						"arch": {
+							"default": null,
+							"description": "Target architecture (e.g., \"amd64\", \"arm64\")",
+							"type": [
+								"string",
+								"null"
+							]
+						},
+						"components": {
+							"default": [],
+							"description": "Repository components to enable (e.g., \"main\", \"contrib\", \"non-free\")",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"exclude": {
+							"default": [],
+							"description": "Packages to exclude",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"foreign": {
+							"default": false,
+							"description": "Perform two-stage bootstrap (for cross-architecture installations)",
+							"type": "boolean"
+						},
+						"include": {
+							"default": [],
+							"description": "Additional packages to include",
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						},
+						"merged_usr": {
+							"default": null,
+							"description": "Use merged /usr directory structure",
+							"type": [
+								"boolean",
+								"null"
+							]
+						},
+						"mirror": {
+							"default": null,
+							"description": "APT mirror URL to use as package source",
+							"type": [
+								"string",
+								"null"
+							]
+						},
+						"no_resolve_deps": {
+							"default": false,
+							"description": "Don't resolve recommends/suggests",
+							"type": "boolean"
+						},
+						"print_debs": {
+							"default": false,
+							"description": "Print packages to be installed and exit",
+							"type": "boolean"
+						},
+						"privilege": {
+							"$ref": "#/$defs/Privilege",
+							"default": null,
+							"description": "Privilege escalation setting"
+						},
+						"suite": {
+							"description": "Debian suite name (e.g., \"bookworm\", \"trixie\")",
+							"type": "string"
+						},
+						"target": {
+							"description": "Target output directory path (relative to profile dir)",
+							"type": "string"
+						},
+						"type": {
+							"const": "debootstrap",
+							"type": "string"
+						},
+						"variant": {
+							"$ref": "#/$defs/DebootstrapVariant",
+							"default": "minbase",
+							"description": "Package selection variant (defaults to Minbase)"
+						},
+						"verbose": {
+							"default": false,
+							"description": "Verbose output",
+							"type": "boolean"
+						}
+					},
+					"required": [
+						"type",
+						"suite",
+						"target"
+					],
+					"type": "object"
+				}
+			]
+		},
+		"DebootstrapVariant": {
+			"description": "Variant defines the package selection strategy for debootstrap",
+			"oneOf": [
+				{
+					"const": "minbase",
+					"description": "Minimal base system (default)",
+					"type": "string"
+				},
+				{
+					"const": "buildd",
+					"description": "Build environment with build-essential",
+					"type": "string"
+				},
+				{
+					"const": "fakechroot",
+					"description": "Fakechroot variant",
+					"type": "string"
+				},
+				{
+					"const": "scratchbox",
+					"description": "Scratchbox variant",
+					"type": "string"
+				}
+			]
+		},
+		"Defaults": {
+			"additionalProperties": false,
+			"description": "Default settings that apply across the profile.\n\nGroups configuration defaults like isolation backend.\nIf omitted in YAML, all fields use their respective defaults.",
+			"properties": {
+				"isolation": {
+					"$ref": "#/$defs/IsolationConfig",
+					"default": {
+						"type": "chroot"
+					},
+					"description": "Isolation backend for running commands in rootfs (default: chroot)"
+				},
+				"mitamae": {
+					"$ref": "#/$defs/MitamaeDefaults",
+					"description": "Default settings for mitamae tasks"
+				},
+				"privilege": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/PrivilegeDefaults"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "Default privilege escalation settings"
+				}
+			},
+			"type": "object"
+		},
+		"Format": {
+			"description": "Format for the target output",
+			"oneOf": [
+				{
+					"const": "auto",
+					"description": "Auto detect based on file extension (default)",
+					"type": "string"
+				},
+				{
+					"const": "directory",
+					"description": "Directory format",
+					"type": "string"
+				},
+				{
+					"const": "tar",
+					"description": "Tarball",
+					"type": "string"
+				},
+				{
+					"const": "tar.xz",
+					"description": "Compressed tarball (xz)",
+					"type": "string"
+				},
+				{
+					"const": "tar.gz",
+					"description": "Compressed tarball (gz)",
+					"type": "string"
+				},
+				{
+					"const": "tar.zst",
+					"description": "Compressed tarball (zst)",
+					"type": "string"
+				},
+				{
+					"const": "squashfs",
+					"description": "Squashfs filesystem",
+					"type": "string"
+				},
+				{
+					"const": "ext2",
+					"description": "Ext2 filesystem",
+					"type": "string"
+				},
+				{
+					"const": "null",
+					"description": "Null",
+					"type": "string"
+				}
+			]
+		},
+		"IsolationConfig": {
+			"additionalProperties": false,
+			"description": "Isolation backend configuration.\n\nThe `type` field selects the isolation backend used to run commands in the rootfs\n(default: chroot).",
+			"properties": {
+				"type": {
+					"$ref": "#/$defs/IsolationKind",
+					"description": "Isolation backend type."
+				}
+			},
+			"required": [
+				"type"
+			],
+			"type": "object"
+		},
+		"IsolationKind": {
+			"description": "Isolation backend kind.\n\nThe `type` field in the YAML `isolation` map selects the backend. If not specified,\ndefaults to chroot.",
+			"oneOf": [
+				{
+					"const": "chroot",
+					"description": "chroot isolation (default)",
+					"type": "string"
+				}
+			]
+		},
+		"MitamaeDefaults": {
+			"additionalProperties": false,
+			"description": "Default settings for mitamae tasks.\n\nAllows specifying architecture-specific binary paths that apply to all\nmitamae tasks unless overridden at the task level.",
+			"properties": {
+				"binary": {
+					"additionalProperties": {
+						"type": "string"
+					},
+					"default": {},
+					"description": "Architecture-specific binary paths (key: \"x86_64\", \"aarch64\", etc.)",
+					"type": "object"
+				}
+			},
+			"type": "object"
+		},
+		"MmdebstrapVariant": {
+			"description": "Variant defines the package selection strategy for mmdebstrap",
+			"oneOf": [
+				{
+					"const": "debootstrap",
+					"description": "The `required` set plus all packages with `Priority:important` (default)",
+					"type": "string"
+				},
+				{
+					"const": "extract",
+					"description": "Installs nothing by default (not even `Essential:yes` packages)\nThis variant is used for minimal setups where no preselected packages are required",
+					"type": "string"
+				},
+				{
+					"const": "custom",
+					"description": "Installs nothing by default (not even `Essential:yes` packages)\nThis variant allows for fully custom package selection strategies defined by the user",
+					"type": "string"
+				},
+				{
+					"const": "essential",
+					"description": "`Essential:yes` packages",
+					"type": "string"
+				},
+				{
+					"const": "apt",
+					"description": "The `essential` set plus `apt`",
+					"type": "string"
+				},
+				{
+					"const": "buildd",
+					"description": "The `essential` set plus `apt` and `build-essential`",
+					"type": "string"
+				},
+				{
+					"const": "required",
+					"description": "The `essential` set plus all packages with `Priority:required`",
+					"type": "string"
+				},
+				{
+					"const": "minbase",
+					"description": "The `essential` set plus all packages with `Priority:required`",
+					"type": "string"
+				},
+				{
+					"const": "important",
+					"description": "The `required` set plus all packages with `Priority:important`",
+					"type": "string"
+				},
+				{
+					"const": "standard",
+					"description": "The `important` set plus all packages with `Priority:standard`",
+					"type": "string"
+				}
+			]
+		},
+		"Mode": {
+			"description": "Mode for mmdebstrap operation",
+			"oneOf": [
+				{
+					"const": "auto",
+					"description": "Auto detect best mode (default)",
+					"type": "string"
+				},
+				{
+					"const": "sudo",
+					"description": "Sudo mode",
+					"type": "string"
+				},
+				{
+					"const": "root",
+					"description": "Root mode",
+					"type": "string"
+				},
+				{
+					"const": "unshare",
+					"description": "Unshare mode",
+					"type": "string"
+				},
+				{
+					"const": "fakeroot",
+					"description": "User-mode using fakeroot",
+					"type": "string"
+				},
+				{
+					"const": "fakechroot",
+					"description": "Fakechroot mode",
+					"type": "string"
+				},
+				{
+					"const": "chrootless",
+					"description": "Chrootless mode",
+					"type": "string"
+				}
+			]
+		},
+		"MountEntry": {
+			"additionalProperties": false,
+			"description": "A single mount entry specifying what to mount into the rootfs.",
+			"properties": {
+				"options": {
+					"default": [],
+					"description": "Mount options (e.g., \"bind\", \"nosuid\"). Joined with \",\" for `-o`.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"source": {
+					"description": "Device name or path (e.g., \"proc\", \"sysfs\", \"/dev\").",
+					"type": "string"
+				},
+				"target": {
+					"description": "Mount point inside the rootfs (absolute path).",
+					"type": "string"
+				}
+			},
+			"required": [
+				"source",
+				"target"
+			],
+			"type": "object"
+		},
+		"MountPreset": {
+			"description": "Mount preset defining a predefined set of mount entries.",
+			"oneOf": [
+				{
+					"const": "recommends",
+					"description": "Recommended mount set for typical Debian rootfs operations.",
+					"type": "string"
+				}
+			]
+		},
+		"MountTask": {
+			"additionalProperties": false,
+			"description": "Mount task for declaring filesystem mounts in the prepare phase.\n\nThis task declares which filesystems should be mounted into the rootfs\nbefore provisioning tasks run. The actual mount/unmount lifecycle is\nmanaged at the pipeline level, not by the task's `execute()` method.\n\nAt most one `MountTask` may appear in the prepare phase.",
+			"properties": {
+				"mounts": {
+					"description": "Custom mount entries.",
+					"items": {
+						"$ref": "#/$defs/MountEntry"
+					},
+					"type": "array"
+				},
+				"preset": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/MountPreset"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "Optional preset for predefined mount sets."
+				}
+			},
+			"type": "object"
+		},
+		"PrepareConfig": {
+			"additionalProperties": false,
+			"description": "Prepare phase configuration (named-field, schema-first).\n\nBoth fields are optional singletons. A duplicate YAML key (e.g. two `mount`\nentries) is rejected by `serde_yaml` at parse time, and an unknown key is\nrejected by `deny_unknown_fields` — so the \"at most one\" invariants hold\nstructurally instead of being validated after parsing.",
+			"properties": {
+				"mount": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/MountTask"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "Mount task declaring filesystem mounts for the rootfs."
+				},
+				"resolv_conf": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/ResolvConfTask"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "resolv_conf task declaring DNS configuration for the chroot."
+				}
+			},
+			"type": "object"
+		},
+		"Privilege": {
+			"anyOf": [
+				{
+					"type": "boolean"
+				},
+				{
+					"$ref": "#/$defs/PrivilegeMethodMap"
+				},
+				{
+					"type": "null"
+				}
+			]
+		},
+		"PrivilegeDefaults": {
+			"additionalProperties": false,
+			"description": "Default privilege settings for the profile.",
+			"properties": {
+				"method": {
+					"$ref": "#/$defs/PrivilegeMethod",
+					"description": "The default privilege escalation method."
+				}
+			},
+			"required": [
+				"method"
+			],
+			"type": "object"
+		},
+		"PrivilegeMethod": {
+			"description": "Privilege escalation method.",
+			"oneOf": [
+				{
+					"const": "sudo",
+					"description": "Use `sudo` for privilege escalation.",
+					"type": "string"
+				},
+				{
+					"const": "doas",
+					"description": "Use `doas` for privilege escalation.",
+					"type": "string"
+				}
+			]
+		},
+		"PrivilegeMethodMap": {
+			"additionalProperties": false,
+			"properties": {
+				"method": {
+					"$ref": "#/$defs/PrivilegeMethod"
+				}
+			},
+			"required": [
+				"method"
+			],
+			"type": "object"
+		},
+		"ProvisionTask": {
+			"description": "Declarative task definition for provision pipeline steps.\n\nEach variant holds the data needed to configure and execute a specific\ntype of task. The enum dispatch pattern provides compile-time exhaustive\nmatching — adding a new variant causes compilation errors at every\nunhandled match site, preventing missed implementations.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "Shell script execution task",
+					"oneOf": [
+						{
+							"properties": {
+								"script": {
+									"type": "string"
+								}
+							},
+							"required": [
+								"script"
+							]
+						},
+						{
+							"properties": {
+								"content": {
+									"type": "string"
+								}
+							},
+							"required": [
+								"content"
+							]
+						}
+					],
+					"properties": {
+						"content": {
+							"type": [
+								"string",
+								"null"
+							]
+						},
+						"isolation": {
+							"$ref": "#/$defs/TaskIsolation",
+							"default": null
+						},
+						"privilege": {
+							"$ref": "#/$defs/Privilege",
+							"default": null
+						},
+						"script": {
+							"type": [
+								"string",
+								"null"
+							]
+						},
+						"shell": {
+							"default": "/bin/sh",
+							"type": "string"
+						},
+						"type": {
+							"const": "shell",
+							"type": "string"
+						}
+					},
+					"required": [
+						"type"
+					],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Mitamae recipe execution task",
+					"oneOf": [
+						{
+							"properties": {
+								"script": {
+									"type": "string"
+								}
+							},
+							"required": [
+								"script"
+							]
+						},
+						{
+							"properties": {
+								"content": {
+									"type": "string"
+								}
+							},
+							"required": [
+								"content"
+							]
+						}
+					],
+					"properties": {
+						"binary": {
+							"type": [
+								"string",
+								"null"
+							]
+						},
+						"content": {
+							"type": [
+								"string",
+								"null"
+							]
+						},
+						"isolation": {
+							"$ref": "#/$defs/TaskIsolation",
+							"default": null
+						},
+						"privilege": {
+							"$ref": "#/$defs/Privilege",
+							"default": null
+						},
+						"script": {
+							"type": [
+								"string",
+								"null"
+							]
+						},
+						"type": {
+							"const": "mitamae",
+							"type": "string"
+						}
+					},
+					"required": [
+						"type"
+					],
+					"type": "object"
+				}
+			]
+		},
+		"ResolvConfTask": {
+			"additionalProperties": false,
+			"description": "resolv_conf task for declaring DNS configuration in the prepare phase.\n\nThis task declares how resolv.conf should be set up inside the rootfs\nbefore provisioning tasks run. The actual setup/teardown lifecycle is\nmanaged at the pipeline level, not by the task's `execute()` method.\n\nAt most one `ResolvConfTask` may appear in the prepare phase.",
+			"properties": {
+				"copy": {
+					"default": false,
+					"description": "Copy host's /etc/resolv.conf into the chroot (following symlinks).",
+					"type": "boolean"
+				},
+				"name_servers": {
+					"description": "Nameserver IP addresses to write to resolv.conf.",
+					"items": {
+						"anyOf": [
+							{
+								"format": "ipv4"
+							},
+							{
+								"format": "ipv6"
+							}
+						],
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"search": {
+					"description": "Search domains to write to resolv.conf.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				}
+			},
+			"type": "object"
+		},
+		"TaskIsolation": {
+			"anyOf": [
+				{
+					"type": "boolean"
+				},
+				{
+					"$ref": "#/$defs/IsolationConfig"
+				},
+				{
+					"type": "null"
+				}
+			]
+		}
+	},
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"additionalProperties": false,
+	"description": "Represents a bootstrap profile configuration.\n\nA profile contains the target directory and bootstrap tool configuration\ndetails needed to create a Debian-based system.",
+	"properties": {
+		"assemble": {
+			"$ref": "#/$defs/AssembleConfig",
+			"description": "Assemble tasks to run after provisioning (optional)"
+		},
+		"bootstrap": {
+			"$ref": "#/$defs/Bootstrap",
+			"description": "Bootstrap tool configuration"
+		},
+		"defaults": {
+			"$ref": "#/$defs/Defaults",
+			"description": "Default settings (isolation backend, etc.)"
+		},
+		"dir": {
+			"description": "Target directory path for the bootstrap operation",
+			"type": "string"
+		},
+		"prepare": {
+			"$ref": "#/$defs/PrepareConfig",
+			"description": "Prepare tasks to run before provisioning (optional)"
+		},
+		"provision": {
+			"description": "Main provisioning tasks (optional)",
+			"items": {
+				"$ref": "#/$defs/ProvisionTask"
+			},
+			"type": "array"
+		}
+	},
+	"required": [
+		"dir",
+		"bootstrap"
+	],
+	"title": "Profile",
+	"type": "object"
+}
