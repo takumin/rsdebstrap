@@ -504,6 +504,7 @@ dependencies = [
  "rustix",
  "schemars",
  "serde",
+ "serde_json",
  "serde_yaml",
  "strum",
  "tempfile",
