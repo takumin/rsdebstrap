@@ -11,7 +11,7 @@
 
 use std::borrow::Cow;
 
-use schemars::{JsonSchema, Schema, SchemaGenerator};
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 
 /// Schema proxy for camino path types (`Utf8PathBuf` / `Utf8Path`).
 ///
@@ -36,5 +36,39 @@ impl JsonSchema for Utf8PathSchema {
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
         String::json_schema(generator)
+    }
+}
+
+/// Schema proxy for [`std::net::IpAddr`].
+///
+/// `schemars` renders `IpAddr` with `format: "ip"`, which is not one of the JSON Schema
+/// standard string formats (`ipv4` / `ipv6`), so editors and validators do not recognize it.
+/// Since an `IpAddr` is either an IPv4 or an IPv6 address, this proxy emits a standard
+/// `anyOf` of the two recognized formats instead. Reference it from `IpAddr` fields with
+/// `#[schemars(with = "Vec<crate::schema::IpAddrSchema>")]` (or without the `Vec` for a scalar).
+///
+/// The forms stay purely annotational (JSON Schema treats `format` as non-asserting by
+/// default), so this never rejects a value the `IpAddr` deserializer accepts; it only makes
+/// the emitted format standard and self-describing.
+pub(crate) struct IpAddrSchema;
+
+impl JsonSchema for IpAddrSchema {
+    fn inline_schema() -> bool {
+        // Trivial (string) schema — inline it rather than emitting a named `$ref`.
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "IpAddr".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "anyOf": [
+                { "format": "ipv4" },
+                { "format": "ipv6" }
+            ]
+        })
     }
 }

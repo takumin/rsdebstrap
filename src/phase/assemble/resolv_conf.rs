@@ -9,6 +9,7 @@ use std::borrow::Cow;
 use std::net::IpAddr;
 
 use rustix::fs::{self as rfs, CWD, Mode, OFlags};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -32,7 +33,7 @@ fn privilege_is_default(p: &Privilege) -> bool {
 /// - **link**: creates a symlink to the specified target path
 ///
 /// At most one `AssembleResolvConfTask` may appear in the assemble phase.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssembleResolvConfTask {
     /// Privilege escalation setting (resolved during defaults application).
@@ -43,6 +44,7 @@ pub struct AssembleResolvConfTask {
     pub link: Option<String>,
     /// Nameserver IP addresses to write to resolv.conf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(with = "Vec<crate::schema::IpAddrSchema>")]
     pub name_servers: Vec<IpAddr>,
     /// Search domains to write to resolv.conf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
