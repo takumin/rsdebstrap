@@ -184,7 +184,7 @@ impl TaskIsolation {
     /// or `None` if isolation is disabled.
     ///
     /// Unlike `Privilege::resolve()`, this never returns an error because
-    /// `IsolationConfig` always has a default value (`Chroot`).
+    /// `IsolationConfig` always has a default (its `kind` defaults to `Chroot`).
     pub fn resolve(&self, defaults: &IsolationConfig) -> Option<IsolationConfig> {
         match self {
             Self::Inherit => Some(defaults.clone()),

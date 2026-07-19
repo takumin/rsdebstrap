@@ -344,24 +344,41 @@ impl Bootstrap {
     }
 }
 
-/// Isolation backend configuration.
+/// Isolation backend kind.
 ///
-/// This enum represents the different isolation mechanisms that can be used
-/// to execute commands within a rootfs. The `type` field in YAML determines
-/// which variant is used. If not specified, defaults to chroot.
+/// The `type` field in the YAML `isolation` map selects the backend. If not specified,
+/// defaults to chroot.
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum IsolationConfig {
+#[serde(rename_all = "lowercase")]
+pub enum IsolationKind {
     /// chroot isolation (default)
     #[default]
     Chroot,
-    // Future: Bwrap(BwrapConfig), Nspawn(NspawnConfig)
+    // Future: Bwrap, Nspawn
+}
+
+/// Isolation backend configuration.
+///
+/// The `type` field selects the isolation backend used to run commands in the rootfs
+/// (default: chroot).
+// Implementation note: this is a struct (rather than an internally tagged enum) so that
+// `deny_unknown_fields` is actually enforced by serde — internally tagged enums silently
+// ignore it, which would let typo'd keys through and diverge from the generated schema's
+// `additionalProperties: false`.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct IsolationConfig {
+    /// Isolation backend type.
+    #[serde(rename = "type")]
+    pub kind: IsolationKind,
 }
 
 impl IsolationConfig {
     /// Creates a default chroot config.
     pub fn chroot() -> Self {
-        Self::Chroot
+        Self {
+            kind: IsolationKind::Chroot,
+        }
     }
 
     /// Returns a boxed isolation provider instance.
@@ -369,8 +386,8 @@ impl IsolationConfig {
     /// This allows calling `IsolationProvider` methods without matching
     /// on each variant explicitly.
     pub fn as_provider(&self) -> Box<dyn IsolationProvider> {
-        match self {
-            IsolationConfig::Chroot => Box::new(ChrootProvider),
+        match self.kind {
+            IsolationKind::Chroot => Box::new(ChrootProvider),
         }
     }
 }
@@ -482,7 +499,7 @@ impl Profile {
         };
 
         // mounts require chroot isolation
-        if !matches!(self.defaults.isolation, IsolationConfig::Chroot) {
+        if !matches!(self.defaults.isolation.kind, IsolationKind::Chroot) {
             return Err(RsdebstrapError::Validation(
                 "mounts require chroot isolation (defaults.isolation must be chroot)".to_string(),
             ));
@@ -513,7 +530,7 @@ impl Profile {
         // The named-field `prepare.resolv_conf` guarantees at most one task.
         if let Some(task) = &self.prepare.resolv_conf {
             // resolv_conf requires chroot isolation
-            if !matches!(self.defaults.isolation, IsolationConfig::Chroot) {
+            if !matches!(self.defaults.isolation.kind, IsolationKind::Chroot) {
                 return Err(RsdebstrapError::Validation(
                     "resolv_conf requires chroot isolation \
                     (defaults.isolation must be chroot)"
@@ -1090,7 +1107,7 @@ mod tests {
 
     #[test]
     fn test_isolation_config_serialize_deserialize_roundtrip() {
-        let config = IsolationConfig::Chroot;
+        let config = IsolationConfig::chroot();
         let yaml = serde_yaml::to_string(&config).unwrap();
         let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);

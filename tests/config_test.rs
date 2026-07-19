@@ -581,7 +581,7 @@ bootstrap:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot));
+    assert_eq!(profile.defaults.isolation, IsolationConfig::chroot());
 
     Ok(())
 }
@@ -602,7 +602,7 @@ bootstrap:
     // editorconfig-checker-enable
 
     use rsdebstrap::config::IsolationConfig;
-    assert!(matches!(profile.defaults.isolation, IsolationConfig::Chroot));
+    assert_eq!(profile.defaults.isolation, IsolationConfig::chroot());
 
     Ok(())
 }
