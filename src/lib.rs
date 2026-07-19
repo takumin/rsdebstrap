@@ -183,8 +183,9 @@ pub fn run_validate(opts: &cli::ValidateArgs) -> Result<()> {
 /// tracks what `apply`/`validate` accept — there is no separately maintained schema to
 /// drift out of sync.
 pub fn profile_json_schema() -> serde_json::Value {
-    serde_json::to_value(schemars::schema_for!(config::Profile))
-        .expect("Profile JSON Schema must serialize to JSON")
+    // `schemars::Schema` wraps a `serde_json::Value`; `to_value` unwraps it infallibly,
+    // avoiding a redundant serialize round-trip over the whole schema tree.
+    schemars::schema_for!(config::Profile).to_value()
 }
 
 /// Canonical pretty-printed rendering of the profile JSON Schema (no trailing newline).
