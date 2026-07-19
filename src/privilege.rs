@@ -4,12 +4,15 @@
 //! on a per-command basis. Tasks and bootstrap backends can declare their own
 //! privilege settings, inheriting from profile-level defaults when unspecified.
 
+use std::borrow::Cow;
+
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 use crate::error::RsdebstrapError;
 
 /// Privilege escalation method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum PrivilegeMethod {
     /// Use `sudo` for privilege escalation.
@@ -35,7 +38,7 @@ impl std::fmt::Display for PrivilegeMethod {
 }
 
 /// Default privilege settings for the profile.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct PrivilegeDefaults {
     /// The default privilege escalation method.
     pub method: PrivilegeMethod,
@@ -140,6 +143,34 @@ impl Privilege {
     }
 }
 
+// Wire shape of the `{ method: <method> }` map form.
+//
+// Single source of truth for the map form's fields, shared by both deserialization
+// (via `Privilege`'s strict dispatch) and schema generation (via `PrivilegeWire`).
+// `deny_unknown_fields` keeps typo'd keys rejected, and schemars mirrors that as
+// `additionalProperties: false`. Plain `//` (not `///`) so the maintainer note does not
+// leak into the generated schema's `description`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PrivilegeMethodMap {
+    method: PrivilegeMethod,
+}
+
+// Schema-only mirror of the accepted YAML shapes: `true`/`false`, `{ method: ... }`, or an
+// explicit null (which — like field absence — resolves to `Inherit`).
+// Never deserialized directly — `Privilege`'s `Deserialize` performs the strict dispatch.
+// Exists solely so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
+#[derive(JsonSchema)]
+#[serde(untagged)]
+#[allow(dead_code)]
+enum PrivilegeWire {
+    Toggle(bool),
+    Method(PrivilegeMethodMap),
+    // Unit variant → `{ "type": "null" }` in the generated `anyOf`, mirroring that an
+    // explicit null deserializes to `Inherit` (see `visit_unit`).
+    Inherit,
+}
+
 impl<'de> Deserialize<'de> for Privilege {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -178,17 +209,27 @@ impl<'de> Deserialize<'de> for Privilege {
             where
                 A: de::MapAccess<'de>,
             {
-                #[derive(Deserialize)]
-                #[serde(deny_unknown_fields)]
-                struct PrivilegeMap {
-                    method: PrivilegeMethod,
-                }
-                let pm = PrivilegeMap::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                // Reuse the shared strict map shape so unknown keys stay rejected.
+                let pm =
+                    PrivilegeMethodMap::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 Ok(Privilege::Method(pm.method))
             }
         }
 
+        // Field absence is handled by `#[serde(default)]` (→ Inherit); an explicit null
+        // also maps to Inherit (via `visit_unit`). Any other present value must be a boolean
+        // or a `{ method }` map — anything else is a parse error.
         deserializer.deserialize_any(PrivilegeVisitor)
+    }
+}
+
+impl JsonSchema for Privilege {
+    fn schema_name() -> Cow<'static, str> {
+        "Privilege".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        PrivilegeWire::json_schema(generator)
     }
 }
 
@@ -435,6 +476,7 @@ mod tests {
 
     #[test]
     fn privilege_deserialize_null_returns_inherit() {
+        // An explicit null is accepted as Inherit (mirrors field absence).
         let p: Privilege = serde_yaml::from_str("~").unwrap();
         assert_eq!(p, Privilege::Inherit);
     }
@@ -450,6 +492,7 @@ mod tests {
 
     #[test]
     fn serialize_roundtrip_inherit() {
+        // Inherit serializes to null and an explicit null deserializes back to Inherit.
         assert_eq!(roundtrip(&Privilege::Inherit), Privilege::Inherit);
     }
 
