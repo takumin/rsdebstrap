@@ -631,12 +631,24 @@
 					"type": "boolean"
 				},
 				{
-					"$ref": "#/$defs/PrivilegeMethodMap"
+					"$ref": "#/$defs/PrivilegeConfig"
 				},
 				{
 					"type": "null"
 				}
 			]
+		},
+		"PrivilegeConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"method": {
+					"$ref": "#/$defs/PrivilegeMethod"
+				}
+			},
+			"required": [
+				"method"
+			],
+			"type": "object"
 		},
 		"PrivilegeDefaults": {
 			"additionalProperties": false,
@@ -666,18 +678,6 @@
 					"type": "string"
 				}
 			]
-		},
-		"PrivilegeMethodMap": {
-			"additionalProperties": false,
-			"properties": {
-				"method": {
-					"$ref": "#/$defs/PrivilegeMethod"
-				}
-			},
-			"required": [
-				"method"
-			],
-			"type": "object"
 		},
 		"ProvisionTask": {
 			"description": "Declarative task definition for provision pipeline steps.\n\nEach variant holds the data needed to configure and execute a specific\ntype of task. The enum dispatch pattern provides compile-time exhaustive\nmatching — adding a new variant causes compilation errors at every\nunhandled match site, preventing missed implementations.",

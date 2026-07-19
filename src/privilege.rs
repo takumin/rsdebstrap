@@ -151,8 +151,13 @@ impl Privilege {
 // `deny_unknown_fields` keeps typo'd keys rejected, and schemars mirrors that as
 // `additionalProperties: false`. Plain `//` (not `///`) so the maintainer note does not
 // leak into the generated schema's `description`.
+//
+// The schemars rename fixes the schema-facing `$defs` name (`PrivilegeConfig`, symmetric
+// with `IsolationConfig` on the isolation branch) so this private type's Rust name is not
+// part of the published schema contract and stays free to change.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "PrivilegeConfig")]
 struct PrivilegeMethodMap {
     method: PrivilegeMethod,
 }
