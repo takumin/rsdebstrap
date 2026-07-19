@@ -16,7 +16,9 @@
 
 use anyhow::Result;
 use camino::Utf8Path;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::sync::{Arc, LazyLock};
 
 use crate::config::IsolationConfig;
@@ -195,6 +197,23 @@ impl TaskIsolation {
     }
 }
 
+// Schema-only mirror of the accepted YAML shapes: `true`/`false`, `{ type: ... }`, or an
+// explicit null (which — like field absence — resolves to `Inherit`).
+// Never deserialized directly — `TaskIsolation`'s `Deserialize` performs the strict
+// dispatch. The map form reuses `IsolationConfig` (which is `deny_unknown_fields`).
+// Exists solely so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
+// Plain `//` (not `///`) so this note does not leak into the schema's `description`.
+#[derive(JsonSchema)]
+#[serde(untagged)]
+#[allow(dead_code)]
+enum TaskIsolationWire {
+    Toggle(bool),
+    Config(IsolationConfig),
+    // Unit variant → `{ "type": "null" }` in the generated `anyOf`, mirroring that an
+    // explicit null deserializes to `Inherit` (see `visit_unit`).
+    Inherit,
+}
+
 impl<'de> Deserialize<'de> for TaskIsolation {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -233,13 +252,27 @@ impl<'de> Deserialize<'de> for TaskIsolation {
             where
                 A: de::MapAccess<'de>,
             {
+                // IsolationConfig is `deny_unknown_fields`, so typo'd keys stay rejected.
                 let config =
                     IsolationConfig::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 Ok(TaskIsolation::Config(config))
             }
         }
 
+        // Field absence is handled by `#[serde(default)]` (→ Inherit); an explicit null
+        // also maps to Inherit (via `visit_unit`). Any other present value must be a boolean
+        // or a `{ type }` map — anything else is a parse error.
         deserializer.deserialize_any(TaskIsolationVisitor)
+    }
+}
+
+impl JsonSchema for TaskIsolation {
+    fn schema_name() -> Cow<'static, str> {
+        "TaskIsolation".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        TaskIsolationWire::json_schema(generator)
     }
 }
 
@@ -285,6 +318,7 @@ mod tests {
 
     #[test]
     fn task_isolation_deserialize_null_returns_inherit() {
+        // An explicit null is accepted as Inherit (mirrors field absence).
         let p: TaskIsolation = serde_yaml::from_str("~").unwrap();
         assert_eq!(p, TaskIsolation::Inherit);
     }
@@ -397,6 +431,7 @@ mod tests {
 
     #[test]
     fn serialize_roundtrip_inherit() {
+        // Inherit serializes to null and an explicit null deserializes back to Inherit.
         assert_eq!(roundtrip(&TaskIsolation::Inherit), TaskIsolation::Inherit);
     }
 
