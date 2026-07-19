@@ -585,7 +585,7 @@ mod tests {
                 assert_eq!(
                     wire, visitor,
                     "PrivilegeWire and Privilege's visitor disagree on {value}: \
-                     wire accepts = {wire}, visitor accepts = {visitor}"
+                    wire accepts = {wire}, visitor accepts = {visitor}"
                 );
             }
         }

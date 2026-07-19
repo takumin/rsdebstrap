@@ -506,7 +506,7 @@ mod tests {
                 assert_eq!(
                     wire, visitor,
                     "TaskIsolationWire and TaskIsolation's visitor disagree on {value}: \
-                     wire accepts = {wire}, visitor accepts = {visitor}"
+                    wire accepts = {wire}, visitor accepts = {visitor}"
                 );
             }
         }
