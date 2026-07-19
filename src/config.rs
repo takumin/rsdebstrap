@@ -351,41 +351,44 @@ impl Bootstrap {
     }
 }
 
-/// Isolation backend kind.
-///
-/// The `type` field in the YAML `isolation` map selects the backend. If not specified,
-/// defaults to chroot.
-#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum IsolationKind {
-    /// chroot isolation (default)
-    #[default]
-    Chroot,
-    // Future: Bwrap, Nspawn
-}
-
 /// Isolation backend configuration.
 ///
-/// The `type` field selects the isolation backend used to run commands in the rootfs
-/// (default: chroot).
-// Implementation note: this is a struct (rather than an internally tagged enum) so that
-// `deny_unknown_fields` is actually enforced by serde — internally tagged enums silently
-// ignore it, which would let typo'd keys through and diverge from the generated schema's
-// `additionalProperties: false`.
+/// The `type` key selects the backend used to run commands inside the rootfs; `chroot` is
+/// currently the only backend. `type` is required whenever an `isolation` map is written
+/// out — the chroot default applies only when the surrounding `isolation` key (e.g.
+/// `defaults.isolation`) is omitted entirely.
+// Internally tagged like `Bootstrap` (rather than a plain struct) so each backend keeps its
+// own payload struct as an extension point for backend-specific options (bwrap, nspawn, …).
+// `deny_unknown_fields` would be a serde no-op on the enum itself, so strictness lives on
+// the per-variant payload structs: serde consumes the `type` tag when selecting the variant
+// and hands only the remaining keys to the payload, whose `deny_unknown_fields` then
+// rejects typo'd keys (see the `Bootstrap` note in ARCHITECTURE.md).
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum IsolationConfig {
+    /// Run commands inside the rootfs via `chroot`.
+    Chroot(ChrootIsolation),
+}
+
+/// Options for the `chroot` isolation backend (currently none).
+// A braced (named-field) empty struct, not a unit struct: internally tagged variants need a
+// map-shaped payload to serialize, and only the braced form gives `deny_unknown_fields` a
+// struct visitor that rejects `{type: chroot, <typo>: ...}`.
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct IsolationConfig {
-    /// Isolation backend type.
-    #[serde(rename = "type")]
-    pub kind: IsolationKind,
+pub struct ChrootIsolation {}
+
+impl Default for IsolationConfig {
+    /// The backend used when no `isolation` key is configured: chroot.
+    fn default() -> Self {
+        Self::chroot()
+    }
 }
 
 impl IsolationConfig {
     /// Creates a default chroot config.
     pub fn chroot() -> Self {
-        Self {
-            kind: IsolationKind::Chroot,
-        }
+        Self::Chroot(ChrootIsolation {})
     }
 
     /// Returns a boxed isolation provider instance.
@@ -393,8 +396,8 @@ impl IsolationConfig {
     /// This allows calling `IsolationProvider` methods without matching
     /// on each variant explicitly.
     pub fn as_provider(&self) -> Box<dyn IsolationProvider> {
-        match self.kind {
-            IsolationKind::Chroot => Box::new(ChrootProvider),
+        match self {
+            Self::Chroot(_) => Box::new(ChrootProvider),
         }
     }
 }
@@ -511,7 +514,7 @@ impl Profile {
         };
 
         // mounts require chroot isolation
-        if !matches!(self.defaults.isolation.kind, IsolationKind::Chroot) {
+        if !matches!(self.defaults.isolation, IsolationConfig::Chroot(_)) {
             return Err(RsdebstrapError::Validation(
                 "mounts require chroot isolation (defaults.isolation must be chroot)".to_string(),
             ));
@@ -542,7 +545,7 @@ impl Profile {
         // The named-field `prepare.resolv_conf` guarantees at most one task.
         if let Some(task) = &self.prepare.resolv_conf {
             // resolv_conf requires chroot isolation
-            if !matches!(self.defaults.isolation.kind, IsolationKind::Chroot) {
+            if !matches!(self.defaults.isolation, IsolationConfig::Chroot(_)) {
                 return Err(RsdebstrapError::Validation(
                     "resolv_conf requires chroot isolation \
                     (defaults.isolation must be chroot)"

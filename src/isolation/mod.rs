@@ -186,7 +186,7 @@ impl TaskIsolation {
     /// or `None` if isolation is disabled.
     ///
     /// Unlike `Privilege::resolve()`, this never returns an error because
-    /// `IsolationConfig` always has a default (its `kind` defaults to `Chroot`).
+    /// `IsolationConfig` always has a default (chroot).
     pub fn resolve(&self, defaults: &IsolationConfig) -> Option<IsolationConfig> {
         match self {
             Self::Inherit => Some(defaults.clone()),
@@ -200,7 +200,8 @@ impl TaskIsolation {
 // Schema-only mirror of the accepted YAML shapes: `true`/`false`, `{ type: ... }`, or an
 // explicit null (which — like field absence — resolves to `Inherit`).
 // Not on the production parse path — `TaskIsolation`'s `Deserialize` performs the strict
-// dispatch. The map form reuses `IsolationConfig` (which is `deny_unknown_fields`).
+// dispatch. The map form reuses `IsolationConfig`, whose per-variant payload structs are
+// `deny_unknown_fields` (the `type` tag is consumed before the payload sees the map).
 // `Deserialize` is derived here solely so the `wire_parity` tests can prove this enum
 // accepts exactly what `TaskIsolationVisitor` accepts: the variants below and the
 // visitor's `visit_*` methods must change in lockstep, and those tests fail on any drift.
@@ -261,7 +262,8 @@ impl<'de> Deserialize<'de> for TaskIsolation {
             where
                 A: de::MapAccess<'de>,
             {
-                // IsolationConfig is `deny_unknown_fields`, so typo'd keys stay rejected.
+                // IsolationConfig's per-variant payloads are `deny_unknown_fields`, so
+                // typo'd keys stay rejected after the `type` tag selects the variant.
                 let config =
                     IsolationConfig::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 Ok(TaskIsolation::Config(config))

@@ -36,17 +36,18 @@ one deliberate 4-state pattern, resolved against profile `defaults`:
 - `resolve()` collapses a state against the profile default into a concrete
   `Option<...>` (`None` == disabled/no-op). `resolve_in_place()` mutates ahead of execution.
 - **Non-obvious:** for `TaskIsolation`, `UseDefault` and `Inherit` behave identically
-  because `IsolationConfig` always has a default (its `kind` defaults to `Chroot`). Both
-  variants exist only for API symmetry with `Privilege`, where the distinction is real.
+  because `IsolationConfig` always has a default (chroot). Both variants exist only for
+  API symmetry with `Privilege`, where the distinction is real.
 
 `mount` and `resolv_conf` used to live under `IsolationConfig`; they were moved out to
-the `prepare` phase. `IsolationConfig` is now just the backend selector: a struct
-`IsolationConfig { kind: IsolationKind }` where `IsolationKind` is the `type`-tagged enum
-of backends (currently only `Chroot`). It is deliberately a struct rather than an
-internally tagged enum so that `#[serde(deny_unknown_fields)]` is actually enforced —
-`serde` silently ignores that attribute on internally tagged enums, which would let a
-typo'd key through and diverge from the generated schema's `additionalProperties: false`
-(see [JSON Schema generation](#json-schema-generation)).
+the `prepare` phase. `IsolationConfig` is now just the backend selector: an internally
+tagged enum in the same shape as `Bootstrap` — currently the single variant
+`Chroot(ChrootIsolation)`, where `ChrootIsolation` is the (empty, for now) payload struct
+for backend-specific options. Each payload struct carries `#[serde(deny_unknown_fields)]`;
+putting that attribute on the enum itself would be a silent serde no-op, but on the
+payload it is enforced because serde consumes the `type` tag before handing the remaining
+keys to the payload (see [JSON Schema generation](#json-schema-generation)). Adding a
+backend (bwrap, nspawn, …) means adding a variant with its own payload struct.
 
 ## Phases & the pipeline
 
@@ -161,15 +162,17 @@ The non-obvious parts are all about keeping the schema faithful to the *deserial
   deserializer accepts, violating the never-false-reject invariant. They stay out of the schema
   deliberately.
 - **`deny_unknown_fields` ⇒ `additionalProperties: false`.** Applied to `Profile`, `Defaults`,
-  `MitamaeDefaults`, `MountEntry`, `PrivilegeDefaults`, and both bootstrap configs so typo'd keys
-  are rejected. It is honored even on the internally tagged `Bootstrap` variants because serde's
-  internally-tagged newtype-variant deserialization consumes the `type` tag when selecting the
-  variant and hands only the remaining fields to the variant struct (so the tag is not seen as an
-  unknown field) — serde-core behavior that holds under `serde_json` and `serde_yaml` alike, not a
-  parser quirk. The well-known serde limitation is narrower: `deny_unknown_fields` is a no-op when
-  placed on the internally-tagged *enum* (the `IsolationConfig` case above), not on a variant's
-  struct. On the schema side, `schemars` inlines the `type` const into each `oneOf` branch's
-  `properties`, so `additionalProperties: false` does not falsely reject the discriminator.
+  `MitamaeDefaults`, `MountEntry`, `PrivilegeDefaults`, both bootstrap configs, and
+  `ChrootIsolation` so typo'd keys are rejected. It is honored even on the internally tagged
+  `Bootstrap` / `IsolationConfig` variants because serde's internally-tagged newtype-variant
+  deserialization consumes the `type` tag when selecting the variant and hands only the remaining
+  fields to the variant struct (so the tag is not seen as an unknown field) — serde-core behavior
+  that holds under `serde_json` and `serde_yaml` alike, not a parser quirk. The well-known serde
+  limitation is narrower: `deny_unknown_fields` is a no-op when placed on the internally-tagged
+  *enum* itself, which is why both `Bootstrap` and `IsolationConfig` put it on their variant
+  payload structs instead. On the schema side, `schemars` inlines the `type` const into each
+  `oneOf` branch's `properties`, so `additionalProperties: false` does not falsely reject the
+  discriminator.
 - **IP address fields use `format`, not a hard `pattern`.** `name_servers` renders via the
   `IpAddrSchema` proxy as `{ type: string, anyOf: [ { format: ipv4 }, { format: ipv6 } ] }`.
   `format` is annotational (non-asserting by default), so the schema never *rejects* a string the
