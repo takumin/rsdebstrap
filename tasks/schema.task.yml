@@ -30,4 +30,5 @@ tasks:
     - schema/rsdebstrap.schema.json
     cmds:
     - cargo build --frozen --quiet
-    - cargo run --frozen --quiet -- schema > schema/rsdebstrap.schema.json
+    - cargo run --frozen --quiet -- schema > schema/rsdebstrap.schema.json.tmp
+    - mv schema/rsdebstrap.schema.json.tmp schema/rsdebstrap.schema.json
