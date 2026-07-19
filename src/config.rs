@@ -11,10 +11,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::net::IpAddr;
-use std::sync::LazyLock;
 
 use camino::{Utf8Path, Utf8PathBuf};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -27,10 +25,6 @@ use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::phase::{AssembleConfig, PrepareConfig, ProvisionTask};
 use crate::pipeline::Pipeline;
 use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
-
-/// Static regex for removing duplicate location info from serde_yaml error messages.
-static YAML_LOCATION_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r" at line \d+ column \d+").unwrap());
 
 /// Known pseudo-filesystem source names.
 ///
@@ -561,18 +555,21 @@ pub(crate) fn validate_mount_order(mounts: &[MountEntry]) -> Result<(), Rsdebstr
 }
 
 fn format_yaml_parse_error(err: serde_yaml::Error, file_path: &Utf8Path) -> RsdebstrapError {
-    let location = err
-        .location()
-        .map(|loc| format!(" at line {}, column {}", loc.line(), loc.column()));
-    // Remove duplicate "at line X column Y" from serde_yaml's error message
+    // serde_yaml sometimes embeds the location in its Display output
+    // ("... at line X column Y") and sometimes exposes it only via location()
+    // (e.g. "missing field `dir`"). We render the message as-is and append the
+    // location from location() only when the message does not already mention
+    // that line. The check keys off the numeric line value (stable data), not
+    // serde_yaml's exact wording, so a future change to its phrasing degrades to
+    // a harmless duplicate location rather than silently dropping it.
     let msg = err.to_string();
-    let clean_msg = YAML_LOCATION_RE.replace(&msg, "").to_string();
-    RsdebstrapError::Config(format!(
-        "{}: YAML parse error{}: {}",
-        file_path,
-        location.unwrap_or_default(),
-        clean_msg
-    ))
+    let suffix = match err.location() {
+        Some(loc) if !msg.contains(&format!("line {}", loc.line())) => {
+            format!(" (line {}, column {})", loc.line(), loc.column())
+        }
+        _ => String::new(),
+    };
+    RsdebstrapError::Config(format!("{}: YAML parse error: {}{}", file_path, msg, suffix))
 }
 
 fn read_profile_file(path: &Utf8Path) -> Result<(BufReader<File>, Utf8PathBuf), RsdebstrapError> {
@@ -712,40 +709,45 @@ mod tests {
 
     #[test]
     fn test_format_yaml_parse_error_with_location() {
-        // Indentation error produces location info
-        let err = make_yaml_error("key: value\n  bad_indent");
+        // A type error embeds the location directly in serde_yaml's Display output.
+        let err = make_yaml_error("dir: [invalid, list]");
         let result = format_yaml_parse_error(err, Utf8Path::new("/test/profile.yml"));
         let msg = result.to_string();
         assert!(msg.contains("/test/profile.yml"), "should contain file path: {}", msg);
         assert!(msg.contains("YAML parse error"), "should contain 'YAML parse error': {}", msg);
-        assert!(msg.contains("at line "), "should contain line info: {}", msg);
+        assert!(msg.contains("line "), "should contain line info: {}", msg);
         assert!(msg.contains("column "), "should contain column info: {}", msg);
     }
 
     #[test]
-    fn test_format_yaml_parse_error_strips_duplicate_location() {
-        let err = make_yaml_error("key: value\n  bad_indent");
+    fn test_format_yaml_parse_error_no_duplicate_location() {
+        // serde_yaml already embeds the location in this error's message, so we must
+        // not append a second copy from location().
+        let err = make_yaml_error("dir: [invalid, list]");
         let result = format_yaml_parse_error(err, Utf8Path::new("/test/profile.yml"));
         let msg = result.to_string();
-        // The "at line X column Y" from serde_yaml's own message should be stripped,
-        // leaving only our formatted "at line X, column Y" (with comma)
-        let at_count = msg.matches(" at line ").count();
+        assert_eq!(msg.matches("line ").count(), 1, "location must not be duplicated: {}", msg);
         assert!(
-            at_count <= 1,
-            "duplicate location should be stripped, found {} occurrences: {}",
-            at_count,
+            !msg.contains(" (line "),
+            "our appended suffix must be absent when serde_yaml embeds the location: {}",
             msg
         );
     }
 
     #[test]
-    fn test_format_yaml_parse_error_without_location() {
-        // EOF error typically has no location
+    fn test_format_yaml_parse_error_appends_location_when_absent() {
+        // A "missing field" error carries a location() but omits it from Display,
+        // so we append it ourselves rather than dropping it.
         let err = make_yaml_error("");
         let result = format_yaml_parse_error(err, Utf8Path::new("/test/empty.yml"));
         let msg = result.to_string();
         assert!(msg.contains("/test/empty.yml"), "should contain file path: {}", msg);
         assert!(msg.contains("YAML parse error"), "should contain 'YAML parse error': {}", msg);
+        assert!(
+            msg.contains(" (line "),
+            "location from location() should be appended when the message lacks it: {}",
+            msg
+        );
     }
 
     // =========================================================================
