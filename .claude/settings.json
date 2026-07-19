@@ -13,7 +13,27 @@
 			"Bash(cargo r:*)",
 			"Bash(cargo run:*)",
 			"Bash(cargo t:*)",
-			"Bash(cargo test:*)"
+			"Bash(cargo test:*)",
+			"Bash(gh pr view:*)",
+			"Bash(gh pr list:*)",
+			"Bash(gh pr diff:*)",
+			"Bash(gh pr checks:*)",
+			"Bash(gh pr status:*)",
+			"Bash(gh issue view:*)",
+			"Bash(gh issue list:*)",
+			"Bash(gh issue status:*)",
+			"Bash(gh repo view:*)",
+			"Bash(gh run view:*)",
+			"Bash(gh run list:*)",
+			"Bash(gh release view:*)",
+			"Bash(gh release list:*)",
+			"Bash(gh workflow view:*)",
+			"Bash(gh workflow list:*)",
+			"Bash(gh label list:*)",
+			"Bash(gh search:*)",
+			"Bash(gh status:*)",
+			"Bash(gh api --method GET:*)",
+			"Bash(gh api -X GET:*)"
 		],
 		"deny": []
 	}
