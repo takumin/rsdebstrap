@@ -4,13 +4,17 @@ use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle, RootfsOutput};
 use crate::privilege::Privilege;
 use anyhow::Result;
 use camino::Utf8Path;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::Display;
 
 /// Variant defines the package selection strategy for debootstrap
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
+// Distinct schema name so it does not collide with mmdebstrap's `Variant` (which would make
+// schemars auto-suffix one to the non-descriptive `Variant2`).
+#[schemars(rename = "DebootstrapVariant")]
 pub enum Variant {
     /// Minimal base system (default)
     #[default]
@@ -27,7 +31,7 @@ pub enum Variant {
 ///
 /// This structure contains all settings needed to customize the Debian
 /// bootstrapping process using debootstrap.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DebootstrapConfig {
     /// Debian suite name (e.g., "bookworm", "trixie")
     pub suite: String,
