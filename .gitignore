@@ -2,4 +2,5 @@
 /target
 /target.tar
 /.task
+**/.claude/worktrees
 **/.claude/settings.local.json
