@@ -80,6 +80,7 @@ pub enum Commands {
     /// ```sh
     /// rsdebstrap schema > schema/rsdebstrap.schema.json
     /// ```
+    #[cfg(feature = "schema")]
     Schema,
 }
 
@@ -194,11 +195,9 @@ pub enum LogLevel {
 ///         cli::Commands::Validate(opts) => {
 ///             // Process the validate arguments
 ///         }
-///         cli::Commands::Completions(opts) => {
-///             // Generate shell completions
-///         }
-///         cli::Commands::Schema => {
-///             // Print the profile JSON Schema
+///         // Completions, plus Schema when the `schema` feature (default-on) is enabled.
+///         _ => {
+///             // Handle the stdout-only subcommands
 ///         }
 ///     }
 ///     Ok(())

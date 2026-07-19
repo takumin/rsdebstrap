@@ -4,15 +4,18 @@
 //! on a per-command basis. Tasks and bootstrap backends can declare their own
 //! privilege settings, inheriting from profile-level defaults when unspecified.
 
+#[cfg(feature = "schema")]
 use std::borrow::Cow;
 
+#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 use crate::error::RsdebstrapError;
 
 /// Privilege escalation method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum PrivilegeMethod {
     /// Use `sudo` for privilege escalation.
@@ -38,7 +41,8 @@ impl std::fmt::Display for PrivilegeMethod {
 }
 
 /// Default privilege settings for the profile.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PrivilegeDefaults {
     /// The default privilege escalation method.
@@ -155,9 +159,13 @@ impl Privilege {
 // The schemars rename fixes the schema-facing `$defs` name (`PrivilegeConfig`, symmetric
 // with `IsolationConfig` on the isolation branch) so this private type's Rust name is not
 // part of the published schema contract and stays free to change.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(JsonSchema),
+    schemars(rename = "PrivilegeConfig")
+)]
 #[serde(deny_unknown_fields)]
-#[schemars(rename = "PrivilegeConfig")]
 struct PrivilegeMethodMap {
     method: PrivilegeMethod,
 }
@@ -169,6 +177,7 @@ struct PrivilegeMethodMap {
 // enum accepts exactly what `PrivilegeVisitor` accepts: the variants below and the
 // visitor's `visit_*` methods must change in lockstep, and those tests fail on any drift.
 // Exists so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
+#[cfg(feature = "schema")]
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum PrivilegeWire {
@@ -237,6 +246,7 @@ impl<'de> Deserialize<'de> for Privilege {
     }
 }
 
+#[cfg(feature = "schema")]
 impl JsonSchema for Privilege {
     fn schema_name() -> Cow<'static, str> {
         "Privilege".into()
@@ -544,6 +554,7 @@ mod tests {
     // tests pin the two acceptance sets together: adding or removing a `visit_*`
     // method without the matching wire-variant change (or vice versa) makes a
     // battery value below diverge and fail.
+    #[cfg(feature = "schema")]
     mod wire_parity {
         use super::super::{Privilege, PrivilegeWire};
         use serde_json::{Value, json};

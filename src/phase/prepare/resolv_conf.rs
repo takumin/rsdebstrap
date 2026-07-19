@@ -8,6 +8,7 @@
 use std::borrow::Cow;
 use std::net::IpAddr;
 
+#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +24,8 @@ use crate::phase::PhaseItem;
 /// managed at the pipeline level, not by the task's `execute()` method.
 ///
 /// At most one `ResolvConfTask` may appear in the prepare phase.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ResolvConfTask {
     /// Copy host's /etc/resolv.conf into the chroot (following symlinks).
@@ -31,7 +33,10 @@ pub struct ResolvConfTask {
     pub copy: bool,
     /// Nameserver IP addresses to write to resolv.conf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schemars(with = "Vec<crate::schema::IpAddrSchema>")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Vec<crate::schema::IpAddrSchema>")
+    )]
     pub name_servers: Vec<IpAddr>,
     /// Search domains to write to resolv.conf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

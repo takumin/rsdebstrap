@@ -4,7 +4,9 @@ use clap_complete::generate;
 use std::io;
 use std::sync::Arc;
 
-use rsdebstrap::{cli, executor, init_logging, run_apply, run_schema, run_validate};
+#[cfg(feature = "schema")]
+use rsdebstrap::run_schema;
+use rsdebstrap::{cli, executor, init_logging, run_apply, run_validate};
 
 fn main() -> Result<()> {
     let args = cli::parse_args()?;
@@ -17,6 +19,7 @@ fn main() -> Result<()> {
             generate(opts.shell, &mut cmd, "rsdebstrap", &mut io::stdout());
             return Ok(());
         }
+        #[cfg(feature = "schema")]
         cli::Commands::Schema => return run_schema(),
         _ => {}
     }
@@ -24,9 +27,9 @@ fn main() -> Result<()> {
     let log_level = match &args.command {
         cli::Commands::Apply(opts) => opts.common.log_level,
         cli::Commands::Validate(opts) => opts.common.log_level,
-        cli::Commands::Completions(_) | cli::Commands::Schema => {
-            unreachable!("stdout-only subcommands handled above")
-        }
+        cli::Commands::Completions(_) => unreachable!("stdout-only subcommands handled above"),
+        #[cfg(feature = "schema")]
+        cli::Commands::Schema => unreachable!("stdout-only subcommands handled above"),
     };
 
     init_logging(log_level)?;
@@ -40,9 +43,9 @@ fn main() -> Result<()> {
             run_apply(opts, executor)?;
         }
         cli::Commands::Validate(opts) => run_validate(opts)?,
-        cli::Commands::Completions(_) | cli::Commands::Schema => {
-            unreachable!("stdout-only subcommands handled earlier");
-        }
+        cli::Commands::Completions(_) => unreachable!("stdout-only subcommands handled earlier"),
+        #[cfg(feature = "schema")]
+        cli::Commands::Schema => unreachable!("stdout-only subcommands handled earlier"),
     }
 
     Ok(())

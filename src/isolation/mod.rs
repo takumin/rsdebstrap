@@ -16,8 +16,10 @@
 
 use anyhow::Result;
 use camino::Utf8Path;
+#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "schema")]
 use std::borrow::Cow;
 use std::sync::{Arc, LazyLock};
 
@@ -207,6 +209,7 @@ impl TaskIsolation {
 // visitor's `visit_*` methods must change in lockstep, and those tests fail on any drift.
 // Exists so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
 // Plain `//` (not `///`) so this note does not leak into the schema's `description`.
+#[cfg(feature = "schema")]
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum TaskIsolationWire {
@@ -277,6 +280,7 @@ impl<'de> Deserialize<'de> for TaskIsolation {
     }
 }
 
+#[cfg(feature = "schema")]
 impl JsonSchema for TaskIsolation {
     fn schema_name() -> Cow<'static, str> {
         "TaskIsolation".into()
@@ -472,6 +476,7 @@ mod tests {
     // tests pin the two acceptance sets together: adding or removing a `visit_*`
     // method without the matching wire-variant change (or vice versa) makes a
     // battery value below diverge and fail.
+    #[cfg(feature = "schema")]
     mod wire_parity {
         use super::super::{TaskIsolation, TaskIsolationWire};
         use serde_json::{Value, json};

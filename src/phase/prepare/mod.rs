@@ -13,6 +13,7 @@
 pub mod mount;
 pub mod resolv_conf;
 
+#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -27,7 +28,8 @@ use crate::phase::PhaseItem;
 /// entries) is rejected by `serde_yaml` at parse time, and an unknown key is
 /// rejected by `deny_unknown_fields` — so the "at most one" invariants hold
 /// structurally instead of being validated after parsing.
-#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PrepareConfig {
     /// Mount task declaring filesystem mounts for the rootfs.

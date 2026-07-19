@@ -13,6 +13,7 @@ use std::io::BufReader;
 use std::net::IpAddr;
 
 use camino::{Utf8Path, Utf8PathBuf};
+#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -33,7 +34,8 @@ use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 const PSEUDO_FS_TYPES: &[&str] = &["proc", "sysfs", "devpts", "devtmpfs", "tmpfs"];
 
 /// Mount preset defining a predefined set of mount entries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum MountPreset {
     /// Recommended mount set for typical Debian rootfs operations.
@@ -173,13 +175,14 @@ impl ResolvConfConfig {
 }
 
 /// A single mount entry specifying what to mount into the rootfs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct MountEntry {
     /// Device name or path (e.g., "proc", "sysfs", "/dev").
     pub source: String,
     /// Mount point inside the rootfs (absolute path).
-    #[schemars(with = "crate::schema::Utf8PathSchema")]
+    #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub target: Utf8PathBuf,
     /// Mount options (e.g., "bind", "nosuid"). Joined with "," for `-o`.
     #[serde(default)]
@@ -302,7 +305,8 @@ impl MountEntry {
 ///
 /// This enum represents the different bootstrap tools that can be used.
 /// The `type` field in YAML determines which variant is used.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Bootstrap {
     /// mmdebstrap backend
@@ -363,7 +367,8 @@ impl Bootstrap {
 // the per-variant payload structs: serde consumes the `type` tag when selecting the variant
 // and hands only the remaining keys to the payload, whose `deny_unknown_fields` then
 // rejects typo'd keys (see the `Bootstrap` note in ARCHITECTURE.md).
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum IsolationConfig {
     /// Run commands inside the rootfs via `chroot`.
@@ -374,7 +379,8 @@ pub enum IsolationConfig {
 // A braced (named-field) empty struct, not a unit struct: internally tagged variants need a
 // map-shaped payload to serialize, and only the braced form gives `deny_unknown_fields` a
 // struct visitor that rejects `{type: chroot, <typo>: ...}`.
-#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ChrootIsolation {}
 
@@ -406,12 +412,16 @@ impl IsolationConfig {
 ///
 /// Allows specifying architecture-specific binary paths that apply to all
 /// mitamae tasks unless overridden at the task level.
-#[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Clone, Default)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct MitamaeDefaults {
     /// Architecture-specific binary paths (key: "x86_64", "aarch64", etc.)
     #[serde(default)]
-    #[schemars(with = "std::collections::HashMap<String, crate::schema::Utf8PathSchema>")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "std::collections::HashMap<String, crate::schema::Utf8PathSchema>")
+    )]
     pub binary: HashMap<String, Utf8PathBuf>,
 }
 
@@ -419,7 +429,8 @@ pub struct MitamaeDefaults {
 ///
 /// Groups configuration defaults like isolation backend.
 /// If omitted in YAML, all fields use their respective defaults.
-#[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Clone, Default)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
     /// Isolation backend for running commands in rootfs (default: chroot)
@@ -437,11 +448,12 @@ pub struct Defaults {
 ///
 /// A profile contains the target directory and bootstrap tool configuration
 /// details needed to create a Debian-based system.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
     /// Target directory path for the bootstrap operation
-    #[schemars(with = "crate::schema::Utf8PathSchema")]
+    #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub dir: Utf8PathBuf,
     /// Default settings (isolation backend, etc.)
     #[serde(default)]
