@@ -18,7 +18,6 @@ const KNOWN_ARCHIVE_EXTENSIONS: &[&str] =
 #[strum(serialize_all = "lowercase")]
 pub enum Variant {
     /// The `required` set plus all packages with `Priority:important` (default)
-    #[serde(alias = "")]
     #[default]
     Debootstrap,
     /// Installs nothing by default (not even `Essential:yes` packages)
@@ -49,7 +48,6 @@ pub enum Variant {
 #[strum(serialize_all = "lowercase")]
 pub enum Mode {
     /// Auto detect best mode (default)
-    #[serde(alias = "")]
     #[default]
     Auto,
     /// Sudo mode
@@ -72,7 +70,6 @@ pub enum Mode {
 #[strum(serialize_all = "lowercase")]
 pub enum Format {
     /// Auto detect based on file extension (default)
-    #[serde(alias = "")]
     #[default]
     Auto,
     /// Directory format

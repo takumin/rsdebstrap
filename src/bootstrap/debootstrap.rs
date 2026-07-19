@@ -13,7 +13,6 @@ use strum::Display;
 #[strum(serialize_all = "lowercase")]
 pub enum Variant {
     /// Minimal base system (default)
-    #[serde(alias = "")]
     #[default]
     Minbase,
     /// Build environment with build-essential
