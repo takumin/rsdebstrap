@@ -655,9 +655,11 @@
 		},
 		"PrivilegeConfig": {
 			"additionalProperties": false,
+			"description": "Explicit privilege escalation configuration for a task or bootstrap backend.",
 			"properties": {
 				"method": {
-					"$ref": "#/$defs/PrivilegeMethod"
+					"$ref": "#/$defs/PrivilegeMethod",
+					"description": "The privilege escalation method to use."
 				}
 			},
 			"required": [
