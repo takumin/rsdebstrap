@@ -1,1 +1,8 @@
+# Keep in sync with .editorconfig ([*] / [*.rs]): CI runs editorconfig-checker
+# over Rust sources, so rustfmt output must satisfy those rules.
+hard_tabs = false      # indent_style = space
+max_width = 100        # max_line_length = 100
+newline_style = "Unix" # end_of_line = lf
+tab_spaces = 4         # indent_size = 4
+
 fn_call_width = 80
