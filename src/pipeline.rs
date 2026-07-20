@@ -19,7 +19,8 @@ use crate::executor::CommandExecutor;
 use crate::isolation::{DirectProvider, IsolationProvider};
 use crate::phase::{AssembleConfig, PhaseItem, PrepareConfig, ProvisionTask};
 
-// Phase name constants to avoid duplication between validate() and run_phases()
+// Phase name constants to avoid duplication between validate(),
+// run_prepare_and_provision(), and run_assemble()
 const PHASE_PREPARE: &str = "prepare";
 const PHASE_PROVISION: &str = "provision";
 const PHASE_ASSEMBLE: &str = "assemble";
