@@ -230,8 +230,16 @@ impl RootfsResolvConf {
             .with_privilege(self.privilege);
         self.executor.execute_checked(&rm_spec)?;
 
-        // Restore backup if it exists
-        if backup_path.exists() {
+        // Restore the backup if present. try_exists() surfaces stat errors
+        // (e.g. permissions) so the teardown fails loudly instead of silently
+        // skipping the restore and stranding the backup.
+        let have_backup = backup_path.try_exists().map_err(|e| {
+            RsdebstrapError::io(
+                format!("failed to check for resolv.conf backup {}", backup_path),
+                e,
+            )
+        })?;
+        if have_backup {
             let spec =
                 CommandSpec::new("mv", vec![backup_path.to_string(), resolv_path.to_string()])
                     .with_privilege(self.privilege);
