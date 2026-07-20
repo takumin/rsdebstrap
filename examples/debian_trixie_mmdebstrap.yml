@@ -110,6 +110,15 @@ provision:
 #   External recipe alternative:
 #     script: ./recipes/setup.rb
 
+# Cleanup step
+- type: shell
+  content: |-
+    #!/bin/sh
+    set -e
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    echo "Cleanup complete"
+
 # Assemble phase runs after provisioning. Named-field form with a single
 # optional `resolv_conf` key that writes a permanent /etc/resolv.conf into
 # the final rootfs (a generated file or a symlink):
@@ -119,12 +128,3 @@ provision:
 #     search: [example.com]
 #     # OR, instead of name_servers/search, restore the systemd stub symlink:
 #     # link: ../run/systemd/resolve/stub-resolv.conf
-
-# Cleanup step (kept in the provision phase)
-- type: shell
-  content: |-
-    #!/bin/sh
-    set -e
-    apt-get clean
-    rm -rf /var/lib/apt/lists/*
-    echo "Cleanup complete"
