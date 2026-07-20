@@ -7,5 +7,16 @@
 		"github>aquaproj/aqua-renovate-config:file#2.13.0(.aqua/pkgs/.*\\.ya?ml)"
 	],
 	"timezone": "Asia/Tokyo",
-	"automerge": true
+	"automerge": true,
+	"customManagers": [
+		{
+			"customType": "regex",
+			"description": "Update the pinned Rust toolchain in rust-toolchain.toml",
+			"managerFilePatterns": ["/^rust-toolchain\\.toml$/"],
+			"matchStrings": ["channel\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""],
+			"depNameTemplate": "rust",
+			"packageNameTemplate": "rust-lang/rust",
+			"datasourceTemplate": "github-releases"
+		}
+	]
 }
