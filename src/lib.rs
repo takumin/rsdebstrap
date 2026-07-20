@@ -273,15 +273,29 @@ mod tests {
     use std::process::ExitStatus;
     use std::sync::Mutex;
 
+    /// How a configured `RecordingExecutor` failure matches a command's args.
+    enum ArgMatch {
+        /// Any invocation of the command fails.
+        Any,
+        /// Fails if any argument contains the fragment.
+        Contains(String),
+        /// Fails only if the *first* argument contains the fragment. Targets one
+        /// of several same-named commands whose args differ by position — e.g.
+        /// the teardown restore `mv <backup> <resolv>` (backup first) vs the
+        /// setup backup `mv <resolv> <backup>` (backup second).
+        FirstArgContains(String),
+    }
+
     /// Records commands and really executes them so tests can assert both the
     /// command order and the actual filesystem effects on a temp rootfs.
     /// `fail_on_command` short-circuits a matching command with exit 1 without
-    /// executing it; `fail_on_command_with_arg` additionally requires an
-    /// argument to contain the given fragment, so a single occurrence of a
-    /// repeated command can be targeted.
+    /// executing it; `fail_on_command_with_arg` / `fail_on_command_with_first_arg`
+    /// additionally require an argument to contain the given fragment (anywhere,
+    /// or in first position), so one occurrence of a repeated command can be
+    /// targeted.
     struct RecordingExecutor {
         commands: Mutex<Vec<(String, Vec<String>)>>,
-        fail_on: Mutex<Option<(String, Option<String>)>>,
+        fail_on: Mutex<Option<(String, ArgMatch)>>,
     }
 
     impl RecordingExecutor {
@@ -293,12 +307,17 @@ mod tests {
         }
 
         fn fail_on_command(&self, command: &str) {
-            *self.fail_on.lock().unwrap() = Some((command.to_string(), None));
+            *self.fail_on.lock().unwrap() = Some((command.to_string(), ArgMatch::Any));
         }
 
         fn fail_on_command_with_arg(&self, command: &str, arg_fragment: &str) {
             *self.fail_on.lock().unwrap() =
-                Some((command.to_string(), Some(arg_fragment.to_string())));
+                Some((command.to_string(), ArgMatch::Contains(arg_fragment.to_string())));
+        }
+
+        fn fail_on_command_with_first_arg(&self, command: &str, arg_fragment: &str) {
+            *self.fail_on.lock().unwrap() =
+                Some((command.to_string(), ArgMatch::FirstArgContains(arg_fragment.to_string())));
         }
 
         fn command_names(&self) -> Vec<String> {
@@ -323,11 +342,17 @@ mod tests {
                     .lock()
                     .unwrap()
                     .as_ref()
-                    .is_some_and(|(command, arg)| {
+                    .is_some_and(|(command, arg_match)| {
                         command == &spec.command
-                            && arg.as_deref().is_none_or(|fragment| {
-                                spec.args.iter().any(|a| a.contains(fragment))
-                            })
+                            && match arg_match {
+                                ArgMatch::Any => true,
+                                ArgMatch::Contains(fragment) => {
+                                    spec.args.iter().any(|a| a.contains(fragment))
+                                }
+                                ArgMatch::FirstArgContains(fragment) => {
+                                    spec.args.first().is_some_and(|a| a.contains(fragment))
+                                }
+                            }
                     });
             if should_fail {
                 return Ok(ExecutionResult {
@@ -344,15 +369,32 @@ mod tests {
         }
     }
 
-    /// Minimal profile: directory bootstrap output, no mounts, no privilege
-    /// defaults (commands run unprivileged so the executor can really run
-    /// them). `provision` adds one shell task with the given inline content,
-    /// running directly on the host (`isolation: false`).
+    const LINK_ASSEMBLE: &str =
+        "assemble:\n  resolv_conf:\n    link: ../run/systemd/resolve/stub-resolv.conf\n";
+    const GENERATE_ASSEMBLE: &str = "assemble:\n  resolv_conf:\n    name_servers: [198.51.100.1]\n";
+
+    /// Minimal profile with a link-mode assemble task when `assemble` is set;
+    /// delegates to [`profile_yaml_with_assemble`].
     fn profile_yaml(
         dir: &Utf8Path,
         prepare: bool,
         provision: Option<&str>,
         assemble: bool,
+    ) -> String {
+        profile_yaml_with_assemble(dir, prepare, provision, assemble.then_some(LINK_ASSEMBLE))
+    }
+
+    /// Minimal profile: directory bootstrap output, no mounts, no privilege
+    /// defaults (commands run unprivileged so the executor can really run
+    /// them). `provision` adds one shell task with the given inline content,
+    /// running directly on the host (`isolation: false`). `assemble`, if given,
+    /// is the raw YAML for the assemble section (e.g. [`LINK_ASSEMBLE`] or
+    /// [`GENERATE_ASSEMBLE`]).
+    fn profile_yaml_with_assemble(
+        dir: &Utf8Path,
+        prepare: bool,
+        provision: Option<&str>,
+        assemble: Option<&str>,
     ) -> String {
         let mut yaml = format!(
             "dir: {dir}\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: rootfs\n"
@@ -367,10 +409,8 @@ mod tests {
                 "provision:\n  - type: shell\n    content: \"{content}\"\n    isolation: false\n"
             ));
         }
-        if assemble {
-            yaml.push_str(
-                "assemble:\n  resolv_conf:\n    link: ../run/systemd/resolve/stub-resolv.conf\n",
-            );
+        if let Some(assemble_yaml) = assemble {
+            yaml.push_str(assemble_yaml);
         }
         yaml
     }
@@ -622,5 +662,97 @@ mod tests {
                 .file_type()
                 .is_symlink()
         );
+    }
+
+    #[test]
+    fn restore_mv_failure_gates_assemble_and_strands_backup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        let profile = load_profile_from(&profile_yaml(dir, true, None, true));
+        let executor = RecordingExecutor::new();
+        // Fail only the teardown restore `mv <backup> <resolv>` (backup is its
+        // first arg); the setup backup `mv <resolv> <backup>` has the backup
+        // second and runs for real.
+        executor.fail_on_command_with_first_arg("mv", "rsdebstrap-orig");
+
+        let err = run_pipeline_phase(&profile, executor.clone(), false).unwrap_err();
+
+        assert!(
+            format!("{:#}", err).contains("failed to restore resolv.conf after provisioning"),
+            "unexpected error: {err:#}"
+        );
+        // setup (mv, cp, chmod) → teardown rm ok, restore mv fails → assemble
+        // gated off (no ln) → the guard's Drop backstop retries the teardown
+        // (rm, mv), which fails again.
+        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv", "rm", "mv"]);
+        // The failure the gate exists to catch: the temporary resolv.conf was
+        // already removed and the restore never landed, so the final path is
+        // empty and the original is stranded in the backup.
+        assert!(fs::symlink_metadata(rootfs.join("etc/resolv.conf")).is_err());
+        let backup = rootfs.join("etc/resolv.conf.rsdebstrap-orig");
+        assert!(backup.exists());
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "# original\n");
+    }
+
+    #[test]
+    fn both_configured_generate_assemble_output_survives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        let profile = load_profile_from(&profile_yaml_with_assemble(
+            dir,
+            true,
+            None,
+            Some(GENERATE_ASSEMBLE),
+        ));
+        let executor = RecordingExecutor::new();
+
+        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+
+        // setup (mv, cp, chmod) → teardown restore (rm, mv) → assemble generate
+        // (rm, cp, chmod, mv): the generated file replaces the just-restored
+        // original, and the generate path clears any stale staging entry first.
+        assert_eq!(
+            executor.command_names(),
+            ["mv", "cp", "chmod", "rm", "mv", "rm", "cp", "chmod", "mv"]
+        );
+        let resolv = rootfs.join("etc/resolv.conf");
+        assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
+        assert!(
+            fs::read_to_string(&resolv)
+                .unwrap()
+                .contains("nameserver 198.51.100.1")
+        );
+        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
+        assert!(fs::symlink_metadata(rootfs.join("etc/resolv.conf.rsdebstrap-tmp")).is_err());
+    }
+
+    #[test]
+    fn generate_assemble_only_writes_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        let profile = load_profile_from(&profile_yaml_with_assemble(
+            dir,
+            false,
+            None,
+            Some(GENERATE_ASSEMBLE),
+        ));
+        let executor = RecordingExecutor::new();
+
+        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+
+        // No prepare guard: only assemble's generate sequence — clear the
+        // staging entry, copy, chmod, promote.
+        assert_eq!(executor.command_names(), ["rm", "cp", "chmod", "mv"]);
+        let resolv = rootfs.join("etc/resolv.conf");
+        assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
+        assert!(
+            fs::read_to_string(&resolv)
+                .unwrap()
+                .contains("nameserver 198.51.100.1")
+        );
+        assert!(fs::symlink_metadata(rootfs.join("etc/resolv.conf.rsdebstrap-tmp")).is_err());
     }
 }
