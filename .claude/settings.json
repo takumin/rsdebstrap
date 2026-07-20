@@ -34,5 +34,17 @@
 			"Bash(gh status:*)"
 		],
 		"deny": []
+	},
+	"hooks": {
+		"SessionStart": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "$CLAUDE_PROJECT_DIR/scripts/bootstrap.bash"
+					}
+				]
+			}
+		]
 	}
 }
