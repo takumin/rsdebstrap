@@ -64,17 +64,25 @@ jobs:
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
         path: ~/.cargo/registry/
+        restore-keys: deps-
     - name: Restore setup build aqua cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         key: setup-build-aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
         path: ~/.local/share/aquaproj-aqua/
+        restore-keys: setup-build-aqua-
+    - name: Restore rustup cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        path: ~/.rustup/toolchains/
     - name: Restore build cache
       id: build-cache-restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        key: build-${{ matrix.profile }}-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+        key: build-${{ matrix.profile }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
         path: target/
+        restore-keys: build-${{ matrix.profile }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml') }}-
     - name: Setup build
       run: |-
         task setup:build
@@ -85,7 +93,7 @@ jobs:
       run: |-
         task build:build
       env:
-        CARGO_INCREMENTAL: ${{ !startsWith(github.ref, 'refs/tag/') && '1' || '0' }}
+        CARGO_INCREMENTAL: '0'
         BUILD_PROFILE: ${{ matrix.profile }}
         BUILD_TARGET: ${{ matrix.target }}
     - name: Generate sha256sum

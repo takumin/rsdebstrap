@@ -27,18 +27,27 @@ jobs:
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
         path: ~/.cargo/registry/
+        restore-keys: deps-
+    - name: Restore rustup cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        path: ~/.rustup/toolchains/
     - name: Restore test cache
       id: test-cache-restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        key: test-${{ hashFiles('**/Cargo.lock') }}
+        key: test-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
         path: target/
+        restore-keys: test-${{ hashFiles('rust-toolchain.toml') }}-
     - name: Setup test
       run: |-
         task setup:test
     - name: Test
       run: |-
         task test
+      env:
+        CARGO_INCREMENTAL: '0'
     - name: Save test cache
       if: github.ref == 'refs/heads/main' && steps.test-cache-restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

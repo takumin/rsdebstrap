@@ -62,6 +62,27 @@ jobs:
       with:
         aqua_version: v2.62.0
         aqua_opts: -t reviewdog,${{ matrix.target }}
+    - name: Restore cargo deps cache
+      if: matrix.name == 'clippy'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: deps-${{ hashFiles('**/Cargo.lock') }}
+        path: ~/.cargo/registry/
+        restore-keys: deps-
+    - name: Restore rustup cache
+      if: matrix.name == 'clippy'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        path: ~/.rustup/toolchains/
+    - name: Restore clippy cache
+      if: matrix.name == 'clippy'
+      id: clippy-cache-restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: clippy-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+        path: target/
+        restore-keys: clippy-${{ hashFiles('rust-toolchain.toml') }}-
     - name: Setup reporter
       id: reporter
       run: |-
@@ -74,7 +95,14 @@ jobs:
     - name: Running reviewdog
       run: task "${REVIEWDOG_TARGET}"
       env:
+        CARGO_INCREMENTAL: '0'
         REVIEWDOG_TARGET: ${{ matrix.target }}
         REVIEWDOG_REPORTER: ${{ steps.reporter.outputs.type }}
         REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         REVIEWDOG_ARGS: -log-level 'debug' -tee
+    - name: Save clippy cache
+      if: github.ref == 'refs/heads/main' && matrix.name == 'clippy' && steps.clippy-cache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.clippy-cache-restore.outputs.cache-primary-key }}
+        path: target/
