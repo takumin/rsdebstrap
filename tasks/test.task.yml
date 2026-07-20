@@ -31,5 +31,9 @@ tasks:
     - .task/.done_{{.TASK}}
     cmds:
     - cargo test --frozen --workspace
+    # The schema-less build is a separate feature graph: a missed `cfg_attr` gate on a
+    # schema derive only surfaces here, so CI must compile it too (AGENTS.md lists the
+    # same command as part of the routine set).
+    - cargo check --frozen --workspace --all-targets --no-default-features
     - cmd: touch .task/.done_{{.TASK}}
       silent: true
