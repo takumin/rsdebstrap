@@ -12,6 +12,9 @@
 //!    (a false rejection would make editor tooling flag valid configs). Semantic-only checks
 //!    (e.g. mitamae binary resolution, mount/privilege cross-checks) live in `Profile::validate`
 //!    and are intentionally out of scope here — JSON Schema cannot express them.
+//! 4. The few intentional divergences (schema accepts, deserializer rejects) are pinned with
+//!    per-side expectations in `schema_divergences_are_pinned`, so the divergence set cannot
+//!    grow silently.
 
 // The whole crate is compiled out without the default-on `schema` feature: it exercises the
 // generated schema, which does not exist in a schema-less build. Gated in-file rather than
@@ -31,10 +34,12 @@ fn validator() -> Validator {
 }
 
 /// True if `yaml` satisfies the generated JSON Schema.
+///
+/// A document that cannot be converted into a JSON value at all (custom tags,
+/// non-string keys, ...) counts as schema-rejected: no JSON-Schema-based tooling can
+/// accept what it cannot even represent.
 fn schema_accepts(v: &Validator, yaml: &str) -> bool {
-    let instance: Value =
-        serde_yaml::from_str(yaml).expect("test YAML must deserialize into a JSON value");
-    v.is_valid(&instance)
+    serde_yaml::from_str::<Value>(yaml).is_ok_and(|instance| v.is_valid(&instance))
 }
 
 /// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
@@ -100,7 +105,7 @@ fn committed_schema_is_up_to_date() {
     // The committed `schema/rsdebstrap.schema.json` is what editors/CI consume. It must
     // byte-match what `rsdebstrap schema` prints, so drift cannot land in the repo unnoticed.
     // `rsdebstrap schema` renders through `profile_json_schema_pretty()` (tab-indented, matching
-    // `.editorconfig`) followed by a trailing newline (via `println!`).
+    // `.editorconfig`) followed by a single trailing newline (see `run_schema`).
     let committed = include_str!("../schema/rsdebstrap.schema.json");
     let generated = format!("{}\n", rsdebstrap::profile_json_schema_pretty());
     assert_eq!(
@@ -287,6 +292,139 @@ fn schema_matches_structural_deserializer() {
         ("mmdebstrap mode empty-string", mode_empty, false),
         ("mmdebstrap format empty-string", format_empty, false),
         ("debootstrap variant empty-string", debootstrap_variant_empty, false),
+        // Null / empty section values mean "use the default" (an empty YAML value is null in
+        // the JSON data model). Nullable schema and `de::null_to_default` must stay in sync.
+        ("null provision section", format!("{BASE}provision: null\n"), true),
+        ("empty provision section", format!("{BASE}provision:\n"), true),
+        ("empty prepare section", format!("{BASE}prepare:\n"), true),
+        ("null assemble section", format!("{BASE}assemble: null\n"), true),
+        (
+            "null defaults section",
+            "dir: /o\nbootstrap: {type: mmdebstrap, suite: t, target: r}\ndefaults: null\n"
+                .to_string(),
+            true,
+        ),
+        (
+            "null mounts list",
+            format!("{BASE}prepare: {{mount: {{preset: recommends, mounts: null}}}}\n"),
+            true,
+        ),
+        (
+            "null mount options",
+            format!(
+                "{BASE}{}",
+                "prepare: {mount: {mounts: [{source: /dev, target: /dev, options: null}]}}\n"
+            ),
+            true,
+        ),
+        (
+            "null search list",
+            format!("{BASE}prepare: {{resolv_conf: {{copy: true, search: null}}}}\n"),
+            true,
+        ),
+        (
+            "null mitamae binary map",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: {binary: null}}\n",
+            )
+            .to_string(),
+            true,
+        ),
+        (
+            "null mitamae defaults",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: null}\n",
+            )
+            .to_string(),
+            true,
+        ),
+        (
+            "empty mitamae defaults",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults:\n",
+                "  mitamae:\n",
+            )
+            .to_string(),
+            true,
+        ),
+        // Map *keys* are outside the strict-scalar rule on purpose: serde_yaml stringifies
+        // scalar keys ({64: /x} -> "64") and the YAML->JSON conversion editors rely on does
+        // the same, so both sides agree. Making keys strict would only create a new
+        // parser/schema divergence. This row pins the agreement.
+        (
+            "numeric mitamae binary key",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: {binary: {64: /x}}}\n",
+            )
+            .to_string(),
+            true,
+        ),
+        // Non-string scalars in string-typed fields: rejected by both sides. serde_yaml's raw
+        // scalar-to-string coercion used to accept these on the deserializer only; the `de`
+        // helpers now surface the resolved scalar type so the parser matches the schema.
+        (
+            "null dir",
+            "bootstrap: {type: mmdebstrap, suite: t, target: r}\ndir: null\n".to_string(),
+            false,
+        ),
+        (
+            "integer dir",
+            "bootstrap: {type: mmdebstrap, suite: t, target: r}\ndir: 42\n".to_string(),
+            false,
+        ),
+        (
+            "integer mount source",
+            format!("{BASE}prepare: {{mount: {{mounts: [{{source: 5, target: /dev}}]}}}}\n"),
+            false,
+        ),
+        (
+            "integer mount target",
+            format!("{BASE}prepare: {{mount: {{mounts: [{{source: /dev, target: 42}}]}}}}\n"),
+            false,
+        ),
+        (
+            "integer mount option",
+            format!(
+                "{BASE}{}",
+                "prepare: {mount: {mounts: [{source: /dev, target: /dev, options: [bind, 0]}]}}\n"
+            ),
+            false,
+        ),
+        (
+            "integer search entry",
+            format!("{BASE}prepare: {{resolv_conf: {{search: [example.com, 42]}}}}\n"),
+            false,
+        ),
+        (
+            "integer assemble link",
+            format!("{BASE}assemble: {{resolv_conf: {{link: 42}}}}\n"),
+            false,
+        ),
+        (
+            "integer mitamae binary path",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: {binary: {x86_64: 42}}}\n",
+            )
+            .to_string(),
+            false,
+        ),
+        // A custom-tagged scalar cannot be represented as a JSON value (schema_accepts counts
+        // the conversion failure as a rejection); the strict scalar path rejects it too.
+        (
+            "custom-tagged dir",
+            "bootstrap: {type: mmdebstrap, suite: t, target: r}\ndir: !foo /out\n".to_string(),
+            false,
+        ),
     ];
 
     for (label, yaml, expected) in cases {
@@ -300,5 +438,61 @@ fn schema_matches_structural_deserializer() {
         );
         assert_eq!(s, *expected, "schema verdict mismatch for `{label}`\n{yaml}");
         assert_eq!(d, *expected, "deserializer verdict mismatch for `{label}`\n{yaml}");
+    }
+}
+
+#[test]
+fn schema_divergences_are_pinned() {
+    let v = validator();
+
+    // Documented, intentional divergences between the schema and the deserializer. The
+    // safety invariant still holds for every row — divergence is only ever allowed in the
+    // schema-accepts-more direction (the schema stays annotational where JSON Schema cannot
+    // express the check, or where the YAML layer rejects before the JSON model exists).
+    // Pinning both verdicts keeps the set of divergences from growing silently.
+    let cases: &[(&str, String, bool, bool)] = &[
+        // `format: ipv4/ipv6` is annotational (non-asserting) by design — see IpAddrSchema:
+        // a hard pattern that is slightly wrong would false-reject valid configs. The
+        // deserializer rejects non-IP strings at parse time.
+        (
+            "non-IP name_servers entry (prepare)",
+            format!("{BASE}prepare: {{resolv_conf: {{name_servers: [garbage]}}}}\n"),
+            false,
+            true,
+        ),
+        (
+            "non-IP name_servers entry (assemble)",
+            format!("{BASE}assemble: {{resolv_conf: {{name_servers: [garbage]}}}}\n"),
+            false,
+            true,
+        ),
+        // Duplicate mapping keys are rejected by serde's derived visitors, but the YAML->JSON
+        // conversion resolves them last-wins before the schema ever sees the document, so
+        // JSON-Schema-based editor tooling cannot flag them.
+        (
+            "duplicate top-level key",
+            "dir: /o\ndir: /o2\nbootstrap: {type: mmdebstrap, suite: t, target: r}\n".to_string(),
+            false,
+            true,
+        ),
+        (
+            "duplicate singleton mount key",
+            format!(
+                "{BASE}prepare:\n  mount: {{preset: recommends}}\n  mount: {{preset: recommends}}\n"
+            ),
+            false,
+            true,
+        ),
+    ];
+
+    for (label, yaml, deser_expected, schema_expected) in cases {
+        let d = deser_accepts(yaml);
+        let s = schema_accepts(&v, yaml);
+        assert!(
+            !d || s,
+            "SCHEMA FALSE-REJECT for `{label}`: deserializer accepts but schema rejects\n{yaml}"
+        );
+        assert_eq!(d, *deser_expected, "deserializer verdict mismatch for `{label}`\n{yaml}");
+        assert_eq!(s, *schema_expected, "schema verdict mismatch for `{label}`\n{yaml}");
     }
 }

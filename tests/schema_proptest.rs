@@ -9,11 +9,14 @@
 //! editor/CI tooling would flag a config that `apply`/`validate` happily parse — the exact
 //! failure mode the schema exists to avoid.
 //!
-//! Both sides operate on the same `serde_json::Value`: acceptance is `serde_json::from_value::
-//! <Profile>` (runs `Deserialize`, including the custom `Privilege`/`TaskIsolation`/`ShellTask`/
-//! `MitamaeTask` dispatch, but not the semantic `Profile::validate`), and the schema verdict
-//! comes from the compiled validator. This is precisely the layer where schema generation could
-//! diverge from serde.
+//! Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
+//! `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
+//! `Privilege`/`TaskIsolation`/`ShellTask`/`MitamaeTask` dispatch, but not the semantic
+//! `Profile::validate`), and the schema verdict comes from the compiled validator. Then through
+//! a YAML round-trip (`serde_yaml::to_string` -> `from_str`), because production parses YAML
+//! text and serde_yaml's acceptance surface is not identical to the JSON value model — the
+//! round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
+//! through `de::null_to_default`).
 
 // The whole crate is compiled out without the default-on `schema` feature: it exercises the
 // generated schema, which does not exist in a schema-less build. Gated in-file rather than
@@ -43,6 +46,18 @@ fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
         !deser_ok || schema_ok,
         "SCHEMA FALSE-REJECT: deserializer accepts but schema rejects\n{}",
         serde_json::to_string_pretty(doc).unwrap()
+    );
+
+    // Production parses YAML *text*, whose acceptance surface is wider than the JSON value
+    // model (empty scalars, serde_yaml scalar handling). Re-run the same document through a
+    // YAML round-trip so a serde_yaml-only acceptance difference violates the property too.
+    let yaml = serde_yaml::to_string(doc).expect("generated document must serialize to YAML");
+    let deser_ok_yaml = serde_yaml::from_str::<Profile>(&yaml).is_ok();
+    let schema_ok_yaml =
+        serde_yaml::from_str::<Value>(&yaml).is_ok_and(|instance| VALIDATOR.is_valid(&instance));
+    prop_assert!(
+        !deser_ok_yaml || schema_ok_yaml,
+        "SCHEMA FALSE-REJECT (YAML round-trip): deserializer accepts but schema rejects\n{yaml}"
     );
     Ok(())
 }

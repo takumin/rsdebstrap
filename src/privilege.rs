@@ -153,12 +153,14 @@ impl Privilege {
 // Single source of truth for the map form's fields, shared by both deserialization
 // (via `Privilege`'s strict dispatch) and schema generation (via `PrivilegeWire`).
 // `deny_unknown_fields` keeps typo'd keys rejected, and schemars mirrors that as
-// `additionalProperties: false`. Plain `//` (not `///`) so the maintainer note does not
-// leak into the generated schema's `description`.
+// `additionalProperties: false`. The `///` docs below are user-facing on purpose: they
+// become the `$defs/PrivilegeConfig` descriptions (which editors show), keeping it on
+// par with `PrivilegeDefaults`; maintainer notes stay in `//` comments.
 //
 // The schemars rename fixes the schema-facing `$defs` name (`PrivilegeConfig`, symmetric
 // with `IsolationConfig` on the isolation branch) so this private type's Rust name is not
 // part of the published schema contract and stays free to change.
+/// Explicit privilege escalation configuration for a task or bootstrap backend.
 #[derive(Debug, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -167,6 +169,7 @@ impl Privilege {
 )]
 #[serde(deny_unknown_fields)]
 struct PrivilegeMethodMap {
+    /// The privilege escalation method to use.
     method: PrivilegeMethod,
 }
 

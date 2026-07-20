@@ -180,12 +180,15 @@ impl ResolvConfConfig {
 #[serde(deny_unknown_fields)]
 pub struct MountEntry {
     /// Device name or path (e.g., "proc", "sysfs", "/dev").
+    #[serde(deserialize_with = "crate::de::string")]
     pub source: String,
     /// Mount point inside the rootfs (absolute path).
+    #[serde(deserialize_with = "crate::de::path")]
     #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub target: Utf8PathBuf,
     /// Mount options (e.g., "bind", "nosuid"). Joined with "," for `-o`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::string_list")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<String>>"))]
     pub options: Vec<String>,
 }
 
@@ -417,10 +420,12 @@ impl IsolationConfig {
 #[serde(deny_unknown_fields)]
 pub struct MitamaeDefaults {
     /// Architecture-specific binary paths (key: "x86_64", "aarch64", etc.)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::path_map")]
     #[cfg_attr(
         feature = "schema",
-        schemars(with = "std::collections::HashMap<String, crate::schema::Utf8PathSchema>")
+        schemars(
+            with = "Option<std::collections::HashMap<String, crate::schema::Utf8PathSchema>>"
+        )
     )]
     pub binary: HashMap<String, Utf8PathBuf>,
 }
@@ -437,7 +442,8 @@ pub struct Defaults {
     #[serde(default)]
     pub isolation: IsolationConfig,
     /// Default settings for mitamae tasks
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<MitamaeDefaults>"))]
     pub mitamae: MitamaeDefaults,
     /// Default privilege escalation settings
     #[serde(default)]
@@ -453,21 +459,26 @@ pub struct Defaults {
 #[serde(deny_unknown_fields)]
 pub struct Profile {
     /// Target directory path for the bootstrap operation
+    #[serde(deserialize_with = "crate::de::path")]
     #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub dir: Utf8PathBuf,
     /// Default settings (isolation backend, etc.)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Defaults>"))]
     pub defaults: Defaults,
     /// Bootstrap tool configuration
     pub bootstrap: Bootstrap,
     /// Prepare tasks to run before provisioning (optional)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<PrepareConfig>"))]
     pub prepare: PrepareConfig,
     /// Main provisioning tasks (optional)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<ProvisionTask>>"))]
     pub provision: Vec<ProvisionTask>,
     /// Assemble tasks to run after provisioning (optional)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<AssembleConfig>"))]
     pub assemble: AssembleConfig,
 }
 
@@ -723,6 +734,12 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 pub fn load_profile(path: &Utf8Path) -> Result<Profile, RsdebstrapError> {
     let (reader, canonical_path) = read_profile_file(path)?;
     let mut profile = parse_profile_yaml(reader, &canonical_path)?;
+
+    // Checked before path resolution: joining an empty `dir` onto the profile's
+    // directory would silently target that directory itself.
+    if profile.dir.as_str().is_empty() {
+        return Err(RsdebstrapError::Validation("dir must not be empty".to_string()));
+    }
 
     let profile_dir = canonical_path.parent().ok_or_else(|| {
         RsdebstrapError::Config(format!(
