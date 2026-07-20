@@ -188,3 +188,11 @@ assemble:                   # Optional finalization steps (named-field struct)
   rootfs under the `assemble.resolv_conf` key (also a singleton `Option`)
 - `link` and `name_servers`/`search` are mutually exclusive in assemble `resolv_conf`
 - Prepare and assemble can both have `resolv_conf` tasks — different roles: temporary DNS vs permanent config
+- The temporary prepare `resolv_conf` is removed (and the original restored) after `provision`
+  and before `assemble`, so assemble `resolv_conf` output persists in the final rootfs; the
+  assemble phase only runs if that restore succeeds
+- Assemble `resolv_conf` replaces `/etc/resolv.conf` atomically: the new file/symlink is
+  staged at `/etc/resolv.conf.rsdebstrap-tmp` and renamed over the final path with a plain
+  same-directory `mv` (busybox/musl-safe; no GNU-only `-T`), so a failed assemble leaves the
+  previous resolv.conf intact. A stale staging entry may remain after a failed build; the next
+  run clears it first (both modes) before staging, so it is always overwritten

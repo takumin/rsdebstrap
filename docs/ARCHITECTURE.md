@@ -66,8 +66,18 @@ Key invariants:
   errors. Failure-injection for teardown paths is currently impractical (see
   [Known test gaps](#known-test-gaps)).
 - **Prepare tasks are declarative.** `MountTask` and (prepare) `ResolvConfTask` implement
-  `PhaseItem` with a no-op `execute()`; their real effect is bracketed around the *whole*
-  phase by the RAII managers below, set up in `run_pipeline_phase()` between mount and execution.
+  `PhaseItem` with a no-op `execute()`; their real effect comes from the RAII managers below,
+  set up in `run_pipeline_phase()`. The brackets differ: mounts wrap all three phases, but the
+  temporary resolv.conf wraps only prepare + provision — it is torn down (the original
+  restored) before assemble, so an assemble `resolv_conf` task's permanent file/symlink
+  survives. Assemble is additionally gated on that restore succeeding: after a failed teardown
+  the guard's `Drop` backstop retries the restore at scope end, which would otherwise clobber
+  assemble's output. The assemble task itself replaces `/etc/resolv.conf` atomically — it
+  stages the new file/symlink at `/etc/resolv.conf.rsdebstrap-tmp` (clearing any stale staging
+  entry first, so `cp`/`ln` cannot follow a leftover symlink) and promotes it with a plain
+  same-directory `mv` rename (no GNU-only `-T`, so it stays portable to busybox/musl hosts) — so
+  a mid-assemble failure leaves the just-restored original in place even though the guard is
+  already disarmed and could no longer recover it.
 - **Assemble operates on the final rootfs directly.** `AssembleResolvConfTask::resolved_isolation_config()`
   returns `None`, so it runs via `DirectProvider` on the rootfs filesystem rather than
   inside an isolation context.
@@ -114,7 +124,7 @@ patterns run throughout `src/isolation/`:
 - Privilege is threaded through execution as `Option<PrivilegeMethod>` — both
   `IsolationContext::execute()` and the `CommandExecutor` obtained via `ctx.executor()`
   take it, so escalation is uniform whether a task runs a script or issues raw
-  `cp`/`chmod`/`ln` commands (as assemble `resolv_conf` does).
+  `cp`/`chmod`/`ln`/`mv` commands (as assemble `resolv_conf` does).
 - `CommandSpec` (`src/executor/mod.rs`) is the command value object (command/args/cwd/
   env/privilege) with a builder API. `RealCommandExecutor` supports dry-run; tests use
   mock executors to assert on constructed commands without running anything.
@@ -256,7 +266,14 @@ Mock-executor pattern (`tests/helpers/mod.rs`):
   `ChrootProvider` and `DirectProvider` have infallible teardown — these paths are
   unreachable with current backends. Add tests when a backend with fallible teardown
   (bwrap, systemd-nspawn) lands.
-- **`run_pipeline_phase()` 4-way error matrix** (`Ok/Ok`, `Err/Ok`, `Ok/Err`, `Err/Err`)
-  is not tested as an integration test — the function is private and needs real mounts.
-  `RootfsMounts` unit tests cover the mount/unmount error paths independently via
-  `MockMountExecutor`.
+- **`run_pipeline_phase()` sequencing and gating** are covered by in-crate tests in
+  `src/lib.rs`, using a recording executor that really runs `mv`/`cp`/`rm`/`ln` and a
+  shell provision task against a temp rootfs: the temporary resolv.conf is restored
+  after provision (a real provision command sits between the setup and restore
+  sequences) and before assemble; assemble is gated on both the prepare/provision
+  result and the restore result (including a real restore-`mv` failure, which strands
+  the backup and skips assemble); an assemble failure propagates while the
+  atomically-staged replace leaves the restored original in place; and both link- and
+  generate-mode assemble tasks are exercised end-to-end. The remaining gap is the
+  interplay with real mount/unmount failures — `RootfsMounts` unit tests cover those
+  error paths independently via `MockMountExecutor`.

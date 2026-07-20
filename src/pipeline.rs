@@ -19,7 +19,8 @@ use crate::executor::CommandExecutor;
 use crate::isolation::{DirectProvider, IsolationProvider};
 use crate::phase::{AssembleConfig, PhaseItem, PrepareConfig, ProvisionTask};
 
-// Phase name constants to avoid duplication between validate() and run_phases()
+// Phase name constants to avoid duplication between validate(),
+// run_prepare_and_provision(), and run_assemble()
 const PHASE_PREPARE: &str = "prepare";
 const PHASE_PROVISION: &str = "provision";
 const PHASE_ASSEMBLE: &str = "assemble";
@@ -71,13 +72,32 @@ impl<'a> Pipeline<'a> {
 
     /// Executes all phases of the pipeline with per-task isolation contexts.
     ///
-    /// If the pipeline has no tasks, returns immediately. Otherwise, runs
-    /// all three phases in order, creating isolation contexts for each task
-    /// based on its resolved isolation setting.
+    /// If the pipeline has no tasks, returns immediately. Equivalent to
+    /// [`Self::run_prepare_and_provision`] followed by [`Self::run_assemble`]
+    /// with nothing in between; callers that must act between provisioning
+    /// and assembly call the two stages themselves.
     pub fn run(
         &self,
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
+        dry_run: bool,
+    ) -> Result<()> {
+        self.run_prepare_and_provision(rootfs, &executor, dry_run)?;
+        self.run_assemble(rootfs, &executor, dry_run)
+    }
+
+    /// Executes the prepare and provision phases (the first pipeline stage)
+    /// and emits the "starting pipeline" banner (counting tasks across all
+    /// three phases).
+    ///
+    /// Callers that need work between provisioning and assembly — e.g.
+    /// `run_pipeline_phase()` restoring the temporary resolv.conf — call
+    /// this, do that work, then call [`Self::run_assemble`]. Returns
+    /// immediately if the pipeline has no tasks.
+    pub fn run_prepare_and_provision(
+        &self,
+        rootfs: &Utf8Path,
+        executor: &Arc<dyn CommandExecutor>,
         dry_run: bool,
     ) -> Result<()> {
         if self.is_empty() {
@@ -85,17 +105,6 @@ impl<'a> Pipeline<'a> {
         }
 
         info!("starting pipeline with {} task(s)", self.total_tasks());
-        self.run_phases(rootfs, &executor, dry_run)?;
-        info!("pipeline completed successfully");
-        Ok(())
-    }
-
-    fn run_phases(
-        &self,
-        rootfs: &Utf8Path,
-        executor: &Arc<dyn CommandExecutor>,
-        dry_run: bool,
-    ) -> Result<()> {
         run_phase_items(PHASE_PREPARE, &self.prepare.items(), rootfs, executor, dry_run)?;
         run_phase_items(
             PHASE_PROVISION,
@@ -103,8 +112,26 @@ impl<'a> Pipeline<'a> {
             rootfs,
             executor,
             dry_run,
-        )?;
+        )
+    }
+
+    /// Executes the assemble phase (the second pipeline stage) and logs
+    /// pipeline completion.
+    ///
+    /// Call only after a successful [`Self::run_prepare_and_provision`].
+    /// Returns immediately if the pipeline has no tasks.
+    pub fn run_assemble(
+        &self,
+        rootfs: &Utf8Path,
+        executor: &Arc<dyn CommandExecutor>,
+        dry_run: bool,
+    ) -> Result<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
         run_phase_items(PHASE_ASSEMBLE, &self.assemble.items(), rootfs, executor, dry_run)?;
+        info!("pipeline completed successfully");
         Ok(())
     }
 }
