@@ -43,10 +43,23 @@ tasks:
         TAG: '{{index .MATCH 0}}'
         ARGS: -t {{index .MATCH 0}}
 
+  # Installing the pinned toolchain must happen exactly once, before anything
+  # else touches rustup or cargo: concurrent rustup invocations that both
+  # auto-install the missing toolchain race on the shared downloads directory.
+  rustup:toolchain:
+    desc: '{{.TASK}}'
+    label: rustup:toolchain
+    dir: '{{.ROOT_DIR}}'
+    run: once
+    cmds:
+    - rustup toolchain install
+
   rustup:component:*:
     desc: '{{.TASK}}'
     label: rustup:component:{{index .MATCH 0}}
     dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: rustup:toolchain
     status:
     - rustup component list --installed | rg -q '^{{index .MATCH 0}}'
     cmds:
@@ -56,6 +69,8 @@ tasks:
     desc: '{{.TASK}}'
     label: rustup:target:{{index .MATCH 0}}
     dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: rustup:toolchain
     status:
     - rustup target list --installed | rg -q '^{{index .MATCH 0}}$'
     cmds:
@@ -65,6 +80,8 @@ tasks:
     desc: '{{.TASK}}'
     label: cargo:fetch
     dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: rustup:toolchain
     sources:
     - 'Cargo.lock'
     generates:
