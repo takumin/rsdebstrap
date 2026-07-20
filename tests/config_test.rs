@@ -2379,6 +2379,19 @@ fn test_container_fields_accept_null_as_empty() {
             "defaults: {mitamae: {binary: null}}\n",
         )
         .to_string(),
+        concat!(
+            "dir: /out\n",
+            "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",
+            "defaults: {mitamae: null}\n",
+        )
+        .to_string(),
+        concat!(
+            "dir: /out\n",
+            "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",
+            "defaults:\n",
+            "  mitamae:\n",
+        )
+        .to_string(),
     ];
     for yaml in &cases {
         assert!(deserializes(yaml), "expected acceptance of {yaml:?}");

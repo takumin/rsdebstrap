@@ -332,6 +332,27 @@ fn schema_matches_structural_deserializer() {
             .to_string(),
             true,
         ),
+        (
+            "null mitamae defaults",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: null}\n",
+            )
+            .to_string(),
+            true,
+        ),
+        (
+            "empty mitamae defaults",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults:\n",
+                "  mitamae:\n",
+            )
+            .to_string(),
+            true,
+        ),
         // Non-string scalars in string-typed fields: rejected by both sides. serde_yaml's raw
         // scalar-to-string coercion used to accept these on the deserializer only; the `de`
         // helpers now surface the resolved scalar type so the parser matches the schema.

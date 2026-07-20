@@ -140,9 +140,9 @@ assemble:                   # Optional finalization steps (named-field struct)
   only YAML strings. Numbers, booleans, and `null` are parse errors — quote values that look like
   scalars (`suite: "13"`). `dir` must additionally be non-empty.
 - On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`, `mounts`,
-  `options`, `name_servers`, `search`, `mitamae.binary`), an explicit `null`, an empty value
-  (e.g. a section whose entries are all commented out), and omitting the key are equivalent —
-  all mean "use the default".
+  `options`, `name_servers`, `search`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty
+  value (e.g. a section whose entries are all commented out), and omitting the key are
+  equivalent — all mean "use the default".
 
 ### Privilege field values
 

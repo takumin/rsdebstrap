@@ -155,9 +155,13 @@ The non-obvious parts are all about keeping the schema faithful to the *deserial
   an *empty* value as the default for container fields while rejecting an explicit `null`.
   String-typed fields therefore deserialize through the `deserialize_any`-based helpers in
   `src/de.rs`, which reject non-string scalars uniformly, and defaulted section/list/map fields
-  map an explicit `null` to the default. The net rule: `null` == empty value (what a fully
-  commented-out section leaves behind) == omitted key, everywhere; the schema models these fields
-  as nullable to match, and string fields as plain strings.
+  (including `defaults.mitamae`, whose empty form serde_yaml already accepted) map an explicit
+  `null` to the default. The net rule: an explicit `null` and an empty value are equivalent
+  everywhere, and on defaulted section/list/map fields they additionally mean "key omitted" (what
+  a fully commented-out section leaves behind). Fields that reject the empty form — scalars, the
+  tagged `isolation` config, everything inside the internally tagged `bootstrap:` maps — keep
+  rejecting `null` too. The schema models the lenient fields as nullable to match, and string
+  fields as plain strings.
 - **camino paths.** `Utf8PathBuf` has no `schemars` support and the orphan rule forbids a direct
   impl, so path fields point at the `Utf8PathSchema` proxy (`src/schema.rs`) via
   `#[schemars(with = "...")]`. Forgetting it on a new path field is a **compile error** (the

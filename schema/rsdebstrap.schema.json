@@ -341,7 +341,14 @@
 					"description": "Isolation backend for running commands in rootfs (default: chroot)"
 				},
 				"mitamae": {
-					"$ref": "#/$defs/MitamaeDefaults",
+					"anyOf": [
+						{
+							"$ref": "#/$defs/MitamaeDefaults"
+						},
+						{
+							"type": "null"
+						}
+					],
 					"description": "Default settings for mitamae tasks"
 				},
 				"privilege": {

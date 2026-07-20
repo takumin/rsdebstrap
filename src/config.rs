@@ -442,7 +442,8 @@ pub struct Defaults {
     #[serde(default)]
     pub isolation: IsolationConfig,
     /// Default settings for mitamae tasks
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<MitamaeDefaults>"))]
     pub mitamae: MitamaeDefaults,
     /// Default privilege escalation settings
     #[serde(default)]
