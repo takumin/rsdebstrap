@@ -119,12 +119,13 @@ provision:
     rm -rf /var/lib/apt/lists/*
     echo "Cleanup complete"
 
-# Assemble phase: finalization after provisioning. The resolv_conf task
-# replaces the temporary DNS setup from the prepare phase with a permanent
-# /etc/resolv.conf in the final rootfs (a generated file or a symlink).
+# Assemble phase: finalization after provisioning. The resolv_conf task gives
+# the final rootfs a permanent /etc/resolv.conf, replacing the temporary one
+# from the prepare phase. Recent Debian/Ubuntu default to the systemd-resolved
+# stub symlink, so restore it here:
 assemble:
   resolv_conf:
-    name_servers: [8.8.8.8, 8.8.4.4]
-    search: [example.com]
-    # OR, instead of name_servers/search, restore the systemd stub symlink:
-    # link: ../run/systemd/resolve/stub-resolv.conf
+    link: ../run/systemd/resolve/stub-resolv.conf
+    # OR, instead of link, generate a static file with explicit nameservers:
+    # name_servers: [8.8.8.8, 8.8.4.4]
+    # search: [example.com]
