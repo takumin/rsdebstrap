@@ -191,3 +191,7 @@ assemble:                   # Optional finalization steps (named-field struct)
 - The temporary prepare `resolv_conf` is removed (and the original restored) after `provision`
   and before `assemble`, so assemble `resolv_conf` output persists in the final rootfs; the
   assemble phase only runs if that restore succeeds
+- Assemble `resolv_conf` replaces `/etc/resolv.conf` atomically: the new file/symlink is
+  staged at `/etc/resolv.conf.rsdebstrap-tmp` and renamed over the final path (`mv -T`), so
+  a failed assemble leaves the previous resolv.conf intact (a stale staging entry may remain
+  after a failed build and is overwritten by the next run)
