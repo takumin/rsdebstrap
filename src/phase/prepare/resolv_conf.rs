@@ -3,7 +3,8 @@
 //! This module provides the `ResolvConfTask` data structure for declaring
 //! resolv.conf setup that should be applied before pipeline execution.
 //! The actual setup/teardown lifecycle is managed at the pipeline level
-//! (not per-task), similar to mount tasks.
+//! (not per-task), similar to mount tasks. The temporary file is torn down
+//! (the original restored) after the provision phase and before assemble.
 
 use std::borrow::Cow;
 use std::net::IpAddr;
