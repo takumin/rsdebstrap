@@ -404,26 +404,21 @@
 			]
 		},
 		"IsolationConfig": {
-			"additionalProperties": false,
-			"description": "Isolation backend configuration.\n\nThe `type` field selects the isolation backend used to run commands in the rootfs\n(default: chroot).",
-			"properties": {
-				"type": {
-					"$ref": "#/$defs/IsolationKind",
-					"description": "Isolation backend type."
-				}
-			},
-			"required": [
-				"type"
-			],
-			"type": "object"
-		},
-		"IsolationKind": {
-			"description": "Isolation backend kind.\n\nThe `type` field in the YAML `isolation` map selects the backend. If not specified,\ndefaults to chroot.",
+			"description": "Isolation backend configuration.\n\nThe `type` key selects the backend used to run commands inside the rootfs; `chroot` is\ncurrently the only backend. `type` is required whenever an `isolation` map is written\nout — the chroot default applies only when the surrounding `isolation` key (e.g.\n`defaults.isolation`) is omitted entirely.",
 			"oneOf": [
 				{
-					"const": "chroot",
-					"description": "chroot isolation (default)",
-					"type": "string"
+					"additionalProperties": false,
+					"description": "Run commands inside the rootfs via `chroot`.",
+					"properties": {
+						"type": {
+							"const": "chroot",
+							"type": "string"
+						}
+					},
+					"required": [
+						"type"
+					],
+					"type": "object"
 				}
 			]
 		},
@@ -636,12 +631,24 @@
 					"type": "boolean"
 				},
 				{
-					"$ref": "#/$defs/PrivilegeMethodMap"
+					"$ref": "#/$defs/PrivilegeConfig"
 				},
 				{
 					"type": "null"
 				}
 			]
+		},
+		"PrivilegeConfig": {
+			"additionalProperties": false,
+			"properties": {
+				"method": {
+					"$ref": "#/$defs/PrivilegeMethod"
+				}
+			},
+			"required": [
+				"method"
+			],
+			"type": "object"
 		},
 		"PrivilegeDefaults": {
 			"additionalProperties": false,
@@ -671,18 +678,6 @@
 					"type": "string"
 				}
 			]
-		},
-		"PrivilegeMethodMap": {
-			"additionalProperties": false,
-			"properties": {
-				"method": {
-					"$ref": "#/$defs/PrivilegeMethod"
-				}
-			},
-			"required": [
-				"method"
-			],
-			"type": "object"
 		},
 		"ProvisionTask": {
 			"description": "Declarative task definition for provision pipeline steps.\n\nEach variant holds the data needed to configure and execute a specific\ntype of task. The enum dispatch pattern provides compile-time exhaustive\nmatching — adding a new variant causes compilation errors at every\nunhandled match site, preventing missed implementations.",

@@ -9,8 +9,10 @@
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
+#[cfg(feature = "schema")]
 use std::borrow::Cow;
 use std::fs;
 use tracing::{debug, info};
@@ -58,17 +60,24 @@ pub struct MitamaeTask {
 // absent (`None`), so a bare `required` would diverge from deserialization for e.g.
 // `{ script: null, content: hi }`. Plain `//` (not `///`) so the note does not leak into the
 // schema's `description`.
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
-#[schemars(extend("oneOf" = serde_json::json!([
+#[cfg_attr(feature = "schema", schemars(extend("oneOf" = serde_json::json!([
     { "required": ["script"], "properties": { "script": { "type": "string" } } },
     { "required": ["content"], "properties": { "content": { "type": "string" } } },
-])))]
+]))))]
 struct RawMitamaeTask {
-    #[schemars(with = "Option<crate::schema::Utf8PathSchema>")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<crate::schema::Utf8PathSchema>")
+    )]
     script: Option<Utf8PathBuf>,
     content: Option<String>,
-    #[schemars(with = "Option<crate::schema::Utf8PathSchema>")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<crate::schema::Utf8PathSchema>")
+    )]
     binary: Option<Utf8PathBuf>,
     #[serde(default)]
     privilege: Privilege,
@@ -92,6 +101,7 @@ impl<'de> Deserialize<'de> for MitamaeTask {
     }
 }
 
+#[cfg(feature = "schema")]
 impl JsonSchema for MitamaeTask {
     fn schema_name() -> Cow<'static, str> {
         "MitamaeTask".into()

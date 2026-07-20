@@ -16,8 +16,10 @@
 
 use anyhow::Result;
 use camino::Utf8Path;
+#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "schema")]
 use std::borrow::Cow;
 use std::sync::{Arc, LazyLock};
 
@@ -186,7 +188,7 @@ impl TaskIsolation {
     /// or `None` if isolation is disabled.
     ///
     /// Unlike `Privilege::resolve()`, this never returns an error because
-    /// `IsolationConfig` always has a default (its `kind` defaults to `Chroot`).
+    /// `IsolationConfig` always has a default (chroot).
     pub fn resolve(&self, defaults: &IsolationConfig) -> Option<IsolationConfig> {
         match self {
             Self::Inherit => Some(defaults.clone()),
@@ -199,16 +201,24 @@ impl TaskIsolation {
 
 // Schema-only mirror of the accepted YAML shapes: `true`/`false`, `{ type: ... }`, or an
 // explicit null (which — like field absence — resolves to `Inherit`).
-// Never deserialized directly — `TaskIsolation`'s `Deserialize` performs the strict
-// dispatch. The map form reuses `IsolationConfig` (which is `deny_unknown_fields`).
-// Exists solely so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
+// Not on the production parse path — `TaskIsolation`'s `Deserialize` performs the strict
+// dispatch. The map form reuses `IsolationConfig`, whose per-variant payload structs are
+// `deny_unknown_fields` (the `type` tag is consumed before the payload sees the map).
+// `Deserialize` is derived here solely so the `wire_parity` tests can prove this enum
+// accepts exactly what `TaskIsolationVisitor` accepts: the variants below and the
+// visitor's `visit_*` methods must change in lockstep, and those tests fail on any drift.
+// Exists so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
 // Plain `//` (not `///`) so this note does not leak into the schema's `description`.
-#[derive(JsonSchema)]
+#[cfg(feature = "schema")]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
-#[allow(dead_code)]
 enum TaskIsolationWire {
-    Toggle(bool),
-    Config(IsolationConfig),
+    // The payloads are written by the derived `Deserialize` and read only as *types* by
+    // schema generation, never as values — hence the field-level allows. Unlike the
+    // previous enum-level allow, these keep "variant is never constructed" armed, so
+    // dropping the `Deserialize` derive that ties this enum to the tests is a warning.
+    Toggle(#[allow(dead_code)] bool),
+    Config(#[allow(dead_code)] IsolationConfig),
     // Unit variant → `{ "type": "null" }` in the generated `anyOf`, mirroring that an
     // explicit null deserializes to `Inherit` (see `visit_unit`).
     Inherit,
@@ -221,6 +231,9 @@ impl<'de> Deserialize<'de> for TaskIsolation {
     {
         use serde::de;
 
+        // The set of `visit_*` methods below must stay in lockstep with
+        // `TaskIsolationWire`'s variants (the schema mirror); the `wire_parity` tests
+        // enforce the equivalence.
         struct TaskIsolationVisitor;
 
         impl<'de> de::Visitor<'de> for TaskIsolationVisitor {
@@ -252,7 +265,8 @@ impl<'de> Deserialize<'de> for TaskIsolation {
             where
                 A: de::MapAccess<'de>,
             {
-                // IsolationConfig is `deny_unknown_fields`, so typo'd keys stay rejected.
+                // IsolationConfig's per-variant payloads are `deny_unknown_fields`, so
+                // typo'd keys stay rejected after the `type` tag selects the variant.
                 let config =
                     IsolationConfig::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 Ok(TaskIsolation::Config(config))
@@ -266,6 +280,7 @@ impl<'de> Deserialize<'de> for TaskIsolation {
     }
 }
 
+#[cfg(feature = "schema")]
 impl JsonSchema for TaskIsolation {
     fn schema_name() -> Cow<'static, str> {
         "TaskIsolation".into()
@@ -451,5 +466,49 @@ mod tests {
             roundtrip(&TaskIsolation::Config(IsolationConfig::chroot())),
             TaskIsolation::Config(IsolationConfig::chroot())
         );
+    }
+
+    // =========================================================================
+    // Wire-enum parity tests
+    // =========================================================================
+
+    // `TaskIsolationWire` is the schema-side mirror of the hand-written visitor. These
+    // tests pin the two acceptance sets together: adding or removing a `visit_*`
+    // method without the matching wire-variant change (or vice versa) makes a
+    // battery value below diverge and fail.
+    #[cfg(feature = "schema")]
+    mod wire_parity {
+        use super::super::{TaskIsolation, TaskIsolationWire};
+        use serde_json::{Value, json};
+
+        fn battery() -> Vec<Value> {
+            vec![
+                json!(null),
+                json!(true),
+                json!(false),
+                json!({"type": "chroot"}),
+                json!({"type": "bogus"}),
+                json!({"typ": "chroot"}),
+                json!({"type": "chroot", "extra": 1}),
+                json!({}),
+                json!("chroot"),
+                json!([]),
+                json!(42),
+                json!(42.5),
+            ]
+        }
+
+        #[test]
+        fn wire_accepts_exactly_what_the_visitor_accepts() {
+            for value in battery() {
+                let wire = serde_json::from_value::<TaskIsolationWire>(value.clone()).is_ok();
+                let visitor = serde_json::from_value::<TaskIsolation>(value.clone()).is_ok();
+                assert_eq!(
+                    wire, visitor,
+                    "TaskIsolationWire and TaskIsolation's visitor disagree on {value}: \
+                    wire accepts = {wire}, visitor accepts = {visitor}"
+                );
+            }
+        }
     }
 }

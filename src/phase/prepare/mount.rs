@@ -9,6 +9,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use camino::Utf8Path;
+#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +25,8 @@ use crate::phase::PhaseItem;
 /// managed at the pipeline level, not by the task's `execute()` method.
 ///
 /// At most one `MountTask` may appear in the prepare phase.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct MountTask {
     /// Optional preset for predefined mount sets.

@@ -19,6 +19,7 @@ pub mod shell;
 use std::borrow::Cow;
 
 use camino::Utf8Path;
+#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -37,7 +38,8 @@ use crate::privilege::PrivilegeDefaults;
 /// type of task. The enum dispatch pattern provides compile-time exhaustive
 /// matching — adding a new variant causes compilation errors at every
 /// unhandled match site, preventing missed implementations.
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ProvisionTask {
     /// Shell script execution task
