@@ -121,7 +121,10 @@ fn run_pipeline_phase(
     // /etc/resolv.conf, which teardown's `rm -f` + backup restore would
     // otherwise destroy. Assemble is gated on both prior stages succeeding:
     // after a failed teardown the guard's Drop backstop retries the restore
-    // at scope end and would clobber assemble's output. Unmount always runs
+    // at scope end and would clobber assemble's output. The assemble task
+    // itself replaces /etc/resolv.conf atomically (staged sibling + rename),
+    // so a mid-assemble failure cannot leave the rootfs without a resolv.conf
+    // even though the guard is already disarmed. Unmount always runs
     // last (mounts bracket all three phases).
     // Error priority: prepare/provision > resolv_conf restore > assemble > unmount.
     let run_result = pipeline.run_prepare_and_provision(&rootfs, &executor, dry_run);
@@ -373,11 +376,11 @@ mod tests {
 
         run_pipeline_phase(&profile, executor.clone(), false).unwrap();
 
-        // setup (mv, cp, chmod) → teardown restore (rm, mv) → assemble (rm, ln):
-        // the restore happens between provision and assemble, so the symlink wins.
-        // Assemble's rm deleting the just-restored original is intended — the
-        // permanent config replaces it.
-        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv", "rm", "ln"]);
+        // setup (mv, cp, chmod) → teardown restore (rm, mv) → assemble
+        // stage-and-rename (ln, mv): the restore happens between provision and
+        // assemble, and assemble atomically renames its staged symlink over
+        // the just-restored original — the permanent config replaces it.
+        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv", "ln", "mv"]);
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(
             fs::symlink_metadata(&resolv)
@@ -387,6 +390,8 @@ mod tests {
         );
         assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new(LINK_TARGET));
         assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
+        // The staging entry was consumed by the promoting rename.
+        assert!(fs::symlink_metadata(rootfs.join("etc/resolv.conf.rsdebstrap-tmp")).is_err());
     }
 
     #[test]
@@ -416,8 +421,9 @@ mod tests {
 
         run_pipeline_phase(&profile, executor.clone(), false).unwrap();
 
-        // No mv: the prepare guard never activates, so nothing is backed up.
-        assert_eq!(executor.command_names(), ["rm", "ln"]);
+        // No backup mv: the prepare guard never activates. The only commands
+        // are assemble's stage (ln) and atomic promote (mv).
+        assert_eq!(executor.command_names(), ["ln", "mv"]);
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(
             fs::symlink_metadata(&resolv)

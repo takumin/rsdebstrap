@@ -72,7 +72,10 @@ Key invariants:
   restored) before assemble, so an assemble `resolv_conf` task's permanent file/symlink
   survives. Assemble is additionally gated on that restore succeeding: after a failed teardown
   the guard's `Drop` backstop retries the restore at scope end, which would otherwise clobber
-  assemble's output.
+  assemble's output. The assemble task itself replaces `/etc/resolv.conf` atomically — it
+  stages the new file/symlink at `/etc/resolv.conf.rsdebstrap-tmp` and promotes it with a
+  `mv -T` rename — so a mid-assemble failure leaves the just-restored original in place even
+  though the guard is already disarmed and could no longer recover it.
 - **Assemble operates on the final rootfs directly.** `AssembleResolvConfTask::resolved_isolation_config()`
   returns `None`, so it runs via `DirectProvider` on the rootfs filesystem rather than
   inside an isolation context.
@@ -119,7 +122,7 @@ patterns run throughout `src/isolation/`:
 - Privilege is threaded through execution as `Option<PrivilegeMethod>` — both
   `IsolationContext::execute()` and the `CommandExecutor` obtained via `ctx.executor()`
   take it, so escalation is uniform whether a task runs a script or issues raw
-  `cp`/`chmod`/`ln` commands (as assemble `resolv_conf` does).
+  `cp`/`chmod`/`ln`/`mv` commands (as assemble `resolv_conf` does).
 - `CommandSpec` (`src/executor/mod.rs`) is the command value object (command/args/cwd/
   env/privilege) with a builder API. `RealCommandExecutor` supports dry-run; tests use
   mock executors to assert on constructed commands without running anything.
