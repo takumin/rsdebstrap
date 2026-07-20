@@ -271,7 +271,9 @@ Mock-executor pattern (`tests/helpers/mod.rs`):
   shell provision task against a temp rootfs: the temporary resolv.conf is restored
   after provision (a real provision command sits between the setup and restore
   sequences) and before assemble; assemble is gated on both the prepare/provision
-  result and the restore result; and an assemble failure propagates while the
-  atomically-staged replace leaves the restored original in place. The remaining gap
-  is the interplay with real mount/unmount failures — `RootfsMounts` unit tests cover
-  those error paths independently via `MockMountExecutor`.
+  result and the restore result (including a real restore-`mv` failure, which strands
+  the backup and skips assemble); an assemble failure propagates while the
+  atomically-staged replace leaves the restored original in place; and both link- and
+  generate-mode assemble tasks are exercised end-to-end. The remaining gap is the
+  interplay with real mount/unmount failures — `RootfsMounts` unit tests cover those
+  error paths independently via `MockMountExecutor`.

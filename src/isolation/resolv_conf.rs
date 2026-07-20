@@ -867,4 +867,45 @@ mod tests {
         assert_eq!(executor.calls().len(), after_first_teardown);
         assert!(after_first_teardown > after_setup);
     }
+
+    #[test]
+    fn teardown_surfaces_stat_error_checking_backup() {
+        // A stat error while checking for the backup — here ELOOP from a
+        // self-referential symlink at the backup path — must fail the teardown
+        // loudly via try_exists(), not be silently swallowed as "no backup" the
+        // way Path::exists() would (which would strand the backup).
+        let temp = tempfile::tempdir().unwrap();
+        let rootfs = create_rootfs_with_etc(temp.path());
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec!["8.8.8.8".parse().unwrap()],
+            search: vec![],
+        };
+
+        let executor = mock_executor();
+        let mut rc = RootfsResolvConf::new(
+            &rootfs,
+            Some(config),
+            Utf8Path::new("/etc/resolv.conf"),
+            executor.clone(),
+            None,
+            false,
+        );
+        rc.setup().unwrap();
+
+        // Plant a self-referential symlink at the backup path so try_exists()
+        // hits ELOOP. The mock executor never touched the real filesystem, so
+        // nothing else occupies this path.
+        let backup = rootfs.join(format!("etc/resolv.conf{}", BACKUP_SUFFIX));
+        std::os::unix::fs::symlink("resolv.conf.rsdebstrap-orig", &backup).unwrap();
+
+        let err = rc.teardown().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("failed to check for resolv.conf backup"),
+            "unexpected error: {err}"
+        );
+        // Teardown did not complete; the Drop backstop still owns the cleanup.
+        assert!(!rc.torn_down);
+    }
 }
