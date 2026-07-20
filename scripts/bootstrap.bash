@@ -23,7 +23,10 @@ AQUA_VERSION="v2.62.0"
 AQUA_INSTALLER_VERSION="v4.0.5"
 AQUA_INSTALLER_SHA256="451028d56959cc738564885b1dbebc2691ea038ffde04e2472e4d486a3591146"
 
-log() { printf '[bootstrap] %s\n' "$*" >&2; }
+log()
+{
+	printf '[bootstrap] %s\n' "$*" >&2
+}
 
 # Resolve the repo root from the script location so cwd does not matter.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,9 +42,10 @@ export AQUA_GLOBAL_CONFIG="${ROOT_DIR}/.aqua/aqua.yaml"
 
 export PATH="${AQUA_BIN_DIR}:${PATH}"
 
-install_aqua() {
-	if command -v aqua >/dev/null 2>&1; then
-		log "aqua already installed ($(aqua version 2>/dev/null || true))"
+install_aqua()
+{
+	if command -v aqua > /dev/null 2>&1; then
+		log "aqua already installed ($(aqua version 2> /dev/null || true))"
 		return
 	fi
 
@@ -59,12 +63,13 @@ install_aqua() {
 	bash "${installer}" -v "${AQUA_VERSION}" >&2
 }
 
-persist_session_env() {
+persist_session_env()
+{
 	# Only relevant when invoked as a Claude Code hook.
 	[ -n "${CLAUDE_ENV_FILE:-}" ] || return 0
 
 	local marker="# rsdebstrap aqua bootstrap"
-	if grep -qsF "${marker}" "${CLAUDE_ENV_FILE}" 2>/dev/null; then
+	if grep -qsF "${marker}" "${CLAUDE_ENV_FILE}" 2> /dev/null; then
 		return 0
 	fi
 
@@ -73,11 +78,12 @@ persist_session_env() {
 		echo "export AQUA_ROOT_DIR=\"${AQUA_ROOT_DIR}\""
 		echo "export AQUA_GLOBAL_CONFIG=\"${AQUA_GLOBAL_CONFIG}\""
 		echo "export PATH=\"${AQUA_BIN_DIR}:\$PATH\""
-	} >>"${CLAUDE_ENV_FILE}"
+	} >> "${CLAUDE_ENV_FILE}"
 	log "persisted aqua environment to \$CLAUDE_ENV_FILE"
 }
 
-main() {
+main()
+{
 	install_aqua
 
 	log "installing tools from ${AQUA_GLOBAL_CONFIG}"
