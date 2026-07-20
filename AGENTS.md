@@ -188,3 +188,6 @@ assemble:                   # Optional finalization steps (named-field struct)
   rootfs under the `assemble.resolv_conf` key (also a singleton `Option`)
 - `link` and `name_servers`/`search` are mutually exclusive in assemble `resolv_conf`
 - Prepare and assemble can both have `resolv_conf` tasks — different roles: temporary DNS vs permanent config
+- The temporary prepare `resolv_conf` is removed (and the original restored) after `provision`
+  and before `assemble`, so assemble `resolv_conf` output persists in the final rootfs; the
+  assemble phase only runs if that restore succeeds

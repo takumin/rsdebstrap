@@ -66,8 +66,13 @@ Key invariants:
   errors. Failure-injection for teardown paths is currently impractical (see
   [Known test gaps](#known-test-gaps)).
 - **Prepare tasks are declarative.** `MountTask` and (prepare) `ResolvConfTask` implement
-  `PhaseItem` with a no-op `execute()`; their real effect is bracketed around the *whole*
-  phase by the RAII managers below, set up in `run_pipeline_phase()` between mount and execution.
+  `PhaseItem` with a no-op `execute()`; their real effect comes from the RAII managers below,
+  set up in `run_pipeline_phase()`. The brackets differ: mounts wrap all three phases, but the
+  temporary resolv.conf wraps only prepare + provision — it is torn down (the original
+  restored) before assemble, so an assemble `resolv_conf` task's permanent file/symlink
+  survives. Assemble is additionally gated on that restore succeeding: after a failed teardown
+  the guard's `Drop` backstop retries the restore at scope end, which would otherwise clobber
+  assemble's output.
 - **Assemble operates on the final rootfs directly.** `AssembleResolvConfTask::resolved_isolation_config()`
   returns `None`, so it runs via `DirectProvider` on the rootfs filesystem rather than
   inside an isolation context.
@@ -256,7 +261,8 @@ Mock-executor pattern (`tests/helpers/mod.rs`):
   `ChrootProvider` and `DirectProvider` have infallible teardown — these paths are
   unreachable with current backends. Add tests when a backend with fallible teardown
   (bwrap, systemd-nspawn) lands.
-- **`run_pipeline_phase()` 4-way error matrix** (`Ok/Ok`, `Err/Ok`, `Ok/Err`, `Err/Err`)
-  is not tested as an integration test — the function is private and needs real mounts.
-  `RootfsMounts` unit tests cover the mount/unmount error paths independently via
-  `MockMountExecutor`.
+- **`run_pipeline_phase()` sequencing and gating** (temporary resolv.conf restored between
+  provision and assemble; assemble gated on that restore) are covered by in-crate tests in
+  `src/lib.rs`, using a recording executor that really runs `mv`/`cp`/`rm`/`ln` against a
+  temp rootfs. The remaining gap is the interplay with real mount/unmount failures —
+  `RootfsMounts` unit tests cover those error paths independently via `MockMountExecutor`.
