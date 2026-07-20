@@ -143,6 +143,10 @@ assemble:                   # Optional finalization steps (named-field struct)
   `options`, `name_servers`, `search`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty
   value (e.g. a section whose entries are all commented out), and omitting the key are
   equivalent — all mean "use the default".
+- That list is exhaustive: the list fields inside the internally tagged `bootstrap:` maps
+  (`include`, `components`, `keyring`, hook lists, …) and the tagged `isolation:` config stay
+  strict — an explicit `null` or an empty value (e.g. a list whose entries are all commented
+  out) is a parse error there. Omit the key instead.
 
 ### Privilege field values
 

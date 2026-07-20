@@ -224,11 +224,14 @@ Drift guards (all in `cargo test`, so CI fails on drift):
   must accept it too (no false rejections that would make editor tooling flag valid configs). The
   property test asserts this twice per generated document — once on the `serde_json::Value` and
   once through a YAML text round-trip, because production parses YAML and `serde_yaml`'s
-  acceptance surface is not identical to the JSON value model. The few intentional divergences in
-  the other direction (annotational `ipv4`/`ipv6` formats; duplicate mapping keys, which serde
-  rejects but the YAML→JSON conversion resolves last-wins before the schema can see them) are
-  pinned with per-side expectations in `schema_divergences_are_pinned` so the set cannot grow
-  silently. Semantic checks that JSON Schema cannot express (mount ordering, `copy` vs
+  acceptance surface is not identical to the JSON value model. The known divergences in the
+  other direction (annotational `ipv4`/`ipv6` formats; duplicate mapping keys, which serde
+  rejects but the YAML→JSON conversion resolves last-wins before the schema can see them; and
+  non-finite floats like `.nan`, which that conversion collapses to `null`, so nullable fields
+  schema-accept them) are pinned with per-side expectations in `schema_divergences_are_pinned`.
+  The pinning documents each known divergence exactly, but constrains only the enumerated rows:
+  the invariant is deliberately one-directional, so a newly discovered false-accept fails no
+  test and should be added to that table. Semantic checks that JSON Schema cannot express (mount
   `name_servers` exclusivity, mitamae binary resolution) stay in `Profile::validate_*` and are out
   of scope here.
 

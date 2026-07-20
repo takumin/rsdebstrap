@@ -12,9 +12,9 @@
 //!    (a false rejection would make editor tooling flag valid configs). Semantic-only checks
 //!    (e.g. mitamae binary resolution, mount/privilege cross-checks) live in `Profile::validate`
 //!    and are intentionally out of scope here — JSON Schema cannot express them.
-//! 4. The few intentional divergences (schema accepts, deserializer rejects) are pinned with
-//!    per-side expectations in `schema_divergences_are_pinned`, so the divergence set cannot
-//!    grow silently.
+//! 4. The known divergences (schema accepts, deserializer rejects) are pinned with per-side
+//!    expectations in `schema_divergences_are_pinned`. The invariant is one-directional, so a
+//!    new false-accept is not a test failure — add a row there when one is discovered.
 
 // The whole crate is compiled out without the default-on `schema` feature: it exercises the
 // generated schema, which does not exist in a schema-less build. Gated in-file rather than
@@ -448,8 +448,10 @@ fn schema_divergences_are_pinned() {
     // Documented, intentional divergences between the schema and the deserializer. The
     // safety invariant still holds for every row — divergence is only ever allowed in the
     // schema-accepts-more direction (the schema stays annotational where JSON Schema cannot
-    // express the check, or where the YAML layer rejects before the JSON model exists).
-    // Pinning both verdicts keeps the set of divergences from growing silently.
+    // express the check, or where the YAML text carries information the JSON data model
+    // cannot: duplicate keys, non-finite floats). Pinning both verdicts documents each known
+    // divergence exactly — but only the enumerated rows: the invariant is one-directional,
+    // so a new false-accept fails no test. Extend this table whenever one is discovered.
     let cases: &[(&str, String, bool, bool)] = &[
         // `format: ipv4/ipv6` is annotational (non-asserting) by design — see IpAddrSchema:
         // a hard pattern that is slightly wrong would false-reject valid configs. The
@@ -480,6 +482,18 @@ fn schema_divergences_are_pinned() {
             format!(
                 "{BASE}prepare:\n  mount: {{preset: recommends}}\n  mount: {{preset: recommends}}\n"
             ),
+            false,
+            true,
+        ),
+        // Non-finite floats are rejected by every field's deserializer, but
+        // `serde_json::Value` cannot represent NaN/infinity, so the YAML->JSON conversion
+        // collapses them to `null` — which nullable fields (the sections, `privilege`,
+        // `isolation`, `script`/`content`, ...) then schema-accept. Same conversion-
+        // lossiness class as the duplicate-key rows.
+        ("NaN provision section", format!("{BASE}provision: .nan\n"), false, true),
+        (
+            "infinite float privilege",
+            with_provision("{type: shell, content: hi, privilege: .inf}"),
             false,
             true,
         ),
