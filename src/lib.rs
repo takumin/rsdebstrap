@@ -1,6 +1,7 @@
 pub mod bootstrap;
 pub mod cli;
 pub mod config;
+pub(crate) mod de;
 pub mod error;
 pub mod executor;
 pub mod isolation;

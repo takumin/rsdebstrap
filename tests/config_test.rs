@@ -2266,3 +2266,71 @@ prepare:
 
     Ok(())
 }
+
+// =========================================================================
+// YAML strictness: string-typed fields must be genuine strings
+// =========================================================================
+
+/// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
+fn deserializes(yaml: &str) -> bool {
+    serde_yaml::from_str::<rsdebstrap::config::Profile>(yaml).is_ok()
+}
+
+const MINIMAL_BOOTSTRAP: &str = "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n";
+
+#[test]
+fn test_dir_rejects_non_string_scalars() {
+    // serde_yaml's text deserializer used to hand the raw scalar text to string fields,
+    // so `dir: null` parsed as the literal path "null" and `dir:` as "". These must all
+    // be parse errors now, matching the generated schema (which types `dir` as string).
+    for bad in [
+        "dir: null\n",
+        "dir: ~\n",
+        "dir:\n",
+        "dir: 42\n",
+        "dir: true\n",
+    ] {
+        let yaml = format!("{MINIMAL_BOOTSTRAP}{bad}");
+        assert!(!deserializes(&yaml), "expected rejection of {bad:?}");
+    }
+}
+
+#[test]
+fn test_dir_accepts_quoted_scalar_lookalikes() {
+    // Quoting makes them genuine strings; those stay accepted.
+    for good in ["dir: \"42\"\n", "dir: \"null\"\n", "dir: \"~\"\n"] {
+        let yaml = format!("{MINIMAL_BOOTSTRAP}{good}");
+        assert!(deserializes(&yaml), "expected acceptance of {good:?}");
+    }
+}
+
+#[test]
+fn test_mount_entry_rejects_non_string_scalars() {
+    let base = concat!(
+        "dir: /out\n",
+        "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",
+        "defaults: {isolation: {type: chroot}, privilege: {method: sudo}}\n",
+    );
+    let source_int =
+        format!("{base}prepare: {{mount: {{mounts: [{{source: 5, target: /dev}}]}}}}\n");
+    assert!(!deserializes(&source_int), "mount source must be a string");
+    let target_int =
+        format!("{base}prepare: {{mount: {{mounts: [{{source: /dev, target: 42}}]}}}}\n");
+    assert!(!deserializes(&target_int), "mount target must be a string");
+    let ok = format!("{base}prepare: {{mount: {{mounts: [{{source: /dev, target: /dev}}]}}}}\n");
+    assert!(deserializes(&ok), "genuine strings must stay accepted");
+}
+
+#[test]
+fn test_assemble_link_rejects_non_string_scalars() {
+    let base =
+        concat!("dir: /out\n", "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",);
+    let link_int = format!("{base}assemble: {{resolv_conf: {{link: 42}}}}\n");
+    assert!(!deserializes(&link_int), "link must be a string");
+    let link_null = format!("{base}assemble: {{resolv_conf: {{link: null}}}}\n");
+    assert!(deserializes(&link_null), "explicit null still means \"link not set\"");
+    let link_ok = format!(
+        "{base}assemble: {{resolv_conf: {{link: /run/systemd/resolve/stub-resolv.conf}}}}\n"
+    );
+    assert!(deserializes(&link_ok), "genuine strings must stay accepted");
+}

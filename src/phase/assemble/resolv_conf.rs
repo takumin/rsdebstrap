@@ -42,7 +42,11 @@ pub struct AssembleResolvConfTask {
     #[serde(default, skip_serializing_if = "privilege_is_default")]
     pub privilege: Privilege,
     /// Symlink target path (mutually exclusive with `name_servers`/`search`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::de::opt_string",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub link: Option<String>,
     /// Nameserver IP addresses to write to resolv.conf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

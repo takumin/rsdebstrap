@@ -180,8 +180,10 @@ impl ResolvConfConfig {
 #[serde(deny_unknown_fields)]
 pub struct MountEntry {
     /// Device name or path (e.g., "proc", "sysfs", "/dev").
+    #[serde(deserialize_with = "crate::de::string")]
     pub source: String,
     /// Mount point inside the rootfs (absolute path).
+    #[serde(deserialize_with = "crate::de::path")]
     #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub target: Utf8PathBuf,
     /// Mount options (e.g., "bind", "nosuid"). Joined with "," for `-o`.
@@ -453,6 +455,7 @@ pub struct Defaults {
 #[serde(deny_unknown_fields)]
 pub struct Profile {
     /// Target directory path for the bootstrap operation
+    #[serde(deserialize_with = "crate::de::path")]
     #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub dir: Utf8PathBuf,
     /// Default settings (isolation backend, etc.)
