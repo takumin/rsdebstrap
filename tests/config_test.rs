@@ -2360,13 +2360,25 @@ fn test_container_fields_accept_null_as_empty() {
         "defaults: {isolation: {type: chroot}, privilege: {method: sudo}}\n",
     );
     let cases = [
-        format!("{base}prepare: {{mount: {{preset: recommends, mounts: null}}}}\n"),
+        format!("{base}{}", "prepare: {mount: {preset: recommends, mounts: null}}\n"),
         format!(
-            "{base}prepare: {{mount: {{mounts: [{{source: /dev, target: /dev, options: null}}]}}}}\n"
+            "{base}{}",
+            "prepare: {mount: {mounts: [{source: /dev, target: /dev, options: null}]}}\n"
         ),
-        format!("{base}prepare: {{resolv_conf: {{copy: true, name_servers: null, search: null}}}}\n"),
-        format!("{base}assemble: {{resolv_conf: {{link: /x, name_servers: null, search: null}}}}\n"),
-        "dir: /out\nbootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\ndefaults: {mitamae: {binary: null}}\n".to_string(),
+        format!(
+            "{base}{}",
+            "prepare: {resolv_conf: {copy: true, name_servers: null, search: null}}\n"
+        ),
+        format!(
+            "{base}{}",
+            "assemble: {resolv_conf: {link: /x, name_servers: null, search: null}}\n"
+        ),
+        concat!(
+            "dir: /out\n",
+            "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",
+            "defaults: {mitamae: {binary: null}}\n",
+        )
+        .to_string(),
     ];
     for yaml in &cases {
         assert!(deserializes(yaml), "expected acceptance of {yaml:?}");
@@ -2399,7 +2411,8 @@ fn test_string_list_elements_stay_strict_under_null_leniency() {
         "defaults: {isolation: {type: chroot}, privilege: {method: sudo}}\n",
     );
     let options_int = format!(
-        "{base}prepare: {{mount: {{mounts: [{{source: /dev, target: /dev, options: [bind, 0]}}]}}}}\n"
+        "{base}{}",
+        "prepare: {mount: {mounts: [{source: /dev, target: /dev, options: [bind, 0]}]}}\n"
     );
     assert!(!deserializes(&options_int), "mount options must be strings");
     let search_int =

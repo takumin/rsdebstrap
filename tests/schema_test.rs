@@ -312,7 +312,8 @@ fn schema_matches_structural_deserializer() {
         (
             "null mount options",
             format!(
-                "{BASE}prepare: {{mount: {{mounts: [{{source: /dev, target: /dev, options: null}}]}}}}\n"
+                "{BASE}{}",
+                "prepare: {mount: {mounts: [{source: /dev, target: /dev, options: null}]}}\n"
             ),
             true,
         ),
@@ -357,7 +358,8 @@ fn schema_matches_structural_deserializer() {
         (
             "integer mount option",
             format!(
-                "{BASE}prepare: {{mount: {{mounts: [{{source: /dev, target: /dev, options: [bind, 0]}}]}}}}\n"
+                "{BASE}{}",
+                "prepare: {mount: {mounts: [{source: /dev, target: /dev, options: [bind, 0]}]}}\n"
             ),
             false,
         ),
