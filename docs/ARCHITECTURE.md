@@ -73,9 +73,11 @@ Key invariants:
   survives. Assemble is additionally gated on that restore succeeding: after a failed teardown
   the guard's `Drop` backstop retries the restore at scope end, which would otherwise clobber
   assemble's output. The assemble task itself replaces `/etc/resolv.conf` atomically — it
-  stages the new file/symlink at `/etc/resolv.conf.rsdebstrap-tmp` and promotes it with a
-  `mv -T` rename — so a mid-assemble failure leaves the just-restored original in place even
-  though the guard is already disarmed and could no longer recover it.
+  stages the new file/symlink at `/etc/resolv.conf.rsdebstrap-tmp` (clearing any stale staging
+  entry first, so `cp`/`ln` cannot follow a leftover symlink) and promotes it with a plain
+  same-directory `mv` rename (no GNU-only `-T`, so it stays portable to busybox/musl hosts) — so
+  a mid-assemble failure leaves the just-restored original in place even though the guard is
+  already disarmed and could no longer recover it.
 - **Assemble operates on the final rootfs directly.** `AssembleResolvConfTask::resolved_isolation_config()`
   returns `None`, so it runs via `DirectProvider` on the rootfs filesystem rather than
   inside an isolation context.

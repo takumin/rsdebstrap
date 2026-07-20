@@ -164,9 +164,9 @@ impl AssembleResolvConfTask {
     /// Writes a permanent `/etc/resolv.conf` file or creates a symlink in the
     /// rootfs directory. Uses TOCTOU-safe `/etc` validation via
     /// `openat(O_NOFOLLOW)` and privilege escalation when configured. The new
-    /// entry is staged at a sibling `.rsdebstrap-tmp` path and promoted with
-    /// an atomic rename (`mv -T`), so any failure leaves the previous
-    /// `/etc/resolv.conf` intact.
+    /// entry is staged at a sibling `.rsdebstrap-tmp` path and promoted with an
+    /// atomic same-directory rename (`mv`), so any failure up to the rename
+    /// leaves the previous `/etc/resolv.conf` intact.
     pub fn execute(&self, ctx: &dyn IsolationContext) -> anyhow::Result<()> {
         let rootfs = ctx.rootfs();
         let resolv_conf_path = rootfs.join("etc/resolv.conf");
@@ -230,7 +230,7 @@ impl AssembleResolvConfTask {
             }
             None => {
                 // Generate content to a host temporary file, then copy it to
-                // the staging path (overwriting any stale entry).
+                // the staging path.
                 let config = ResolvConfConfig {
                     copy: false,
                     name_servers: self.name_servers.clone(),
@@ -250,6 +250,16 @@ impl AssembleResolvConfTask {
 
                 let temp_path = temp_file.path().to_string_lossy().to_string();
 
+                // Remove any stale staging entry first. A leftover symlink from
+                // a previously failed LINK-mode build would otherwise make `cp`
+                // follow it and write *through* to the link target — escaping
+                // the staging path, and under privilege the rootfs itself —
+                // instead of replacing the staging entry. `ln -sfn` gives the
+                // LINK path the equivalent protection.
+                let rm_spec = CommandSpec::new("rm", vec!["-f".to_string(), staging.to_string()])
+                    .with_privilege(privilege);
+                executor.execute_checked(&rm_spec)?;
+
                 let cp_spec = CommandSpec::new("cp", vec![temp_path, staging.to_string()])
                     .with_privilege(privilege);
                 executor.execute_checked(&cp_spec)?;
@@ -263,19 +273,15 @@ impl AssembleResolvConfTask {
 
         // Promote the staged entry onto /etc/resolv.conf. The staging path is
         // a sibling of the final path, so this is a same-filesystem rename(2),
-        // which replaces the destination atomically. `-T` treats the
-        // destination as a plain path: without it, a destination that is a
-        // directory or a symlink to one would make mv move the staging entry
-        // *into* it instead of replacing it.
-        let mv_spec = CommandSpec::new(
-            "mv",
-            vec![
-                "-T".to_string(),
-                staging.to_string(),
-                resolv_conf_path.to_string(),
-            ],
-        )
-        .with_privilege(privilege);
+        // which replaces the destination atomically. Plain `mv` (no GNU-only
+        // `-T`) keeps this portable to busybox/musl hosts and is correct for
+        // every resolv.conf shape rsdebstrap produces: a regular file, a symlink
+        // to a file, or absent. A pre-existing `/etc/resolv.conf` that is itself
+        // a directory (or a symlink to one) is out of scope — `mv` would move
+        // the staging entry into it — but rsdebstrap never creates that state.
+        let mv_spec =
+            CommandSpec::new("mv", vec![staging.to_string(), resolv_conf_path.to_string()])
+                .with_privilege(privilege);
         executor.execute_checked(&mv_spec)?;
 
         match &self.link {
@@ -636,20 +642,15 @@ mod tests {
 
         let commands = ctx.executed_commands();
         let staging = format!("{}{}", rootfs.join("etc/resolv.conf"), STAGING_SUFFIX);
-        assert_eq!(commands.len(), 3);
-        assert_eq!(commands[0].0, "cp");
-        assert_eq!(commands[0].1[1], staging);
-        assert_eq!(commands[1].0, "chmod");
-        assert_eq!(commands[1].1, vec!["644", staging.as_str()]);
-        assert_eq!(commands[2].0, "mv");
-        assert_eq!(
-            commands[2].1,
-            vec![
-                "-T",
-                staging.as_str(),
-                rootfs.join("etc/resolv.conf").as_str()
-            ]
-        );
+        assert_eq!(commands.len(), 4);
+        assert_eq!(commands[0].0, "rm");
+        assert_eq!(commands[0].1, vec!["-f", staging.as_str()]);
+        assert_eq!(commands[1].0, "cp");
+        assert_eq!(commands[1].1[1], staging);
+        assert_eq!(commands[2].0, "chmod");
+        assert_eq!(commands[2].1, vec!["644", staging.as_str()]);
+        assert_eq!(commands[3].0, "mv");
+        assert_eq!(commands[3].1, vec![staging.as_str(), rootfs.join("etc/resolv.conf").as_str()]);
     }
 
     #[test]
@@ -694,14 +695,7 @@ mod tests {
             ]
         );
         assert_eq!(commands[1].0, "mv");
-        assert_eq!(
-            commands[1].1,
-            vec![
-                "-T",
-                staging.as_str(),
-                rootfs.join("etc/resolv.conf").as_str()
-            ]
-        );
+        assert_eq!(commands[1].1, vec![staging.as_str(), rootfs.join("etc/resolv.conf").as_str()]);
     }
 
     #[test]
@@ -800,7 +794,8 @@ mod tests {
         task.execute(&ctx).unwrap();
 
         let privileges = ctx.executed_privileges();
-        assert_eq!(privileges.len(), 3);
+        // rm, cp, chmod, mv — all escalated.
+        assert_eq!(privileges.len(), 4);
         assert!(privileges.iter().all(|p| *p == Some(PrivilegeMethod::Sudo)));
     }
 
@@ -914,16 +909,19 @@ mod tests {
     }
 
     #[test]
-    fn execute_generate_replaces_final_symlink_to_directory() {
-        // If /etc/resolv.conf is (pathologically) a symlink to a directory,
-        // `mv` without `-T` would move the staged file *into* it; `-T` makes
-        // the rename replace the symlink itself.
+    fn execute_generate_overwrites_stale_staging_symlink_to_directory() {
+        // A stale staging entry left by a failed LINK-mode build that is a
+        // symlink to a directory: a bare `cp` would follow it and write the
+        // generated content *inside* the directory, leaving the staging symlink
+        // for `mv` to promote (a wrong-typed resolv.conf). The `rm -f <staging>`
+        // before the copy replaces the stale symlink so a real file is staged.
         let temp = tempfile::tempdir().unwrap();
         let rootfs = camino::Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
         std::fs::create_dir_all(rootfs.join("etc")).unwrap();
-        let dir_target = rootfs.join("some_dir");
-        std::fs::create_dir_all(&dir_target).unwrap();
-        std::os::unix::fs::symlink(&dir_target, rootfs.join("etc/resolv.conf")).unwrap();
+        let stale_dir = rootfs.join("stale_dir");
+        std::fs::create_dir_all(&stale_dir).unwrap();
+        let staging = staging_path(&rootfs.join("etc/resolv.conf"));
+        std::os::unix::fs::symlink(&stale_dir, &staging).unwrap();
 
         let task = make_task_generate_resolved(vec!["8.8.8.8"], vec![]);
         let ctx = MockAssembleContext::new(&rootfs, false);
@@ -941,7 +939,41 @@ mod tests {
                 .unwrap()
                 .contains("nameserver 8.8.8.8")
         );
-        assert!(std::fs::read_dir(&dir_target).unwrap().next().is_none());
+        // Nothing was written through the stale symlink into the directory, and
+        // the staging entry was consumed by the promoting rename.
+        assert!(std::fs::read_dir(&stale_dir).unwrap().next().is_none());
+        assert!(std::fs::symlink_metadata(&staging).is_err());
+    }
+
+    #[test]
+    fn execute_generate_overwrites_stale_dangling_staging_symlink() {
+        // A stale staging entry that is a dangling symlink (a failed LINK-mode
+        // build whose target does not exist): a bare `cp` refuses with "not
+        // writing through dangling symlink" and the build would stay stuck on
+        // every retry. The `rm -f <staging>` clears it so the copy succeeds.
+        let temp = tempfile::tempdir().unwrap();
+        let rootfs = camino::Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(rootfs.join("etc")).unwrap();
+        let staging = staging_path(&rootfs.join("etc/resolv.conf"));
+        std::os::unix::fs::symlink(rootfs.join("does_not_exist"), &staging).unwrap();
+
+        let task = make_task_generate_resolved(vec!["8.8.8.8"], vec![]);
+        let ctx = MockAssembleContext::new(&rootfs, false);
+        task.execute(&ctx).unwrap();
+
+        let resolv = rootfs.join("etc/resolv.conf");
+        assert!(
+            std::fs::symlink_metadata(&resolv)
+                .unwrap()
+                .file_type()
+                .is_file()
+        );
+        assert!(
+            std::fs::read_to_string(&resolv)
+                .unwrap()
+                .contains("nameserver 8.8.8.8")
+        );
+        assert!(std::fs::symlink_metadata(&staging).is_err());
     }
 
     // =========================================================================
