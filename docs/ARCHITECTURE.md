@@ -264,8 +264,12 @@ Mock-executor pattern (`tests/helpers/mod.rs`):
   `ChrootProvider` and `DirectProvider` have infallible teardown — these paths are
   unreachable with current backends. Add tests when a backend with fallible teardown
   (bwrap, systemd-nspawn) lands.
-- **`run_pipeline_phase()` sequencing and gating** (temporary resolv.conf restored between
-  provision and assemble; assemble gated on that restore) are covered by in-crate tests in
-  `src/lib.rs`, using a recording executor that really runs `mv`/`cp`/`rm`/`ln` against a
-  temp rootfs. The remaining gap is the interplay with real mount/unmount failures —
-  `RootfsMounts` unit tests cover those error paths independently via `MockMountExecutor`.
+- **`run_pipeline_phase()` sequencing and gating** are covered by in-crate tests in
+  `src/lib.rs`, using a recording executor that really runs `mv`/`cp`/`rm`/`ln` and a
+  shell provision task against a temp rootfs: the temporary resolv.conf is restored
+  after provision (a real provision command sits between the setup and restore
+  sequences) and before assemble; assemble is gated on both the prepare/provision
+  result and the restore result; and an assemble failure propagates while the
+  atomically-staged replace leaves the restored original in place. The remaining gap
+  is the interplay with real mount/unmount failures — `RootfsMounts` unit tests cover
+  those error paths independently via `MockMountExecutor`.

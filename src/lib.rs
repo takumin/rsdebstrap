@@ -158,8 +158,9 @@ fn run_pipeline_phase(
                 u
             );
         }
-        return Err(e)
-            .context("failed to restore resolv.conf after provisioning; assemble phase skipped");
+        return Err(e).context(
+            "failed to restore resolv.conf after provisioning; any assemble tasks were skipped",
+        );
     }
 
     if let Err(e) = assemble_result {
@@ -259,8 +260,10 @@ pub fn run_schema() -> Result<()> {
 mod tests {
     //! Sequencing tests for `run_pipeline_phase()`: the temporary prepare
     //! resolv.conf must be restored after provision and before assemble, so an
-    //! assemble resolv_conf task's permanent file/symlink survives, and the
-    //! assemble phase must be gated on that restore succeeding.
+    //! assemble resolv_conf task's permanent file/symlink survives; the
+    //! assemble phase must be gated on prepare/provision and the restore both
+    //! succeeding; and an assemble failure must propagate while leaving the
+    //! restored original in place.
 
     use super::*;
     use crate::executor::{CommandSpec, ExecutionResult};
@@ -272,23 +275,30 @@ mod tests {
 
     /// Records commands and really executes them so tests can assert both the
     /// command order and the actual filesystem effects on a temp rootfs.
-    /// `fail_on_command` short-circuits a matching command with exit 1
-    /// without executing it.
+    /// `fail_on_command` short-circuits a matching command with exit 1 without
+    /// executing it; `fail_on_command_with_arg` additionally requires an
+    /// argument to contain the given fragment, so a single occurrence of a
+    /// repeated command can be targeted.
     struct RecordingExecutor {
         commands: Mutex<Vec<(String, Vec<String>)>>,
-        fail_on_command: Mutex<Option<String>>,
+        fail_on: Mutex<Option<(String, Option<String>)>>,
     }
 
     impl RecordingExecutor {
         fn new() -> Arc<Self> {
             Arc::new(Self {
                 commands: Mutex::new(Vec::new()),
-                fail_on_command: Mutex::new(None),
+                fail_on: Mutex::new(None),
             })
         }
 
         fn fail_on_command(&self, command: &str) {
-            *self.fail_on_command.lock().unwrap() = Some(command.to_string());
+            *self.fail_on.lock().unwrap() = Some((command.to_string(), None));
+        }
+
+        fn fail_on_command_with_arg(&self, command: &str, arg_fragment: &str) {
+            *self.fail_on.lock().unwrap() =
+                Some((command.to_string(), Some(arg_fragment.to_string())));
         }
 
         fn command_names(&self) -> Vec<String> {
@@ -308,13 +318,18 @@ mod tests {
                 .unwrap()
                 .push((spec.command.clone(), spec.args.clone()));
 
-            if self
-                .fail_on_command
-                .lock()
-                .unwrap()
-                .as_deref()
-                .is_some_and(|command| command == spec.command)
-            {
+            let should_fail =
+                self.fail_on
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|(command, arg)| {
+                        command == &spec.command
+                            && arg.as_deref().is_none_or(|fragment| {
+                                spec.args.iter().any(|a| a.contains(fragment))
+                            })
+                    });
+            if should_fail {
                 return Ok(ExecutionResult {
                     status: Some(ExitStatus::from_raw(1 << 8)),
                 });
@@ -329,15 +344,28 @@ mod tests {
         }
     }
 
-    /// Minimal profile: directory bootstrap output, no mounts, empty provision,
-    /// no privilege defaults (commands run unprivileged so the executor can
-    /// really run them).
-    fn profile_yaml(dir: &Utf8Path, prepare: bool, assemble: bool) -> String {
+    /// Minimal profile: directory bootstrap output, no mounts, no privilege
+    /// defaults (commands run unprivileged so the executor can really run
+    /// them). `provision` adds one shell task with the given inline content,
+    /// running directly on the host (`isolation: false`).
+    fn profile_yaml(
+        dir: &Utf8Path,
+        prepare: bool,
+        provision: Option<&str>,
+        assemble: bool,
+    ) -> String {
         let mut yaml = format!(
             "dir: {dir}\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: rootfs\n"
         );
         if prepare {
             yaml.push_str("prepare:\n  resolv_conf:\n    name_servers: [192.0.2.1]\n");
+        }
+        if let Some(content) = provision {
+            // The content must stay quoted in the YAML: a bare `true` would
+            // parse as a boolean, not a script string.
+            yaml.push_str(&format!(
+                "provision:\n  - type: shell\n    content: \"{content}\"\n    isolation: false\n"
+            ));
         }
         if assemble {
             yaml.push_str(
@@ -361,6 +389,12 @@ mod tests {
         let rootfs = dir.join("rootfs");
         fs::create_dir_all(rootfs.join("etc")).unwrap();
         fs::write(rootfs.join("etc/resolv.conf"), "# original\n").unwrap();
+        // For shell provision tasks (DirectProvider): a real /tmp for the
+        // staged script, and a /bin/sh resolving to the host shell so the
+        // recording executor can really run it.
+        fs::create_dir_all(rootfs.join("tmp")).unwrap();
+        fs::create_dir_all(rootfs.join("bin")).unwrap();
+        std::os::unix::fs::symlink("/bin/sh", rootfs.join("bin/sh")).unwrap();
         rootfs
     }
 
@@ -371,7 +405,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
-        let profile = load_profile_from(&profile_yaml(dir, true, true));
+        let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
 
         run_pipeline_phase(&profile, executor.clone(), false).unwrap();
@@ -399,7 +433,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
-        let profile = load_profile_from(&profile_yaml(dir, true, false));
+        let profile = load_profile_from(&profile_yaml(dir, true, None, false));
         let executor = RecordingExecutor::new();
 
         run_pipeline_phase(&profile, executor.clone(), false).unwrap();
@@ -416,7 +450,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
-        let profile = load_profile_from(&profile_yaml(dir, false, true));
+        let profile = load_profile_from(&profile_yaml(dir, false, None, true));
         let executor = RecordingExecutor::new();
 
         run_pipeline_phase(&profile, executor.clone(), false).unwrap();
@@ -440,7 +474,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
-        let profile = load_profile_from(&profile_yaml(dir, false, false));
+        let profile = load_profile_from(&profile_yaml(dir, false, None, false));
         let executor = RecordingExecutor::new();
 
         run_pipeline_phase(&profile, executor.clone(), false).unwrap();
@@ -455,7 +489,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
-        let profile = load_profile_from(&profile_yaml(dir, true, true));
+        let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
         executor.fail_on_command("rm");
 
@@ -484,7 +518,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
-        let profile = load_profile_from(&profile_yaml(dir, true, true));
+        let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
         executor.fail_on_command("cp");
 
@@ -500,5 +534,93 @@ mod tests {
         let resolv = rootfs.join("etc/resolv.conf");
         assert_eq!(fs::read_to_string(&resolv).unwrap(), "# original\n");
         assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
+    }
+
+    #[test]
+    fn restore_runs_after_provision_and_before_assemble() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        let profile = load_profile_from(&profile_yaml(dir, true, Some("true"), true));
+        let executor = RecordingExecutor::new();
+
+        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+
+        // setup (mv, cp, chmod) → provision shell → restore (rm, mv) →
+        // assemble stage-and-rename (ln, mv): the provision task runs while
+        // the temporary resolv.conf is in place; the restore strictly follows.
+        let sh = rootfs.join("bin/sh");
+        assert_eq!(
+            executor.command_names(),
+            ["mv", "cp", "chmod", sh.as_str(), "rm", "mv", "ln", "mv"]
+        );
+        let resolv = rootfs.join("etc/resolv.conf");
+        assert!(
+            fs::symlink_metadata(&resolv)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new(LINK_TARGET));
+        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
+    }
+
+    #[test]
+    fn provision_failure_skips_assemble_and_restores_original() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        let profile = load_profile_from(&profile_yaml(dir, true, Some("exit 1"), true));
+        let executor = RecordingExecutor::new();
+
+        let err = run_pipeline_phase(&profile, executor.clone(), false).unwrap_err();
+
+        assert!(
+            format!("{:#}", err).contains("failed to run provision"),
+            "unexpected error: {err:#}"
+        );
+        // The failed provision gates assemble off (no ln/mv after the
+        // restore), but the teardown still restores the original.
+        let sh = rootfs.join("bin/sh");
+        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", sh.as_str(), "rm", "mv"]);
+        let resolv = rootfs.join("etc/resolv.conf");
+        assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
+        assert_eq!(fs::read_to_string(&resolv).unwrap(), "# original\n");
+        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
+    }
+
+    #[test]
+    fn assemble_failure_propagates_and_preserves_restored_original() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        let profile = load_profile_from(&profile_yaml(dir, true, None, true));
+        let executor = RecordingExecutor::new();
+        // Fail only assemble's promote mv: the setup/teardown mvs never have
+        // the staging path among their arguments and run for real.
+        executor.fail_on_command_with_arg("mv", "rsdebstrap-tmp");
+
+        let err = run_pipeline_phase(&profile, executor.clone(), false).unwrap_err();
+
+        assert!(
+            format!("{:#}", err).contains("failed to run assemble"),
+            "unexpected error: {err:#}"
+        );
+        // setup (mv, cp, chmod) → restore (rm, mv) → assemble stages its
+        // symlink (ln) and the promote mv fails.
+        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv", "ln", "mv"]);
+        // Atomicity invariant at pipeline level: the restored original
+        // survives the failed assemble; only the staging symlink remains.
+        let resolv = rootfs.join("etc/resolv.conf");
+        assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
+        assert_eq!(fs::read_to_string(&resolv).unwrap(), "# original\n");
+        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
+        let staging = rootfs.join("etc/resolv.conf.rsdebstrap-tmp");
+        assert!(
+            fs::symlink_metadata(&staging)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 }
