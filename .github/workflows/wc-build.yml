@@ -59,24 +59,30 @@ jobs:
       uses: aquaproj/aqua-installer@96a9bc20066c5bf5e275b41019cfc165b25f4e2e # v4.0.5
       with:
         aqua_version: v2.62.0
+    # Tag builds restore no caches at all: release artifacts are always built
+    # from freshly fetched, verified-at-download inputs.
     - name: Restore cargo deps cache
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
         path: ~/.cargo/registry/
         restore-keys: deps-
     - name: Restore setup build aqua cache
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         key: setup-build-aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
         path: ~/.local/share/aquaproj-aqua/
         restore-keys: setup-build-aqua-
     - name: Restore rustup cache
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         key: rustup-${{ hashFiles('rust-toolchain.toml') }}
         path: ~/.rustup/toolchains/
     - name: Restore build cache
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       id: build-cache-restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
