@@ -82,7 +82,9 @@ jobs:
       with:
         key: build-${{ matrix.profile }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
         path: target/
-        restore-keys: build-${{ matrix.profile }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml') }}-
+        # No fallback on main: its saves must start from a clean slate so stale
+        # artifacts never accrete into the shared cache.
+        restore-keys: ${{ github.ref != 'refs/heads/main' && format('build-{0}-{1}-{2}-', matrix.profile, matrix.target, hashFiles('rust-toolchain.toml')) || '' }}
     - name: Setup build
       run: |-
         task setup:build

@@ -39,7 +39,9 @@ jobs:
       with:
         key: test-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
         path: target/
-        restore-keys: test-${{ hashFiles('rust-toolchain.toml') }}-
+        # No fallback on main: its saves must start from a clean slate so stale
+        # artifacts never accrete into the shared cache.
+        restore-keys: ${{ github.ref != 'refs/heads/main' && format('test-{0}-', hashFiles('rust-toolchain.toml')) || '' }}
     - name: Setup test
       run: |-
         task setup:test
