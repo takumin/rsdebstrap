@@ -119,12 +119,12 @@ provision:
     rm -rf /var/lib/apt/lists/*
     echo "Cleanup complete"
 
-# Assemble phase runs after provisioning. Named-field form with a single
-# optional `resolv_conf` key that writes a permanent /etc/resolv.conf into
-# the final rootfs (a generated file or a symlink):
-# assemble:
-#   resolv_conf:
-#     name_servers: [8.8.8.8, 8.8.4.4]
-#     search: [example.com]
-#     # OR, instead of name_servers/search, restore the systemd stub symlink:
-#     # link: ../run/systemd/resolve/stub-resolv.conf
+  # Assemble phase runs after provisioning. Named-field form with a single
+  # optional `resolv_conf` key that writes a permanent /etc/resolv.conf into
+  # the final rootfs (a generated file or a symlink):
+  # assemble:
+  #   resolv_conf:
+  #     name_servers: [8.8.8.8, 8.8.4.4]
+  #     search: [example.com]
+  #     # OR, instead of name_servers/search, restore the systemd stub symlink:
+  #     # link: ../run/systemd/resolve/stub-resolv.conf
