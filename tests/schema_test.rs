@@ -353,6 +353,20 @@ fn schema_matches_structural_deserializer() {
             .to_string(),
             true,
         ),
+        // Map *keys* are outside the strict-scalar rule on purpose: serde_yaml stringifies
+        // scalar keys ({64: /x} -> "64") and the YAML->JSON conversion editors rely on does
+        // the same, so both sides agree. Making keys strict would only create a new
+        // parser/schema divergence. This row pins the agreement.
+        (
+            "numeric mitamae binary key",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: {binary: {64: /x}}}\n",
+            )
+            .to_string(),
+            true,
+        ),
         // Non-string scalars in string-typed fields: rejected by both sides. serde_yaml's raw
         // scalar-to-string coercion used to accept these on the deserializer only; the `de`
         // helpers now surface the resolved scalar type so the parser matches the schema.
