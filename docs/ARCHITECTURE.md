@@ -136,17 +136,28 @@ is compiled behind the **default-on `schema` cargo feature**: `schemars`/`serde_
 optional dependencies enabled by it, every `JsonSchema` derive and `#[schemars(...)]` attribute
 is `cfg_attr`-gated, and the `schema` subcommand plus `profile_json_schema*()` do not exist
 under `--no-default-features` (for size-constrained `apply`/`validate`-only builds). The schema
-test suites carry a crate-level `#![cfg(feature = "schema")]`, so a default `cargo test` — and
-CI's `--all-features` runs — still exercise every drift guard, while `--no-default-features`
-compiles them to empty crates instead of failing. (In-file gating, not a Cargo `[[test]]` stanza
-with `required-features`: an explicit test target makes manifest parsing require the file, which
-breaks CI's sparse checkouts that fetch/build without `tests/`.) A missed `cfg_attr` on a new
-field only surfaces in the schema-less build, which is why
-`cargo check --all-targets --no-default-features` is part of the routine command set in
-AGENTS.md.
+test suites carry a crate-level `#![cfg(feature = "schema")]`, so a default `cargo test` — which
+is exactly what CI's test job runs — still exercises every drift guard, while
+`--no-default-features` compiles them to empty crates instead of failing. (In-file gating, not a
+Cargo `[[test]]` stanza with `required-features`: an explicit test target makes manifest parsing
+require the file, which breaks CI's sparse checkouts that fetch/build without `tests/`.) A missed
+`cfg_attr` on a new field only surfaces in the schema-less build, which is why
+`cargo check --all-targets --no-default-features` is part of the routine command set in AGENTS.md
+**and runs in CI's test task** — the gate design is only real if that feature graph actually
+compiles somewhere.
 
 The non-obvious parts are all about keeping the schema faithful to the *deserializer*:
 
+- **The YAML text layer is aligned with the JSON data model** (`src/de.rs`). `serde_yaml`'s text
+  deserializer hands the raw scalar text to any field that asks for a string — `dir: null` would
+  otherwise parse as the literal path `"null"` (and only outside internally tagged enums, whose
+  content buffering resolves scalars first, so acceptance was context-dependent) — and it accepts
+  an *empty* value as the default for container fields while rejecting an explicit `null`.
+  String-typed fields therefore deserialize through the `deserialize_any`-based helpers in
+  `src/de.rs`, which reject non-string scalars uniformly, and defaulted section/list/map fields
+  map an explicit `null` to the default. The net rule: `null` == empty value (what a fully
+  commented-out section leaves behind) == omitted key, everywhere; the schema models these fields
+  as nullable to match, and string fields as plain strings.
 - **camino paths.** `Utf8PathBuf` has no `schemars` support and the orphan rule forbids a direct
   impl, so path fields point at the `Utf8PathSchema` proxy (`src/schema.rs`) via
   `#[schemars(with = "...")]`. Forgetting it on a new path field is a **compile error** (the
@@ -206,9 +217,16 @@ Drift guards (all in `cargo test`, so CI fails on drift):
   file, so drift normally fixes itself; this byte-compare test remains the enforcement backstop.
 - **Differential + property tests** (`tests/schema_test.rs`, `tests/schema_proptest.rs`) assert the
   critical safety invariant: whenever the structural deserializer accepts a document, the schema
-  must accept it too (no false rejections that would make editor tooling flag valid configs).
-  Semantic checks that JSON Schema cannot express (mount ordering, `copy` vs `name_servers`
-  exclusivity, mitamae binary resolution) stay in `Profile::validate_*` and are out of scope here.
+  must accept it too (no false rejections that would make editor tooling flag valid configs). The
+  property test asserts this twice per generated document — once on the `serde_json::Value` and
+  once through a YAML text round-trip, because production parses YAML and `serde_yaml`'s
+  acceptance surface is not identical to the JSON value model. The few intentional divergences in
+  the other direction (annotational `ipv4`/`ipv6` formats; duplicate mapping keys, which serde
+  rejects but the YAML→JSON conversion resolves last-wins before the schema can see them) are
+  pinned with per-side expectations in `schema_divergences_are_pinned` so the set cannot grow
+  silently. Semantic checks that JSON Schema cannot express (mount ordering, `copy` vs
+  `name_servers` exclusivity, mitamae binary resolution) stay in `Profile::validate_*` and are out
+  of scope here.
 
 ## Testing pattern
 

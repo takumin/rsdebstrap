@@ -134,6 +134,16 @@ assemble:                   # Optional finalization steps (named-field struct)
 > `provision` is unchanged (it stays an ordered list). Key order under `prepare` is irrelevant —
 > the pipeline always runs `mount` before `resolv_conf`.
 
+### YAML scalar and null rules
+
+- String-typed fields (paths, suite/target names, mount sources/options, search domains) accept
+  only YAML strings. Numbers, booleans, and `null` are parse errors — quote values that look like
+  scalars (`suite: "13"`). `dir` must additionally be non-empty.
+- On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`, `mounts`,
+  `options`, `name_servers`, `search`, `mitamae.binary`), an explicit `null`, an empty value
+  (e.g. a section whose entries are all commented out), and omitting the key are equivalent —
+  all mean "use the default".
+
 ### Privilege field values
 
 - Absent (field not specified) → `Inherit`: use defaults if available, no escalation otherwise
