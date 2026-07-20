@@ -2410,3 +2410,25 @@ fn test_string_list_elements_stay_strict_under_null_leniency() {
     );
     assert!(!deserializes(&binary_int), "mitamae binary paths must be strings");
 }
+
+#[test]
+fn test_load_profile_rejects_empty_dir() {
+    // editorconfig-checker-disable
+    let result = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: ""
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+"#
+    ));
+    // editorconfig-checker-enable
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("dir must not be empty"),
+        "Expected error message to contain 'dir must not be empty', got: {}",
+        err_msg
+    );
+}

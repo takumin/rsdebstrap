@@ -734,6 +734,12 @@ pub fn load_profile(path: &Utf8Path) -> Result<Profile, RsdebstrapError> {
     let (reader, canonical_path) = read_profile_file(path)?;
     let mut profile = parse_profile_yaml(reader, &canonical_path)?;
 
+    // Checked before path resolution: joining an empty `dir` onto the profile's
+    // directory would silently target that directory itself.
+    if profile.dir.as_str().is_empty() {
+        return Err(RsdebstrapError::Validation("dir must not be empty".to_string()));
+    }
+
     let profile_dir = canonical_path.parent().ok_or_else(|| {
         RsdebstrapError::Config(format!(
             "could not determine parent directory of profile path: {}",
