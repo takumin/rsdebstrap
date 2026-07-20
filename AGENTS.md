@@ -14,6 +14,10 @@ cargo test --quiet
 # Check for errors without building
 cargo check --all-targets --all-features --quiet
 
+# Also check the schema-less build: schema generation lives behind the default-on
+# `schema` cargo feature, and a missed `cfg_attr` gate only surfaces here.
+cargo check --all-targets --no-default-features --quiet
+
 # Lint
 cargo clippy --all-targets --all-features --quiet
 
@@ -26,6 +30,11 @@ cargo run -- <command>
 # Examples
 cargo run -- apply -f examples/debian_trixie_mmdebstrap.yml --dry-run
 cargo run -- validate -f examples/debian_trixie_mmdebstrap.yml
+
+# Generate the profile JSON Schema (derived from the Rust config types).
+# Regenerate the committed copy after any config-type change, or `cargo test` fails.
+# The autofix.ci workflow also runs this on PRs and auto-commits any drift.
+task schema  # equivalent to: cargo run -- schema > schema/rsdebstrap.schema.json
 ```
 
 ## Architecture Overview
@@ -46,6 +55,14 @@ resolution model, the phase pipeline, isolation/privilege plumbing, or the
 filesystem-safety code — it captures decisions that are not obvious from the source.
 
 ## Profile Structure (YAML)
+
+A machine-readable JSON Schema for this format is committed at
+[`schema/rsdebstrap.schema.json`](schema/rsdebstrap.schema.json) (usable for editor
+completion/validation). It is generated from the Rust config types — regenerate it with
+`task schema` (or `cargo run -- schema > schema/rsdebstrap.schema.json`) after any
+config-type change; the autofix.ci workflow also regenerates it and auto-commits drift
+to pull requests (see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#json-schema-generation)).
 
 ```yaml
 dir: /output/path           # Base output directory
@@ -116,6 +133,20 @@ assemble:                   # Optional finalization steps (named-field struct)
 >
 > `provision` is unchanged (it stays an ordered list). Key order under `prepare` is irrelevant —
 > the pipeline always runs `mount` before `resolv_conf`.
+
+### YAML scalar and null rules
+
+- String-typed fields (paths, suite/target names, mount sources/options, search domains) accept
+  only YAML strings. Numbers, booleans, and `null` are parse errors — quote values that look like
+  scalars (`suite: "13"`). `dir` must additionally be non-empty.
+- On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`, `mounts`,
+  `options`, `name_servers`, `search`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty
+  value (e.g. a section whose entries are all commented out), and omitting the key are
+  equivalent — all mean "use the default".
+- That list is exhaustive: the list fields inside the internally tagged `bootstrap:` maps
+  (`include`, `components`, `keyring`, hook lists, …) and the tagged `isolation:` config stay
+  strict — an explicit `null` or an empty value (e.g. a list whose entries are all commented
+  out) is a parse error there. Omit the key instead.
 
 ### Privilege field values
 

@@ -1,12 +1,15 @@
 pub mod bootstrap;
 pub mod cli;
 pub mod config;
+pub(crate) mod de;
 pub mod error;
 pub mod executor;
 pub mod isolation;
 pub mod phase;
 pub mod pipeline;
 pub mod privilege;
+#[cfg(feature = "schema")]
+pub mod schema;
 
 pub use error::RsdebstrapError;
 
@@ -15,6 +18,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
+#[cfg(feature = "schema")]
+use serde::Serialize;
 use tracing::{info, warn};
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
@@ -173,4 +178,55 @@ pub fn run_validate(opts: &cli::ValidateArgs) -> Result<()> {
     profile.validate().context("profile validation failed")?;
     info!("validation successful:\n{:#?}", profile);
     Ok(())
+}
+
+/// Generates the JSON Schema for the YAML profile format.
+///
+/// The schema is derived directly from the [`config::Profile`] Rust types, so it always
+/// tracks what `apply`/`validate` accept — there is no separately maintained schema to
+/// drift out of sync.
+#[cfg(feature = "schema")]
+pub fn profile_json_schema() -> serde_json::Value {
+    // `schemars::Schema` wraps a `serde_json::Value`; `to_value` unwraps it infallibly,
+    // avoiding a redundant serialize round-trip over the whole schema tree.
+    schemars::schema_for!(config::Profile).to_value()
+}
+
+/// Canonical pretty-printed rendering of the profile JSON Schema (no trailing newline).
+///
+/// Uses tab indentation rather than `serde_json::to_string_pretty`'s hard-coded two spaces,
+/// matching the repository's JSON convention (e.g. `.renovaterc.json`, `.claude/settings.json`)
+/// and `.editorconfig`'s `[*] indent_style = tab`. Both the `schema` subcommand and the
+/// committed-schema drift test render through this function so they cannot diverge.
+#[cfg(feature = "schema")]
+pub fn profile_json_schema_pretty() -> String {
+    let value = profile_json_schema();
+    let mut buf = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"\t");
+    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+    value
+        .serialize(&mut ser)
+        .expect("Profile JSON Schema must serialize");
+    String::from_utf8(buf).expect("serde_json emits valid UTF-8")
+}
+
+/// Prints the profile JSON Schema (pretty-printed) to stdout.
+///
+/// A closed stdout (e.g. `rsdebstrap schema | head`) is a normal way for a pipe
+/// consumer to stop reading, so `BrokenPipe` ends the command successfully instead
+/// of panicking the way `println!` would once the schema outgrows the pipe buffer.
+#[cfg(feature = "schema")]
+pub fn run_schema() -> Result<()> {
+    use std::io::Write;
+
+    let mut stdout = std::io::stdout().lock();
+    let result = stdout
+        .write_all(profile_json_schema_pretty().as_bytes())
+        .and_then(|()| stdout.write_all(b"\n"))
+        .and_then(|()| stdout.flush());
+    match result {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other
+            .map_err(|e| RsdebstrapError::io("failed to write the profile JSON Schema", e).into()),
+    }
 }

@@ -1,0 +1,34 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+includes:
+  tool:
+    taskfile: tool.task.yml
+    internal: true
+
+tasks:
+  default:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task: generate
+
+  generate:
+    desc: '{{.TASK}}'
+    dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: tool:aqua:tag:rustup
+    - task: tool:cargo:fetch
+    sources:
+    - 'Cargo.toml'
+    - 'Cargo.lock'
+    - 'src/**/*.rs'
+    generates:
+    - schema/rsdebstrap.schema.json
+    cmds:
+    - cargo build --frozen --quiet
+    - cargo run --frozen --quiet -- schema > schema/rsdebstrap.schema.json.tmp
+    - mv schema/rsdebstrap.schema.json.tmp schema/rsdebstrap.schema.json

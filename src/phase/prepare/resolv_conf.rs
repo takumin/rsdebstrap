@@ -8,6 +8,8 @@
 use std::borrow::Cow;
 use std::net::IpAddr;
 
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{IsolationConfig, ResolvConfConfig};
@@ -23,16 +25,30 @@ use crate::phase::PhaseItem;
 ///
 /// At most one `ResolvConfTask` may appear in the prepare phase.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ResolvConfTask {
     /// Copy host's /etc/resolv.conf into the chroot (following symlinks).
     #[serde(default)]
     pub copy: bool,
     /// Nameserver IP addresses to write to resolv.conf.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_to_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<Vec<crate::schema::IpAddrSchema>>")
+    )]
     pub name_servers: Vec<IpAddr>,
     /// Search domains to write to resolv.conf.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "crate::de::string_list",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<String>>"))]
     pub search: Vec<String>,
 }
 

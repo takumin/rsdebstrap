@@ -8,6 +8,7 @@ includes:
   tool: ./tasks/tool.task.yml
   setup: ./tasks/setup.task.yml
   format: ./tasks/format.task.yml
+  schema: ./tasks/schema.task.yml
   reviewdog: ./tasks/reviewdog.task.yml
   test: ./tasks/test.task.yml
   build: ./tasks/build.task.yml
@@ -21,6 +22,7 @@ tasks:
     cmds:
     - task: tool
     - task: format
+    - task: schema
     - task: reviewdog
     - task: test
     - task: build

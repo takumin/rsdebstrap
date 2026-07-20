@@ -19,6 +19,8 @@ pub mod shell;
 use std::borrow::Cow;
 
 use camino::Utf8Path;
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub use mitamae::MitamaeTask;
@@ -37,6 +39,7 @@ use crate::privilege::PrivilegeDefaults;
 /// matching — adding a new variant causes compilation errors at every
 /// unhandled match site, preventing missed implementations.
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ProvisionTask {
     /// Shell script execution task

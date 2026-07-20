@@ -70,6 +70,18 @@ pub enum Commands {
     /// rsdebstrap completions fish > ~/.config/fish/completions/rsdebstrap.fish
     /// ```
     Completions(CompletionsArgs),
+
+    /// Print the JSON Schema for the YAML profile format.
+    ///
+    /// The schema is generated directly from the Rust configuration types, so it always
+    /// matches what `apply`/`validate` accept. Redirect it to a file to use for editor
+    /// completion/validation:
+    ///
+    /// ```sh
+    /// rsdebstrap schema > schema/rsdebstrap.schema.json
+    /// ```
+    #[cfg(feature = "schema")]
+    Schema,
 }
 
 /// Common arguments shared across multiple commands.
@@ -183,8 +195,9 @@ pub enum LogLevel {
 ///         cli::Commands::Validate(opts) => {
 ///             // Process the validate arguments
 ///         }
-///         cli::Commands::Completions(opts) => {
-///             // Generate shell completions
+///         // Completions, plus Schema when the `schema` feature (default-on) is enabled.
+///         _ => {
+///             // Handle the stdout-only subcommands
 ///         }
 ///     }
 ///     Ok(())

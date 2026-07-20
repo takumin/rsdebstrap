@@ -13,6 +13,8 @@ use std::io::BufReader;
 use std::net::IpAddr;
 
 use camino::{Utf8Path, Utf8PathBuf};
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -33,6 +35,7 @@ const PSEUDO_FS_TYPES: &[&str] = &["proc", "sysfs", "devpts", "devtmpfs", "tmpfs
 
 /// Mount preset defining a predefined set of mount entries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum MountPreset {
     /// Recommended mount set for typical Debian rootfs operations.
@@ -87,6 +90,10 @@ impl MountPreset {
 ///
 /// Limits follow the resolv.conf specification: max 3 nameservers,
 /// max 6 search domains (total 256 characters).
+//
+// No `JsonSchema` derive: this is a runtime-only type (see `src/isolation/resolv_conf.rs`)
+// and is not reachable from `Profile`, so it contributes nothing to the generated schema.
+// The profile-facing DNS shapes are `prepare::ResolvConfTask` / `assemble::AssembleResolvConfTask`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvConfConfig {
     /// Copy host's /etc/resolv.conf into the chroot (following symlinks).
@@ -169,13 +176,19 @@ impl ResolvConfConfig {
 
 /// A single mount entry specifying what to mount into the rootfs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct MountEntry {
     /// Device name or path (e.g., "proc", "sysfs", "/dev").
+    #[serde(deserialize_with = "crate::de::string")]
     pub source: String,
     /// Mount point inside the rootfs (absolute path).
+    #[serde(deserialize_with = "crate::de::path")]
+    #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub target: Utf8PathBuf,
     /// Mount options (e.g., "bind", "nosuid"). Joined with "," for `-o`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::string_list")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<String>>"))]
     pub options: Vec<String>,
 }
 
@@ -296,6 +309,7 @@ impl MountEntry {
 /// This enum represents the different bootstrap tools that can be used.
 /// The `type` field in YAML determines which variant is used.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Bootstrap {
     /// mmdebstrap backend
@@ -346,22 +360,44 @@ impl Bootstrap {
 
 /// Isolation backend configuration.
 ///
-/// This enum represents the different isolation mechanisms that can be used
-/// to execute commands within a rootfs. The `type` field in YAML determines
-/// which variant is used. If not specified, defaults to chroot.
-#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+/// The `type` key selects the backend used to run commands inside the rootfs; `chroot` is
+/// currently the only backend. `type` is required whenever an `isolation` map is written
+/// out — the chroot default applies only when the surrounding `isolation` key (e.g.
+/// `defaults.isolation`) is omitted entirely.
+// Internally tagged like `Bootstrap` (rather than a plain struct) so each backend keeps its
+// own payload struct as an extension point for backend-specific options (bwrap, nspawn, …).
+// `deny_unknown_fields` would be a serde no-op on the enum itself, so strictness lives on
+// the per-variant payload structs: serde consumes the `type` tag when selecting the variant
+// and hands only the remaining keys to the payload, whose `deny_unknown_fields` then
+// rejects typo'd keys (see the `Bootstrap` note in ARCHITECTURE.md).
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum IsolationConfig {
-    /// chroot isolation (default)
-    #[default]
-    Chroot,
-    // Future: Bwrap(BwrapConfig), Nspawn(NspawnConfig)
+    /// Run commands inside the rootfs via `chroot`.
+    Chroot(ChrootIsolation),
+}
+
+/// Options for the `chroot` isolation backend (currently none).
+// A braced (named-field) empty struct, not a unit struct: internally tagged variants need a
+// map-shaped payload to serialize, and only the braced form gives `deny_unknown_fields` a
+// struct visitor that rejects `{type: chroot, <typo>: ...}`.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ChrootIsolation {}
+
+impl Default for IsolationConfig {
+    /// The backend used when no `isolation` key is configured: chroot.
+    fn default() -> Self {
+        Self::chroot()
+    }
 }
 
 impl IsolationConfig {
     /// Creates a default chroot config.
     pub fn chroot() -> Self {
-        Self::Chroot
+        Self::Chroot(ChrootIsolation {})
     }
 
     /// Returns a boxed isolation provider instance.
@@ -370,7 +406,7 @@ impl IsolationConfig {
     /// on each variant explicitly.
     pub fn as_provider(&self) -> Box<dyn IsolationProvider> {
         match self {
-            IsolationConfig::Chroot => Box::new(ChrootProvider),
+            Self::Chroot(_) => Box::new(ChrootProvider),
         }
     }
 }
@@ -380,9 +416,17 @@ impl IsolationConfig {
 /// Allows specifying architecture-specific binary paths that apply to all
 /// mitamae tasks unless overridden at the task level.
 #[derive(Debug, Deserialize, Clone, Default)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct MitamaeDefaults {
     /// Architecture-specific binary paths (key: "x86_64", "aarch64", etc.)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::path_map")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            with = "Option<std::collections::HashMap<String, crate::schema::Utf8PathSchema>>"
+        )
+    )]
     pub binary: HashMap<String, Utf8PathBuf>,
 }
 
@@ -391,12 +435,15 @@ pub struct MitamaeDefaults {
 /// Groups configuration defaults like isolation backend.
 /// If omitted in YAML, all fields use their respective defaults.
 #[derive(Debug, Deserialize, Clone, Default)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct Defaults {
     /// Isolation backend for running commands in rootfs (default: chroot)
     #[serde(default)]
     pub isolation: IsolationConfig,
     /// Default settings for mitamae tasks
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<MitamaeDefaults>"))]
     pub mitamae: MitamaeDefaults,
     /// Default privilege escalation settings
     #[serde(default)]
@@ -408,22 +455,30 @@ pub struct Defaults {
 /// A profile contains the target directory and bootstrap tool configuration
 /// details needed to create a Debian-based system.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     /// Target directory path for the bootstrap operation
+    #[serde(deserialize_with = "crate::de::path")]
+    #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub dir: Utf8PathBuf,
     /// Default settings (isolation backend, etc.)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Defaults>"))]
     pub defaults: Defaults,
     /// Bootstrap tool configuration
     pub bootstrap: Bootstrap,
     /// Prepare tasks to run before provisioning (optional)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<PrepareConfig>"))]
     pub prepare: PrepareConfig,
     /// Main provisioning tasks (optional)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<ProvisionTask>>"))]
     pub provision: Vec<ProvisionTask>,
     /// Assemble tasks to run after provisioning (optional)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<AssembleConfig>"))]
     pub assemble: AssembleConfig,
 }
 
@@ -482,7 +537,7 @@ impl Profile {
         };
 
         // mounts require chroot isolation
-        if !matches!(self.defaults.isolation, IsolationConfig::Chroot) {
+        if !matches!(self.defaults.isolation, IsolationConfig::Chroot(_)) {
             return Err(RsdebstrapError::Validation(
                 "mounts require chroot isolation (defaults.isolation must be chroot)".to_string(),
             ));
@@ -513,7 +568,7 @@ impl Profile {
         // The named-field `prepare.resolv_conf` guarantees at most one task.
         if let Some(task) = &self.prepare.resolv_conf {
             // resolv_conf requires chroot isolation
-            if !matches!(self.defaults.isolation, IsolationConfig::Chroot) {
+            if !matches!(self.defaults.isolation, IsolationConfig::Chroot(_)) {
                 return Err(RsdebstrapError::Validation(
                     "resolv_conf requires chroot isolation \
                     (defaults.isolation must be chroot)"
@@ -679,6 +734,12 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 pub fn load_profile(path: &Utf8Path) -> Result<Profile, RsdebstrapError> {
     let (reader, canonical_path) = read_profile_file(path)?;
     let mut profile = parse_profile_yaml(reader, &canonical_path)?;
+
+    // Checked before path resolution: joining an empty `dir` onto the profile's
+    // directory would silently target that directory itself.
+    if profile.dir.as_str().is_empty() {
+        return Err(RsdebstrapError::Validation("dir must not be empty".to_string()));
+    }
 
     let profile_dir = canonical_path.parent().ok_or_else(|| {
         RsdebstrapError::Config(format!(
@@ -1090,7 +1151,7 @@ mod tests {
 
     #[test]
     fn test_isolation_config_serialize_deserialize_roundtrip() {
-        let config = IsolationConfig::Chroot;
+        let config = IsolationConfig::chroot();
         let yaml = serde_yaml::to_string(&config).unwrap();
         let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);

@@ -13,7 +13,7 @@ For the high-level map, build commands, and the YAML profile contract, see
 CLI (src/cli.rs) → Config (src/config.rs) → Bootstrap (src/bootstrap/) → Pipeline (src/pipeline.rs)
 ```
 
-1. **CLI** parses arguments (clap): `apply`, `validate`, `completions`.
+1. **CLI** parses arguments (clap): `apply`, `validate`, `completions`, `schema`.
 2. **Config** loads/validates the YAML profile, resolves relative paths, applies defaults.
 3. **Bootstrap** runs a backend (`mmdebstrap`/`debootstrap`) to create the rootfs.
 4. **Pipeline** runs the `prepare` → `provision` → `assemble` phases in order.
@@ -36,11 +36,18 @@ one deliberate 4-state pattern, resolved against profile `defaults`:
 - `resolve()` collapses a state against the profile default into a concrete
   `Option<...>` (`None` == disabled/no-op). `resolve_in_place()` mutates ahead of execution.
 - **Non-obvious:** for `TaskIsolation`, `UseDefault` and `Inherit` behave identically
-  because `IsolationConfig` always has a default (`Chroot`). Both variants exist only
-  for API symmetry with `Privilege`, where the distinction is real.
+  because `IsolationConfig` always has a default (chroot). Both variants exist only for
+  API symmetry with `Privilege`, where the distinction is real.
 
 `mount` and `resolv_conf` used to live under `IsolationConfig`; they were moved out to
-the `prepare` phase. `IsolationConfig` is now just the backend selector (`Chroot`).
+the `prepare` phase. `IsolationConfig` is now just the backend selector: an internally
+tagged enum in the same shape as `Bootstrap` — currently the single variant
+`Chroot(ChrootIsolation)`, where `ChrootIsolation` is the (empty, for now) payload struct
+for backend-specific options. Each payload struct carries `#[serde(deny_unknown_fields)]`;
+putting that attribute on the enum itself would be a silent serde no-op, but on the
+payload it is enforced because serde consumes the `type` tag before handing the remaining
+keys to the payload (see [JSON Schema generation](#json-schema-generation)). Adding a
+backend (bwrap, nspawn, …) means adding a variant with its own payload struct.
 
 ## Phases & the pipeline
 
@@ -118,6 +125,115 @@ patterns run throughout `src/isolation/`:
 `DebootstrapConfig` implement it. Each builds its own argument vector and decides
 whether the output is a directory or an archive. Bootstrap privilege resolves against
 profile defaults like any other task.
+
+## JSON Schema generation
+
+`rsdebstrap schema` prints a JSON Schema for the YAML profile, generated **directly from the
+Rust config types** via `schemars` (`profile_json_schema()` / `profile_json_schema_pretty()` in
+`src/lib.rs`). There is no hand-written schema JSON: the Rust types are the single source of
+truth, so the schema cannot describe a shape that `apply`/`validate` would not accept. All of it
+is compiled behind the **default-on `schema` cargo feature**: `schemars`/`serde_json` are
+optional dependencies enabled by it, every `JsonSchema` derive and `#[schemars(...)]` attribute
+is `cfg_attr`-gated, and the `schema` subcommand plus `profile_json_schema*()` do not exist
+under `--no-default-features` (for size-constrained `apply`/`validate`-only builds). The schema
+test suites carry a crate-level `#![cfg(feature = "schema")]`, so a default `cargo test` — which
+is exactly what CI's test job runs — still exercises every drift guard, while
+`--no-default-features` compiles them to empty crates instead of failing. (In-file gating, not a
+Cargo `[[test]]` stanza with `required-features`: an explicit test target makes manifest parsing
+require the file, which breaks CI's sparse checkouts that fetch/build without `tests/`.) A missed
+`cfg_attr` on a new field only surfaces in the schema-less build, which is why
+`cargo check --all-targets --no-default-features` is part of the routine command set in AGENTS.md
+**and runs in CI's test task** — the gate design is only real if that feature graph actually
+compiles somewhere.
+
+The non-obvious parts are all about keeping the schema faithful to the *deserializer*:
+
+- **The YAML text layer is aligned with the JSON data model** (`src/de.rs`). `serde_yaml`'s text
+  deserializer hands the raw scalar text to any field that asks for a string — `dir: null` would
+  otherwise parse as the literal path `"null"` (and only outside internally tagged enums, whose
+  content buffering resolves scalars first, so acceptance was context-dependent) — and it accepts
+  an *empty* value as the default for container fields while rejecting an explicit `null`.
+  String-typed fields therefore deserialize through the `deserialize_any`-based helpers in
+  `src/de.rs`, which reject non-string scalars uniformly, and defaulted section/list/map fields
+  (including `defaults.mitamae`, whose empty form serde_yaml already accepted) map an explicit
+  `null` to the default. The net rule: an explicit `null` and an empty value are equivalent
+  everywhere, and on defaulted section/list/map fields they additionally mean "key omitted" (what
+  a fully commented-out section leaves behind). Fields that reject the empty form — scalars, the
+  tagged `isolation` config, everything inside the internally tagged `bootstrap:` maps — keep
+  rejecting `null` too. The schema models the lenient fields as nullable to match, and string
+  fields as plain strings.
+- **camino paths.** `Utf8PathBuf` has no `schemars` support and the orphan rule forbids a direct
+  impl, so path fields point at the `Utf8PathSchema` proxy (`src/schema.rs`) via
+  `#[schemars(with = "...")]`. Forgetting it on a new path field is a **compile error** (the
+  derive requires `Utf8PathBuf: JsonSchema`, which does not hold), so this cannot drift silently.
+- **Custom-`Deserialize` types forward their schema to the real wire shape.** `Privilege` /
+  `TaskIsolation` hand-write `Deserialize` for the `true`/`false`/map/null shorthand, so their
+  `JsonSchema` forwards to a `#[serde(untagged)]` wire enum (`PrivilegeWire` / `TaskIsolationWire`)
+  that carries the same map type plus a null unit variant — the schema's `anyOf[bool, map, null]`
+  then mirrors deserialization. The map branch genuinely shares one definition with the visitor
+  (`PrivilegeMethodMap` / `IsolationConfig`), but the *outer* acceptance set (bool/map/null) exists
+  twice — as the wire enum's variants and as the visitor's `visit_*` methods — with no compile-time
+  tie; the in-file `wire_parity` tests pin the two sets together by asserting acceptance
+  equivalence over a battery of shapes. `ShellTask` / `MitamaeTask` have no such split: they
+  forward to their hoisted `Raw*` DTOs, which *are* the actual deserialize path.
+- **`script` xor `content`** is enforced at runtime by `resolve_script_source`; the schema mirrors
+  it as a `oneOf` on the `Raw*` DTO. Each branch constrains the source to a *string*, not mere key
+  presence, because `serde` treats an explicit `null` on an `Option` field as absent — so
+  `{ script: null, content: hi }` is accepted and `{ script: null }` rejected, matching serde.
+  This is the *only* mutual exclusion mirrored in the schema, because it is the only one enforced
+  at deserialize time. The `resolv_conf` exclusions (`copy` vs `name_servers`/`search` in prepare,
+  `link` vs `name_servers`/`search` in assemble) are *semantic* — checked in `validate()`, not
+  `Deserialize` — so encoding them as a schema `oneOf`/`not` would reject documents the
+  deserializer accepts, violating the never-false-reject invariant. They stay out of the schema
+  deliberately.
+- **`deny_unknown_fields` ⇒ `additionalProperties: false`.** Applied to `Profile`, `Defaults`,
+  `MitamaeDefaults`, `MountEntry`, `PrivilegeDefaults`, both bootstrap configs, and
+  `ChrootIsolation` so typo'd keys are rejected. It is honored even on the internally tagged
+  `Bootstrap` / `IsolationConfig` variants because serde's internally-tagged newtype-variant
+  deserialization consumes the `type` tag when selecting the variant and hands only the remaining
+  fields to the variant struct (so the tag is not seen as an unknown field) — serde-core behavior
+  that holds under `serde_json` and `serde_yaml` alike, not a parser quirk. The well-known serde
+  limitation is narrower: `deny_unknown_fields` is a no-op when placed on the internally-tagged
+  *enum* itself, which is why both `Bootstrap` and `IsolationConfig` put it on their variant
+  payload structs instead. On the schema side, `schemars` inlines the `type` const into each
+  `oneOf` branch's `properties`, so `additionalProperties: false` does not falsely reject the
+  discriminator.
+- **IP address fields use `format`, not a hard `pattern`.** `name_servers` renders via the
+  `IpAddrSchema` proxy as `{ type: string, anyOf: [ { format: ipv4 }, { format: ipv6 } ] }`.
+  `format` is annotational (non-asserting by default), so the schema never *rejects* a string the
+  `IpAddr` deserializer accepts. A regex `pattern` strict enough to reject non-IPs would have to
+  accept the entire `IpAddr::from_str` grammar (compressed and embedded-IPv4 forms, …) exactly;
+  getting it slightly wrong would reintroduce false-rejects, so it is avoided on purpose. Editors
+  and format-asserting validators still surface non-IP values through `format`.
+- **Enum variants must not carry serde aliases `schemars` won't emit.** `#[serde(alias = "…")]`
+  makes the deserializer accept a spelling that never appears in the generated `oneOf`, producing a
+  schema false-reject. The `Variant` / `Mode` / `Format` defaults previously aliased `""`; the
+  aliases were removed so `""` is a hard parse error on both sides, and `schema_proptest`'s
+  bootstrap axis now includes `""` to lock it.
+
+Drift guards (all in `cargo test`, so CI fails on drift):
+
+- **`schema/rsdebstrap.schema.json` is committed** and byte-compared against generator output by
+  `committed_schema_is_up_to_date`. It is rendered with tab indentation (via
+  `profile_json_schema_pretty()`) to satisfy `.editorconfig`. Regenerate after any config-type
+  change with `task schema` (wraps `cargo run -- schema > schema/rsdebstrap.schema.json`). The
+  autofix.ci workflow runs `task schema` on every pull request and auto-commits the regenerated
+  file, so drift normally fixes itself; this byte-compare test remains the enforcement backstop.
+- **Differential + property tests** (`tests/schema_test.rs`, `tests/schema_proptest.rs`) assert the
+  critical safety invariant: whenever the structural deserializer accepts a document, the schema
+  must accept it too (no false rejections that would make editor tooling flag valid configs). The
+  property test asserts this twice per generated document — once on the `serde_json::Value` and
+  once through a YAML text round-trip, because production parses YAML and `serde_yaml`'s
+  acceptance surface is not identical to the JSON value model. The known divergences in the
+  other direction (annotational `ipv4`/`ipv6` formats; duplicate mapping keys, which serde
+  rejects but the YAML→JSON conversion resolves last-wins before the schema can see them; and
+  non-finite floats like `.nan`, which that conversion collapses to `null`, so nullable fields
+  schema-accept them) are pinned with per-side expectations in `schema_divergences_are_pinned`.
+  The pinning documents each known divergence exactly, but constrains only the enumerated rows:
+  the invariant is deliberately one-directional, so a newly discovered false-accept fails no
+  test and should be added to that table. Semantic checks that JSON Schema cannot express (mount
+  `name_servers` exclusivity, mitamae binary resolution) stay in `Profile::validate_*` and are out
+  of scope here.
 
 ## Testing pattern
 

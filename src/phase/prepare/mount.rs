@@ -9,6 +9,8 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use camino::Utf8Path;
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{IsolationConfig, MountEntry, MountPreset};
@@ -24,13 +26,19 @@ use crate::phase::PhaseItem;
 ///
 /// At most one `MountTask` may appear in the prepare phase.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct MountTask {
     /// Optional preset for predefined mount sets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<MountPreset>,
     /// Custom mount entries.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_to_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<MountEntry>>"))]
     pub mounts: Vec<MountEntry>,
 }
 
