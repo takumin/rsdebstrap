@@ -118,22 +118,6 @@ assemble:                   # Optional finalization steps (named-field struct)
     # link: ../run/systemd/resolve/stub-resolv.conf  # Create symlink instead
 ```
 
-> **Migration from list-form `prepare`/`assemble`.** `prepare` and `assemble` are named-field
-> maps, not lists of `{ type: ... }` items. Convert each former list item into a key named after
-> its old `type`, dropping the `type` field:
->
-> ```yaml
-> # Before                          # After
-> prepare:                          prepare:
->   - type: mount                     mount:
->     preset: recommends                preset: recommends
->   - type: resolv_conf               resolv_conf:
->     copy: true                        copy: true
-> ```
->
-> `provision` is unchanged (it stays an ordered list). Key order under `prepare` is irrelevant —
-> the pipeline always runs `mount` before `resolv_conf`.
-
 ### YAML scalar and null rules
 
 - String-typed fields (paths, suite/target names, mount sources/options, search domains) accept
