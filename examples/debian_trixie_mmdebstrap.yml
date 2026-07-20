@@ -4,7 +4,7 @@
 # This profile demonstrates all available features:
 #   - defaults: isolation (chroot), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
-#   - pipeline: prepare (mount, resolv_conf), provision (shell + mitamae), assemble
+#   - pipeline: prepare (mount, resolv_conf), provision (shell + mitamae), assemble (resolv_conf)
 
 dir: /tmp/debian-trixie-server-amd64
 
@@ -110,17 +110,7 @@ provision:
 #   External recipe alternative:
 #     script: ./recipes/setup.rb
 
-# Assemble phase runs after provisioning. Named-field form with a single
-# optional `resolv_conf` key that writes a permanent /etc/resolv.conf into
-# the final rootfs (a generated file or a symlink):
-# assemble:
-#   resolv_conf:
-#     name_servers: [8.8.8.8, 8.8.4.4]
-#     search: [example.com]
-#     # OR, instead of name_servers/search, restore the systemd stub symlink:
-#     # link: ../run/systemd/resolve/stub-resolv.conf
-
-# Cleanup step (kept in the provision phase)
+# Cleanup step
 - type: shell
   content: |-
     #!/bin/sh
@@ -128,3 +118,14 @@ provision:
     apt-get clean
     rm -rf /var/lib/apt/lists/*
     echo "Cleanup complete"
+
+# Assemble phase: finalization after provisioning. The resolv_conf task gives
+# the final rootfs a permanent /etc/resolv.conf, replacing the temporary one
+# from the prepare phase. Recent Debian/Ubuntu default to the systemd-resolved
+# stub symlink, so restore it here:
+assemble:
+  resolv_conf:
+    link: ../run/systemd/resolve/stub-resolv.conf
+    # OR, instead of link, generate a static file with explicit nameservers:
+    # name_servers: [8.8.8.8, 8.8.4.4]
+    # search: [example.com]
