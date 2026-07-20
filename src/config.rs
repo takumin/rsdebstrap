@@ -187,7 +187,8 @@ pub struct MountEntry {
     #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub target: Utf8PathBuf,
     /// Mount options (e.g., "bind", "nosuid"). Joined with "," for `-o`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::string_list")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<String>>"))]
     pub options: Vec<String>,
 }
 
@@ -419,10 +420,12 @@ impl IsolationConfig {
 #[serde(deny_unknown_fields)]
 pub struct MitamaeDefaults {
     /// Architecture-specific binary paths (key: "x86_64", "aarch64", etc.)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::path_map")]
     #[cfg_attr(
         feature = "schema",
-        schemars(with = "std::collections::HashMap<String, crate::schema::Utf8PathSchema>")
+        schemars(
+            with = "Option<std::collections::HashMap<String, crate::schema::Utf8PathSchema>>"
+        )
     )]
     pub binary: HashMap<String, Utf8PathBuf>,
 }
@@ -459,18 +462,22 @@ pub struct Profile {
     #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
     pub dir: Utf8PathBuf,
     /// Default settings (isolation backend, etc.)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Defaults>"))]
     pub defaults: Defaults,
     /// Bootstrap tool configuration
     pub bootstrap: Bootstrap,
     /// Prepare tasks to run before provisioning (optional)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<PrepareConfig>"))]
     pub prepare: PrepareConfig,
     /// Main provisioning tasks (optional)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<ProvisionTask>>"))]
     pub provision: Vec<ProvisionTask>,
     /// Assemble tasks to run after provisioning (optional)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<AssembleConfig>"))]
     pub assemble: AssembleConfig,
 }
 

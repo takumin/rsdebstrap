@@ -43,7 +43,10 @@
 						],
 						"type": "string"
 					},
-					"type": "array"
+					"type": [
+						"array",
+						"null"
+					]
 				},
 				"privilege": {
 					"$ref": "#/$defs/Privilege",
@@ -54,7 +57,10 @@
 					"items": {
 						"type": "string"
 					},
-					"type": "array"
+					"type": [
+						"array",
+						"null"
+					]
 				}
 			},
 			"type": "object"
@@ -432,7 +438,10 @@
 					},
 					"default": {},
 					"description": "Architecture-specific binary paths (key: \"x86_64\", \"aarch64\", etc.)",
-					"type": "object"
+					"type": [
+						"object",
+						"null"
+					]
 				}
 			},
 			"type": "object"
@@ -542,7 +551,10 @@
 					"items": {
 						"type": "string"
 					},
-					"type": "array"
+					"type": [
+						"array",
+						"null"
+					]
 				},
 				"source": {
 					"description": "Device name or path (e.g., \"proc\", \"sysfs\", \"/dev\").",
@@ -578,7 +590,10 @@
 					"items": {
 						"$ref": "#/$defs/MountEntry"
 					},
-					"type": "array"
+					"type": [
+						"array",
+						"null"
+					]
 				},
 				"preset": {
 					"anyOf": [
@@ -828,14 +843,20 @@
 						],
 						"type": "string"
 					},
-					"type": "array"
+					"type": [
+						"array",
+						"null"
+					]
 				},
 				"search": {
 					"description": "Search domains to write to resolv.conf.",
 					"items": {
 						"type": "string"
 					},
-					"type": "array"
+					"type": [
+						"array",
+						"null"
+					]
 				}
 			},
 			"type": "object"
@@ -859,7 +880,14 @@
 	"description": "Represents a bootstrap profile configuration.\n\nA profile contains the target directory and bootstrap tool configuration\ndetails needed to create a Debian-based system.",
 	"properties": {
 		"assemble": {
-			"$ref": "#/$defs/AssembleConfig",
+			"anyOf": [
+				{
+					"$ref": "#/$defs/AssembleConfig"
+				},
+				{
+					"type": "null"
+				}
+			],
 			"description": "Assemble tasks to run after provisioning (optional)"
 		},
 		"bootstrap": {
@@ -867,7 +895,14 @@
 			"description": "Bootstrap tool configuration"
 		},
 		"defaults": {
-			"$ref": "#/$defs/Defaults",
+			"anyOf": [
+				{
+					"$ref": "#/$defs/Defaults"
+				},
+				{
+					"type": "null"
+				}
+			],
 			"description": "Default settings (isolation backend, etc.)"
 		},
 		"dir": {
@@ -875,7 +910,14 @@
 			"type": "string"
 		},
 		"prepare": {
-			"$ref": "#/$defs/PrepareConfig",
+			"anyOf": [
+				{
+					"$ref": "#/$defs/PrepareConfig"
+				},
+				{
+					"type": "null"
+				}
+			],
 			"description": "Prepare tasks to run before provisioning (optional)"
 		},
 		"provision": {
@@ -883,7 +925,10 @@
 			"items": {
 				"$ref": "#/$defs/ProvisionTask"
 			},
-			"type": "array"
+			"type": [
+				"array",
+				"null"
+			]
 		}
 	},
 	"required": [

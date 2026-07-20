@@ -33,7 +33,12 @@ pub struct MountTask {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<MountPreset>,
     /// Custom mount entries.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_to_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<MountEntry>>"))]
     pub mounts: Vec<MountEntry>,
 }
 

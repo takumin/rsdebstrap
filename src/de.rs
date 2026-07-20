@@ -15,6 +15,7 @@
 //! `serde_yaml` text deserializer and `serde_json` values, which keeps the parser and
 //! the generated schema in agreement by construction.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use camino::Utf8PathBuf;
@@ -67,4 +68,50 @@ pub(crate) fn opt_string<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
     Option::<StrictString>::deserialize(deserializer).map(|opt| opt.map(|s| s.0))
+}
+
+/// A `Utf8PathBuf` that deserializes strictly (used for map values).
+struct StrictPath(Utf8PathBuf);
+
+impl<'de> Deserialize<'de> for StrictPath {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer
+            .deserialize_any(StrictStringVisitor)
+            .map(|s| StrictPath(Utf8PathBuf::from(s)))
+    }
+}
+
+/// Deserializes a defaulted field, mapping an explicit `null` to `T::default()`.
+///
+/// `serde_yaml` already deserializes an *empty* value into the default for container
+/// fields (a section whose entries are all commented out stays valid), but an explicit
+/// `null` used to be rejected. Mapping `null` to the default makes `null`, the empty
+/// form, and an omitted key all mean the same thing — which is also how the generated
+/// schema models these fields (nullable), since an empty YAML value *is* `null` in the
+/// JSON data model.
+pub(crate) fn null_to_default<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Deserialize<'de> + Default,
+    D: Deserializer<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// Deserializes a `Vec<String>` field: `null` means empty, elements are strict strings.
+pub(crate) fn string_list<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    Ok(Option::<Vec<StrictString>>::deserialize(deserializer)?
+        .map(|items| items.into_iter().map(|s| s.0).collect())
+        .unwrap_or_default())
+}
+
+/// Deserializes a `HashMap<String, Utf8PathBuf>` field: `null` means empty, values are
+/// strict paths.
+pub(crate) fn path_map<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<HashMap<String, Utf8PathBuf>, D::Error> {
+    Ok(Option::<HashMap<String, StrictPath>>::deserialize(deserializer)?
+        .map(|map| map.into_iter().map(|(key, value)| (key, value.0)).collect())
+        .unwrap_or_default())
 }

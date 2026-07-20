@@ -49,14 +49,23 @@ pub struct AssembleResolvConfTask {
     )]
     pub link: Option<String>,
     /// Nameserver IP addresses to write to resolv.conf.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_to_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     #[cfg_attr(
         feature = "schema",
-        schemars(with = "Vec<crate::schema::IpAddrSchema>")
+        schemars(with = "Option<Vec<crate::schema::IpAddrSchema>>")
     )]
     pub name_servers: Vec<IpAddr>,
     /// Search domains to write to resolv.conf.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "crate::de::string_list",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<String>>"))]
     pub search: Vec<String>,
 }
 

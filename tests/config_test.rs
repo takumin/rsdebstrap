@@ -2334,3 +2334,79 @@ fn test_assemble_link_rejects_non_string_scalars() {
     );
     assert!(deserializes(&link_ok), "genuine strings must stay accepted");
 }
+
+// =========================================================================
+// YAML leniency: explicit null == empty value == omitted for defaulted
+// section/list/map fields
+// =========================================================================
+
+#[test]
+fn test_sections_accept_null_and_empty_as_omitted() {
+    // A section whose entries are all commented out leaves a bare `key:` behind, which
+    // is YAML null. Both that and an explicit `null` must mean "use the default".
+    for value in ["", " null", " ~"] {
+        for section in ["provision", "prepare", "assemble", "defaults"] {
+            let yaml = format!("dir: /out\n{MINIMAL_BOOTSTRAP}{section}:{value}\n");
+            assert!(deserializes(&yaml), "expected acceptance of `{section}:{value}`");
+        }
+    }
+}
+
+#[test]
+fn test_container_fields_accept_null_as_empty() {
+    let base = concat!(
+        "dir: /out\n",
+        "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",
+        "defaults: {isolation: {type: chroot}, privilege: {method: sudo}}\n",
+    );
+    let cases = [
+        format!("{base}prepare: {{mount: {{preset: recommends, mounts: null}}}}\n"),
+        format!(
+            "{base}prepare: {{mount: {{mounts: [{{source: /dev, target: /dev, options: null}}]}}}}\n"
+        ),
+        format!("{base}prepare: {{resolv_conf: {{copy: true, name_servers: null, search: null}}}}\n"),
+        format!("{base}assemble: {{resolv_conf: {{link: /x, name_servers: null, search: null}}}}\n"),
+        "dir: /out\nbootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\ndefaults: {mitamae: {binary: null}}\n".to_string(),
+    ];
+    for yaml in &cases {
+        assert!(deserializes(yaml), "expected acceptance of {yaml:?}");
+    }
+}
+
+#[test]
+fn test_null_sections_deserialize_to_defaults() {
+    let profile: rsdebstrap::config::Profile = serde_yaml::from_str(concat!(
+        "dir: /out\n",
+        "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",
+        "provision: null\n",
+        "prepare: null\n",
+        "assemble: null\n",
+        "defaults: null\n",
+    ))
+    .expect("null sections must deserialize");
+    assert!(profile.provision.is_empty());
+    assert!(profile.prepare.mount.is_none());
+    assert!(profile.prepare.resolv_conf.is_none());
+    assert!(profile.assemble.resolv_conf.is_none());
+    assert!(profile.defaults.privilege.is_none());
+}
+
+#[test]
+fn test_string_list_elements_stay_strict_under_null_leniency() {
+    let base = concat!(
+        "dir: /out\n",
+        "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",
+        "defaults: {isolation: {type: chroot}, privilege: {method: sudo}}\n",
+    );
+    let options_int = format!(
+        "{base}prepare: {{mount: {{mounts: [{{source: /dev, target: /dev, options: [bind, 0]}}]}}}}\n"
+    );
+    assert!(!deserializes(&options_int), "mount options must be strings");
+    let search_int =
+        format!("{base}prepare: {{resolv_conf: {{name_servers: [8.8.8.8], search: [x, 42]}}}}\n");
+    assert!(!deserializes(&search_int), "search domains must be strings");
+    let binary_int = format!(
+        "dir: /out\n{MINIMAL_BOOTSTRAP}defaults: {{mitamae: {{binary: {{x86_64: 42}}}}}}\n"
+    );
+    assert!(!deserializes(&binary_int), "mitamae binary paths must be strings");
+}
