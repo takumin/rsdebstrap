@@ -43,6 +43,19 @@ tasks:
         TAG: '{{index .MATCH 0}}'
         ARGS: -t {{index .MATCH 0}}
 
+  rustup:toolchain:
+    desc: '{{.TASK}}'
+    label: rustup:toolchain
+    dir: '{{.ROOT_DIR}}'
+    sources:
+    - rust-toolchain.toml
+    generates:
+    - .task/.done_rustup:toolchain
+    cmds:
+    - rustup toolchain install
+    - cmd: touch .task/.done_rustup:toolchain
+      silent: true
+
   rustup:component:*:
     desc: '{{.TASK}}'
     label: rustup:component:{{index .MATCH 0}}

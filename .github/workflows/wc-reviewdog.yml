@@ -62,6 +62,12 @@ jobs:
       with:
         aqua_version: v2.62.0
         aqua_opts: -t reviewdog,${{ matrix.target }}
+    - name: Restore rustup toolchain cache
+      if: matrix.name == 'clippy'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        path: ~/.rustup/
     - name: Setup reporter
       id: reporter
       run: |-

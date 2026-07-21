@@ -75,6 +75,11 @@ jobs:
       with:
         key: build-${{ matrix.profile }}-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
         path: target/
+    - name: Restore rustup toolchain cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        path: ~/.rustup/
     - name: Setup build
       run: |-
         task setup:build
