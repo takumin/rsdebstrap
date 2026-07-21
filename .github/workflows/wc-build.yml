@@ -63,11 +63,15 @@ jobs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         key: deps-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |-
+          deps-
         path: ~/.cargo/registry/
     - name: Restore setup build aqua cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         key: setup-build-aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
+        restore-keys: |-
+          setup-build-aqua-
         path: ~/.local/share/aquaproj-aqua/
     - name: Restore build cache
       id: build-cache-restore
@@ -79,6 +83,8 @@ jobs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        restore-keys: |-
+          rustup-
         path: ~/.rustup/
     - name: Setup build
       run: |-
