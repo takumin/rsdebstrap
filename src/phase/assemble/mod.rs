@@ -20,7 +20,7 @@ use crate::phase::PhaseItem;
 /// Assemble phase configuration (named-field, schema-first).
 ///
 /// The single field is an optional singleton; a duplicate YAML key is rejected
-/// by `serde_yaml` at parse time and an unknown key by `deny_unknown_fields`.
+/// by `yaml_serde` at parse time and an unknown key by `deny_unknown_fields`.
 #[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn deserialize_resolv_conf_present() {
         let yaml = "resolv_conf:\n  name_servers:\n  - 8.8.8.8\n";
-        let config: AssembleConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: AssembleConfig = yaml_serde::from_str(yaml).unwrap();
         assert!(config.resolv_conf.is_some());
         assert_eq!(config.len(), 1);
         assert!(!config.is_empty());
@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn deserialize_absent_defaults_to_empty() {
-        let config: AssembleConfig = serde_yaml::from_str("{}").unwrap();
+        let config: AssembleConfig = yaml_serde::from_str("{}").unwrap();
         assert!(config.is_empty());
         assert_eq!(config.len(), 0);
         assert!(config.items().is_empty());
@@ -75,14 +75,14 @@ mod tests {
     #[test]
     fn deserialize_rejects_unknown_field() {
         let yaml = "mount:\n  preset: recommends\n";
-        let result: Result<AssembleConfig, _> = serde_yaml::from_str(yaml);
+        let result: Result<AssembleConfig, _> = yaml_serde::from_str(yaml);
         assert!(result.is_err(), "unknown key must be rejected");
     }
 
     #[test]
     fn deserialize_rejects_duplicate_resolv_conf_key() {
         let yaml = "resolv_conf:\n  name_servers:\n  - 8.8.8.8\nresolv_conf:\n  link: ../run/x\n";
-        let result: Result<AssembleConfig, _> = serde_yaml::from_str(yaml);
+        let result: Result<AssembleConfig, _> = yaml_serde::from_str(yaml);
         assert!(result.is_err(), "duplicate resolv_conf key must be rejected at parse time");
     }
 }

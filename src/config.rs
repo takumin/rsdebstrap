@@ -609,13 +609,13 @@ pub(crate) fn validate_mount_order(mounts: &[MountEntry]) -> Result<(), Rsdebstr
     Ok(())
 }
 
-fn format_yaml_parse_error(err: serde_yaml::Error, file_path: &Utf8Path) -> RsdebstrapError {
-    // serde_yaml sometimes embeds the location in its Display output
+fn format_yaml_parse_error(err: yaml_serde::Error, file_path: &Utf8Path) -> RsdebstrapError {
+    // yaml_serde sometimes embeds the location in its Display output
     // ("... at line X column Y") and sometimes exposes it only via location()
     // (e.g. "missing field `dir`"). We render the message as-is and append the
     // location from location() only when the message does not already mention
     // that line. The check keys off the numeric line value (stable data), not
-    // serde_yaml's exact wording, so a future change to its phrasing degrades to
+    // yaml_serde's exact wording, so a future change to its phrasing degrades to
     // a harmless duplicate location rather than silently dropping it.
     let msg = err.to_string();
     let suffix = match err.location() {
@@ -651,7 +651,7 @@ fn parse_profile_yaml(
     reader: BufReader<File>,
     file_path: &Utf8Path,
 ) -> Result<Profile, RsdebstrapError> {
-    serde_yaml::from_reader(reader).map_err(|e| format_yaml_parse_error(e, file_path))
+    yaml_serde::from_reader(reader).map_err(|e| format_yaml_parse_error(e, file_path))
 }
 
 fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError> {
@@ -763,14 +763,14 @@ mod tests {
     // format_yaml_parse_error tests
     // =========================================================================
 
-    /// Generates a serde_yaml::Error by attempting to parse invalid YAML.
-    fn make_yaml_error(yaml: &str) -> serde_yaml::Error {
-        serde_yaml::from_str::<Profile>(yaml).unwrap_err()
+    /// Generates a yaml_serde::Error by attempting to parse invalid YAML.
+    fn make_yaml_error(yaml: &str) -> yaml_serde::Error {
+        yaml_serde::from_str::<Profile>(yaml).unwrap_err()
     }
 
     #[test]
     fn test_format_yaml_parse_error_with_location() {
-        // A type error embeds the location directly in serde_yaml's Display output.
+        // A type error embeds the location directly in yaml_serde's Display output.
         let err = make_yaml_error("dir: [invalid, list]");
         let result = format_yaml_parse_error(err, Utf8Path::new("/test/profile.yml"));
         let msg = result.to_string();
@@ -782,7 +782,7 @@ mod tests {
 
     #[test]
     fn test_format_yaml_parse_error_no_duplicate_location() {
-        // serde_yaml already embeds the location in this error's message, so we must
+        // yaml_serde already embeds the location in this error's message, so we must
         // not append a second copy from location().
         let err = make_yaml_error("dir: [invalid, list]");
         let result = format_yaml_parse_error(err, Utf8Path::new("/test/profile.yml"));
@@ -790,7 +790,7 @@ mod tests {
         assert_eq!(msg.matches("line ").count(), 1, "location must not be duplicated: {}", msg);
         assert!(
             !msg.contains(" (line "),
-            "our appended suffix must be absent when serde_yaml embeds the location: {}",
+            "our appended suffix must be absent when yaml_serde embeds the location: {}",
             msg
         );
     }
@@ -1107,15 +1107,15 @@ mod tests {
             target: "/proc".into(),
             options: vec!["nosuid".to_string()],
         };
-        let yaml = serde_yaml::to_string(&entry).unwrap();
-        let deserialized: MountEntry = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = yaml_serde::to_string(&entry).unwrap();
+        let deserialized: MountEntry = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(entry, deserialized);
     }
 
     #[test]
     fn test_mount_entry_deserialize_without_options() {
         let yaml = "source: proc\ntarget: /proc\n";
-        let entry: MountEntry = serde_yaml::from_str(yaml).unwrap();
+        let entry: MountEntry = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(entry.source, "proc");
         assert_eq!(entry.target, Utf8PathBuf::from("/proc"));
         assert!(entry.options.is_empty());
@@ -1141,7 +1141,7 @@ mod tests {
 
     #[test]
     fn test_mount_preset_deserialize() {
-        let preset: MountPreset = serde_yaml::from_str("recommends").unwrap();
+        let preset: MountPreset = yaml_serde::from_str("recommends").unwrap();
         assert_eq!(preset, MountPreset::Recommends);
     }
 
@@ -1152,8 +1152,8 @@ mod tests {
     #[test]
     fn test_isolation_config_serialize_deserialize_roundtrip() {
         let config = IsolationConfig::chroot();
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        let deserialized: IsolationConfig = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = yaml_serde::to_string(&config).unwrap();
+        let deserialized: IsolationConfig = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);
     }
 
@@ -1316,7 +1316,7 @@ mod tests {
     #[test]
     fn test_resolv_conf_deserialize_copy() {
         let yaml = "copy: true";
-        let config: ResolvConfConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: ResolvConfConfig = yaml_serde::from_str(yaml).unwrap();
         assert!(config.copy);
         assert!(config.name_servers.is_empty());
         assert!(config.search.is_empty());
@@ -1325,7 +1325,7 @@ mod tests {
     #[test]
     fn test_resolv_conf_deserialize_name_servers() {
         let yaml = "name_servers:\n  - 127.0.0.1\n";
-        let config: ResolvConfConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: ResolvConfConfig = yaml_serde::from_str(yaml).unwrap();
         assert!(!config.copy);
         assert_eq!(config.name_servers.len(), 1);
         assert_eq!(config.name_servers[0].to_string(), "127.0.0.1");
@@ -1334,7 +1334,7 @@ mod tests {
     #[test]
     fn test_resolv_conf_deserialize_ipv6() {
         let yaml = "name_servers:\n  - '::1'\nsearch:\n  - example.com\n";
-        let config: ResolvConfConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: ResolvConfConfig = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(config.name_servers[0].to_string(), "::1");
         assert_eq!(config.search, vec!["example.com"]);
     }
@@ -1507,8 +1507,8 @@ mod tests {
             ],
             search: vec!["example.com".to_string()],
         };
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        let deserialized: ResolvConfConfig = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = yaml_serde::to_string(&config).unwrap();
+        let deserialized: ResolvConfConfig = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);
     }
 }

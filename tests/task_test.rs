@@ -246,7 +246,7 @@ fn test_resolve_paths_does_not_modify_content_source() {
 fn test_shell_task_deserialize_script_only() {
     let yaml = r#"script: /path/to/test.sh
 "#;
-    let task: ShellTask = serde_yaml::from_str(yaml).expect("should parse script-only ShellTask");
+    let task: ShellTask = yaml_serde::from_str(yaml).expect("should parse script-only ShellTask");
     assert_eq!(task.source(), &ScriptSource::Script("/path/to/test.sh".into()));
     assert_eq!(task.shell(), "/bin/sh");
 }
@@ -255,7 +255,7 @@ fn test_shell_task_deserialize_script_only() {
 fn test_shell_task_deserialize_content_only() {
     let yaml = r#"content: echo hello
 "#;
-    let task: ShellTask = serde_yaml::from_str(yaml).expect("should parse content-only ShellTask");
+    let task: ShellTask = yaml_serde::from_str(yaml).expect("should parse content-only ShellTask");
     assert_eq!(task.source(), &ScriptSource::Content("echo hello".to_string()));
     assert_eq!(task.shell(), "/bin/sh");
 }
@@ -266,7 +266,7 @@ fn test_shell_task_deserialize_with_custom_shell() {
 shell: /bin/bash
 "#;
     let task: ShellTask =
-        serde_yaml::from_str(yaml).expect("should parse ShellTask with custom shell");
+        yaml_serde::from_str(yaml).expect("should parse ShellTask with custom shell");
     assert_eq!(task.source(), &ScriptSource::Content("echo hello".to_string()));
     assert_eq!(task.shell(), "/bin/bash");
 }
@@ -276,7 +276,7 @@ fn test_shell_task_deserialize_rejects_both_script_and_content() {
     let yaml = r#"script: /path/to/test.sh
 content: echo hello
 "#;
-    let result: std::result::Result<ShellTask, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ShellTask, _> = yaml_serde::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -290,7 +290,7 @@ content: echo hello
 fn test_shell_task_deserialize_rejects_neither_script_nor_content() {
     let yaml = r#"shell: /bin/bash
 "#;
-    let result: std::result::Result<ShellTask, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ShellTask, _> = yaml_serde::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -309,7 +309,7 @@ fn test_task_definition_deserialize_rejects_unknown_type() {
     let yaml = r#"type: ansible
 content: echo hello
 "#;
-    let result: std::result::Result<ProvisionTask, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ProvisionTask, _> = yaml_serde::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -323,7 +323,7 @@ content: echo hello
 fn test_task_definition_deserialize_rejects_missing_type() {
     let yaml = r#"content: echo hello
 "#;
-    let result: std::result::Result<ProvisionTask, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ProvisionTask, _> = yaml_serde::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -444,7 +444,7 @@ content: |
 "#;
     // editorconfig-checker-enable
     let task: ProvisionTask =
-        serde_yaml::from_str(yaml).expect("should parse mitamae with content");
+        yaml_serde::from_str(yaml).expect("should parse mitamae with content");
     match &task {
         ProvisionTask::Mitamae(m) => {
             assert_eq!(m.binary().unwrap().as_str(), "/usr/local/bin/mitamae");
@@ -462,7 +462,7 @@ binary: /usr/local/bin/mitamae
 script: ./recipe.rb
 "#;
     // editorconfig-checker-enable
-    let task: ProvisionTask = serde_yaml::from_str(yaml).expect("should parse mitamae with script");
+    let task: ProvisionTask = yaml_serde::from_str(yaml).expect("should parse mitamae with script");
     match &task {
         ProvisionTask::Mitamae(m) => {
             assert_eq!(m.binary().unwrap().as_str(), "/usr/local/bin/mitamae");
@@ -480,7 +480,7 @@ content: echo test
 "#;
     // editorconfig-checker-enable
     let task: ProvisionTask =
-        serde_yaml::from_str(yaml).expect("should parse mitamae without binary");
+        yaml_serde::from_str(yaml).expect("should parse mitamae without binary");
     match &task {
         ProvisionTask::Mitamae(m) => {
             assert_eq!(m.binary(), None, "binary should be None when not specified");
@@ -499,7 +499,7 @@ script: ./recipe.rb
 content: echo test
 "#;
     // editorconfig-checker-enable
-    let result: std::result::Result<ProvisionTask, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ProvisionTask, _> = yaml_serde::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -516,7 +516,7 @@ fn test_task_definition_deserialize_mitamae_rejects_neither() {
 binary: /usr/local/bin/mitamae
 "#;
     // editorconfig-checker-enable
-    let result: std::result::Result<ProvisionTask, _> = serde_yaml::from_str(yaml);
+    let result: std::result::Result<ProvisionTask, _> = yaml_serde::from_str(yaml);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -867,7 +867,7 @@ fn test_shell_task_deserialize_isolation_true() {
 isolation: true
 "#;
     let task: ShellTask =
-        serde_yaml::from_str(yaml).expect("should parse ShellTask with isolation: true");
+        yaml_serde::from_str(yaml).expect("should parse ShellTask with isolation: true");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
     task_mut.resolve_isolation(&IsolationConfig::chroot());
@@ -884,7 +884,7 @@ fn test_shell_task_deserialize_isolation_false() {
 isolation: false
 "#;
     let task: ShellTask =
-        serde_yaml::from_str(yaml).expect("should parse ShellTask with isolation: false");
+        yaml_serde::from_str(yaml).expect("should parse ShellTask with isolation: false");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
     task_mut.resolve_isolation(&IsolationConfig::chroot());
@@ -904,7 +904,7 @@ isolation:
 "#;
     // editorconfig-checker-enable
     let task: ShellTask =
-        serde_yaml::from_str(yaml).expect("should parse ShellTask with explicit isolation");
+        yaml_serde::from_str(yaml).expect("should parse ShellTask with explicit isolation");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
     task_mut.resolve_isolation(&IsolationConfig::chroot());
@@ -920,7 +920,7 @@ fn test_shell_task_deserialize_isolation_absent_defaults_to_inherit() {
     let yaml = r#"content: echo hello
 "#;
     let task: ShellTask =
-        serde_yaml::from_str(yaml).expect("should parse ShellTask without isolation");
+        yaml_serde::from_str(yaml).expect("should parse ShellTask without isolation");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
     task_mut.resolve_isolation(&IsolationConfig::chroot());
@@ -940,7 +940,7 @@ isolation: false
 "#;
     // editorconfig-checker-enable
     let task: MitamaeTask =
-        serde_yaml::from_str(yaml).expect("should parse MitamaeTask with isolation: false");
+        yaml_serde::from_str(yaml).expect("should parse MitamaeTask with isolation: false");
     use rsdebstrap::config::IsolationConfig;
     let mut task_mut = task;
     task_mut.resolve_isolation(&IsolationConfig::chroot());

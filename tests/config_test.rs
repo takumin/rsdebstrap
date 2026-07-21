@@ -2155,7 +2155,7 @@ prepare:
 
 #[test]
 fn test_load_profile_prepare_rejects_duplicate_mount_key() {
-    // Two `mount` keys are rejected at parse time (serde_yaml duplicate entry),
+    // Two `mount` keys are rejected at parse time (yaml_serde duplicate entry),
     // so the "at most one mount" invariant is structural rather than validated.
     // editorconfig-checker-disable
     let result = helpers::load_profile_from_yaml(crate::yaml!(
@@ -2189,7 +2189,7 @@ prepare:
 
 #[test]
 fn test_load_profile_prepare_rejects_duplicate_resolv_conf_key() {
-    // Two `resolv_conf` keys are rejected at parse time (serde_yaml duplicate entry).
+    // Two `resolv_conf` keys are rejected at parse time (yaml_serde duplicate entry).
     // editorconfig-checker-disable
     let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
@@ -2273,14 +2273,14 @@ prepare:
 
 /// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
 fn deserializes(yaml: &str) -> bool {
-    serde_yaml::from_str::<rsdebstrap::config::Profile>(yaml).is_ok()
+    yaml_serde::from_str::<rsdebstrap::config::Profile>(yaml).is_ok()
 }
 
 const MINIMAL_BOOTSTRAP: &str = "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n";
 
 #[test]
 fn test_dir_rejects_non_string_scalars() {
-    // serde_yaml's text deserializer used to hand the raw scalar text to string fields,
+    // yaml_serde's text deserializer used to hand the raw scalar text to string fields,
     // so `dir: null` parsed as the literal path "null" and `dir:` as "". These must all
     // be parse errors now, matching the generated schema (which types `dir` as string).
     for bad in [
@@ -2400,7 +2400,7 @@ fn test_container_fields_accept_null_as_empty() {
 
 #[test]
 fn test_null_sections_deserialize_to_defaults() {
-    let profile: rsdebstrap::config::Profile = serde_yaml::from_str(concat!(
+    let profile: rsdebstrap::config::Profile = yaml_serde::from_str(concat!(
         "dir: /out\n",
         "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",
         "provision: null\n",

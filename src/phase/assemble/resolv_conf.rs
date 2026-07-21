@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn deserialize_link_relative() {
         let yaml = "link: ../run/systemd/resolve/stub-resolv.conf\n";
-        let task: AssembleResolvConfTask = serde_yaml::from_str(yaml).unwrap();
+        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(task.link.as_deref(), Some("../run/systemd/resolve/stub-resolv.conf"));
         assert!(task.name_servers.is_empty());
         assert!(task.search.is_empty());
@@ -486,14 +486,14 @@ mod tests {
     #[test]
     fn deserialize_link_absolute() {
         let yaml = "link: /run/systemd/resolve/stub-resolv.conf\n";
-        let task: AssembleResolvConfTask = serde_yaml::from_str(yaml).unwrap();
+        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(task.link.as_deref(), Some("/run/systemd/resolve/stub-resolv.conf"));
     }
 
     #[test]
     fn deserialize_name_servers() {
         let yaml = "name_servers:\n  - 8.8.8.8\n  - 8.8.4.4\n";
-        let task: AssembleResolvConfTask = serde_yaml::from_str(yaml).unwrap();
+        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert!(task.link.is_none());
         assert_eq!(task.name_servers.len(), 2);
     }
@@ -501,58 +501,58 @@ mod tests {
     #[test]
     fn deserialize_rejects_unknown_fields() {
         let yaml = "link: /foo\nunknown_field: true\n";
-        let result: Result<AssembleResolvConfTask, _> = serde_yaml::from_str(yaml);
+        let result: Result<AssembleResolvConfTask, _> = yaml_serde::from_str(yaml);
         assert!(result.is_err());
     }
 
     #[test]
     fn deserialize_privilege_true() {
         let yaml = "name_servers:\n  - 8.8.8.8\nprivilege: true\n";
-        let task: AssembleResolvConfTask = serde_yaml::from_str(yaml).unwrap();
+        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(task.privilege, Privilege::UseDefault);
     }
 
     #[test]
     fn deserialize_privilege_false() {
         let yaml = "name_servers:\n  - 8.8.8.8\nprivilege: false\n";
-        let task: AssembleResolvConfTask = serde_yaml::from_str(yaml).unwrap();
+        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(task.privilege, Privilege::Disabled);
     }
 
     #[test]
     fn deserialize_privilege_method() {
         let yaml = "name_servers:\n  - 8.8.8.8\nprivilege:\n  method: sudo\n";
-        let task: AssembleResolvConfTask = serde_yaml::from_str(yaml).unwrap();
+        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(task.privilege, Privilege::Method(PrivilegeMethod::Sudo));
     }
 
     #[test]
     fn deserialize_privilege_absent_is_inherit() {
         let yaml = "name_servers:\n  - 8.8.8.8\n";
-        let task: AssembleResolvConfTask = serde_yaml::from_str(yaml).unwrap();
+        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(task.privilege, Privilege::Inherit);
     }
 
     #[test]
     fn serialize_deserialize_roundtrip_link() {
         let task = make_task_link("../run/systemd/resolve/stub-resolv.conf");
-        let yaml = serde_yaml::to_string(&task).unwrap();
-        let deserialized: AssembleResolvConfTask = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = yaml_serde::to_string(&task).unwrap();
+        let deserialized: AssembleResolvConfTask = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(task, deserialized);
     }
 
     #[test]
     fn serialize_deserialize_roundtrip_generate() {
         let task = make_task_generate(vec!["8.8.8.8"], vec!["example.com"]);
-        let yaml = serde_yaml::to_string(&task).unwrap();
-        let deserialized: AssembleResolvConfTask = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = yaml_serde::to_string(&task).unwrap();
+        let deserialized: AssembleResolvConfTask = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(task, deserialized);
     }
 
     #[test]
     fn serialize_skips_default_privilege() {
         let task = make_task_generate(vec!["8.8.8.8"], vec![]);
-        let yaml = serde_yaml::to_string(&task).unwrap();
+        let yaml = yaml_serde::to_string(&task).unwrap();
         assert!(!yaml.contains("privilege"));
     }
 
@@ -564,7 +564,7 @@ mod tests {
             name_servers: vec![],
             search: vec![],
         };
-        let yaml = serde_yaml::to_string(&task).unwrap();
+        let yaml = yaml_serde::to_string(&task).unwrap();
         assert!(!yaml.contains("link"));
         assert!(!yaml.contains("name_servers"));
         assert!(!yaml.contains("search"));

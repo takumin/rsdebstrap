@@ -301,10 +301,10 @@ mod tests {
 
     #[test]
     fn privilege_method_deserialize() {
-        let sudo: PrivilegeMethod = serde_yaml::from_str("sudo").unwrap();
+        let sudo: PrivilegeMethod = yaml_serde::from_str("sudo").unwrap();
         assert_eq!(sudo, PrivilegeMethod::Sudo);
 
-        let doas: PrivilegeMethod = serde_yaml::from_str("doas").unwrap();
+        let doas: PrivilegeMethod = yaml_serde::from_str("doas").unwrap();
         assert_eq!(doas, PrivilegeMethod::Doas);
     }
 
@@ -314,31 +314,31 @@ mod tests {
 
     #[test]
     fn privilege_deserialize_true() {
-        let p: Privilege = serde_yaml::from_str("true").unwrap();
+        let p: Privilege = yaml_serde::from_str("true").unwrap();
         assert_eq!(p, Privilege::UseDefault);
     }
 
     #[test]
     fn privilege_deserialize_false() {
-        let p: Privilege = serde_yaml::from_str("false").unwrap();
+        let p: Privilege = yaml_serde::from_str("false").unwrap();
         assert_eq!(p, Privilege::Disabled);
     }
 
     #[test]
     fn privilege_deserialize_method_sudo() {
-        let p: Privilege = serde_yaml::from_str("method: sudo").unwrap();
+        let p: Privilege = yaml_serde::from_str("method: sudo").unwrap();
         assert_eq!(p, Privilege::Method(PrivilegeMethod::Sudo));
     }
 
     #[test]
     fn privilege_deserialize_method_doas() {
-        let p: Privilege = serde_yaml::from_str("method: doas").unwrap();
+        let p: Privilege = yaml_serde::from_str("method: doas").unwrap();
         assert_eq!(p, Privilege::Method(PrivilegeMethod::Doas));
     }
 
     #[test]
     fn privilege_deserialize_unknown_field_rejected() {
-        let result: Result<Privilege, _> = serde_yaml::from_str("method: sudo\nextra: bad");
+        let result: Result<Privilege, _> = yaml_serde::from_str("method: sudo\nextra: bad");
         assert!(result.is_err());
     }
 
@@ -475,25 +475,25 @@ mod tests {
 
     #[test]
     fn privilege_method_rejects_invalid_value() {
-        let result: Result<PrivilegeMethod, _> = serde_yaml::from_str("pkexec");
+        let result: Result<PrivilegeMethod, _> = yaml_serde::from_str("pkexec");
         assert!(result.is_err(), "pkexec should not be a valid PrivilegeMethod");
     }
 
     #[test]
     fn privilege_rejects_numeric_value() {
-        let result: Result<Privilege, _> = serde_yaml::from_str("42");
+        let result: Result<Privilege, _> = yaml_serde::from_str("42");
         assert!(result.is_err(), "numeric value should not be valid for Privilege");
     }
 
     #[test]
     fn privilege_rejects_plain_string() {
-        let result: Result<Privilege, _> = serde_yaml::from_str("\"sudo\"");
+        let result: Result<Privilege, _> = yaml_serde::from_str("\"sudo\"");
         assert!(result.is_err(), "plain string should not be valid for Privilege");
     }
 
     #[test]
     fn privilege_rejects_invalid_method_in_map() {
-        let result: Result<Privilege, _> = serde_yaml::from_str("method: pkexec");
+        let result: Result<Privilege, _> = yaml_serde::from_str("method: pkexec");
         assert!(result.is_err(), "pkexec should not be valid in privilege map");
     }
 
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn privilege_deserialize_null_returns_inherit() {
         // An explicit null is accepted as Inherit (mirrors field absence).
-        let p: Privilege = serde_yaml::from_str("~").unwrap();
+        let p: Privilege = yaml_serde::from_str("~").unwrap();
         assert_eq!(p, Privilege::Inherit);
     }
 
@@ -513,8 +513,8 @@ mod tests {
     // =========================================================================
 
     fn roundtrip(original: &Privilege) -> Privilege {
-        let yaml = serde_yaml::to_string(original).unwrap();
-        serde_yaml::from_str(&yaml).unwrap()
+        let yaml = yaml_serde::to_string(original).unwrap();
+        yaml_serde::from_str(&yaml).unwrap()
     }
 
     #[test]

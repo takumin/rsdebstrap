@@ -215,8 +215,8 @@ mod tests {
             name_servers: vec![],
             search: vec![],
         };
-        let yaml = serde_yaml::to_string(&task).unwrap();
-        let deserialized: ResolvConfTask = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = yaml_serde::to_string(&task).unwrap();
+        let deserialized: ResolvConfTask = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(task, deserialized);
     }
 
@@ -227,8 +227,8 @@ mod tests {
             name_servers: vec!["8.8.8.8".parse().unwrap()],
             search: vec!["example.com".to_string()],
         };
-        let yaml = serde_yaml::to_string(&task).unwrap();
-        let deserialized: ResolvConfTask = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = yaml_serde::to_string(&task).unwrap();
+        let deserialized: ResolvConfTask = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(task, deserialized);
     }
 
@@ -239,7 +239,7 @@ mod tests {
             name_servers: vec![],
             search: vec![],
         };
-        let yaml = serde_yaml::to_string(&task).unwrap();
+        let yaml = yaml_serde::to_string(&task).unwrap();
         assert!(!yaml.contains("name_servers"));
         assert!(!yaml.contains("search"));
     }
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn deserialize_copy_only() {
         let yaml = "copy: true\n";
-        let task: ResolvConfTask = serde_yaml::from_str(yaml).unwrap();
+        let task: ResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert!(task.copy);
         assert!(task.name_servers.is_empty());
         assert!(task.search.is_empty());
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn deserialize_name_servers_only() {
         let yaml = "name_servers:\n  - 8.8.8.8\n";
-        let task: ResolvConfTask = serde_yaml::from_str(yaml).unwrap();
+        let task: ResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert!(!task.copy);
         assert_eq!(task.name_servers.len(), 1);
     }
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn deserialize_rejects_unknown_fields() {
         let yaml = "copy: true\nunknown_field: true\n";
-        let result: Result<ResolvConfTask, _> = serde_yaml::from_str(yaml);
+        let result: Result<ResolvConfTask, _> = yaml_serde::from_str(yaml);
         assert!(result.is_err());
     }
 }
