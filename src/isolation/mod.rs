@@ -315,26 +315,26 @@ mod tests {
 
     #[test]
     fn task_isolation_deserialize_true() {
-        let p: TaskIsolation = serde_yaml::from_str("true").unwrap();
+        let p: TaskIsolation = yaml_serde::from_str("true").unwrap();
         assert_eq!(p, TaskIsolation::UseDefault);
     }
 
     #[test]
     fn task_isolation_deserialize_false() {
-        let p: TaskIsolation = serde_yaml::from_str("false").unwrap();
+        let p: TaskIsolation = yaml_serde::from_str("false").unwrap();
         assert_eq!(p, TaskIsolation::Disabled);
     }
 
     #[test]
     fn task_isolation_deserialize_chroot_map() {
-        let p: TaskIsolation = serde_yaml::from_str("type: chroot").unwrap();
+        let p: TaskIsolation = yaml_serde::from_str("type: chroot").unwrap();
         assert_eq!(p, TaskIsolation::Config(IsolationConfig::chroot()));
     }
 
     #[test]
     fn task_isolation_deserialize_null_returns_inherit() {
         // An explicit null is accepted as Inherit (mirrors field absence).
-        let p: TaskIsolation = serde_yaml::from_str("~").unwrap();
+        let p: TaskIsolation = yaml_serde::from_str("~").unwrap();
         assert_eq!(p, TaskIsolation::Inherit);
     }
 
@@ -345,20 +345,20 @@ mod tests {
 
     #[test]
     fn task_isolation_rejects_numeric_value() {
-        let result: std::result::Result<TaskIsolation, _> = serde_yaml::from_str("42");
+        let result: std::result::Result<TaskIsolation, _> = yaml_serde::from_str("42");
         assert!(result.is_err());
     }
 
     #[test]
     fn task_isolation_rejects_plain_string() {
-        let result: std::result::Result<TaskIsolation, _> = serde_yaml::from_str("\"chroot\"");
+        let result: std::result::Result<TaskIsolation, _> = yaml_serde::from_str("\"chroot\"");
         assert!(result.is_err());
     }
 
     #[test]
     fn task_isolation_rejects_unknown_type() {
         let result: std::result::Result<TaskIsolation, _> =
-            serde_yaml::from_str("type: nonexistent");
+            yaml_serde::from_str("type: nonexistent");
         assert!(result.is_err());
     }
 
@@ -440,8 +440,8 @@ mod tests {
     // =========================================================================
 
     fn roundtrip(original: &TaskIsolation) -> TaskIsolation {
-        let yaml = serde_yaml::to_string(original).unwrap();
-        serde_yaml::from_str(&yaml).unwrap()
+        let yaml = yaml_serde::to_string(original).unwrap();
+        yaml_serde::from_str(&yaml).unwrap()
     }
 
     #[test]

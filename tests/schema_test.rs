@@ -7,7 +7,7 @@
 //! 1. The schema generates without panicking and has the expected top-level shape.
 //! 2. The shipped example profile validates against it.
 //! 3. Differential check: for a table of YAML documents, the schema's verdict is compared with
-//!    the *structural* deserializer's verdict (`serde_yaml::from_str::<Profile>`). The critical
+//!    the *structural* deserializer's verdict (`yaml_serde::from_str::<Profile>`). The critical
 //!    safety invariant is that the schema must never reject a document the deserializer accepts
 //!    (a false rejection would make editor tooling flag valid configs). Semantic-only checks
 //!    (e.g. mitamae binary resolution, mount/privilege cross-checks) live in `Profile::validate`
@@ -39,12 +39,12 @@ fn validator() -> Validator {
 /// non-string keys, ...) counts as schema-rejected: no JSON-Schema-based tooling can
 /// accept what it cannot even represent.
 fn schema_accepts(v: &Validator, yaml: &str) -> bool {
-    serde_yaml::from_str::<Value>(yaml).is_ok_and(|instance| v.is_valid(&instance))
+    yaml_serde::from_str::<Value>(yaml).is_ok_and(|instance| v.is_valid(&instance))
 }
 
 /// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
 fn deser_accepts(yaml: &str) -> bool {
-    serde_yaml::from_str::<Profile>(yaml).is_ok()
+    yaml_serde::from_str::<Profile>(yaml).is_ok()
 }
 
 /// Minimal valid profile prefix; append a `provision:` block (or nothing) per case.
@@ -353,7 +353,7 @@ fn schema_matches_structural_deserializer() {
             .to_string(),
             true,
         ),
-        // Map *keys* are outside the strict-scalar rule on purpose: serde_yaml stringifies
+        // Map *keys* are outside the strict-scalar rule on purpose: yaml_serde stringifies
         // scalar keys ({64: /x} -> "64") and the YAML->JSON conversion editors rely on does
         // the same, so both sides agree. Making keys strict would only create a new
         // parser/schema divergence. This row pins the agreement.
@@ -367,7 +367,7 @@ fn schema_matches_structural_deserializer() {
             .to_string(),
             true,
         ),
-        // Non-string scalars in string-typed fields: rejected by both sides. serde_yaml's raw
+        // Non-string scalars in string-typed fields: rejected by both sides. yaml_serde's raw
         // scalar-to-string coercion used to accept these on the deserializer only; the `de`
         // helpers now surface the resolved scalar type so the parser matches the schema.
         (

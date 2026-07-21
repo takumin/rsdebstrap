@@ -435,8 +435,8 @@ mod tests {
                 options: vec!["bind".to_string()],
             }],
         };
-        let yaml = serde_yaml::to_string(&task).unwrap();
-        let deserialized: MountTask = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = yaml_serde::to_string(&task).unwrap();
+        let deserialized: MountTask = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(task, deserialized);
     }
 
@@ -446,7 +446,7 @@ mod tests {
             preset: None,
             mounts: vec![],
         };
-        let yaml = serde_yaml::to_string(&task).unwrap();
+        let yaml = yaml_serde::to_string(&task).unwrap();
         assert!(!yaml.contains("preset"));
         assert!(!yaml.contains("mounts"));
     }
@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn deserialize_preset_only() {
         let yaml = "preset: recommends\n";
-        let task: MountTask = serde_yaml::from_str(yaml).unwrap();
+        let task: MountTask = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(task.preset, Some(MountPreset::Recommends));
         assert!(task.mounts.is_empty());
     }
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn deserialize_mounts_only() {
         let yaml = "mounts:\n  - source: proc\n    target: /proc\n";
-        let task: MountTask = serde_yaml::from_str(yaml).unwrap();
+        let task: MountTask = yaml_serde::from_str(yaml).unwrap();
         assert!(task.preset.is_none());
         assert_eq!(task.mounts.len(), 1);
     }

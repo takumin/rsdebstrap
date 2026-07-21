@@ -1,6 +1,6 @@
 //! Strict deserialization helpers for the YAML profile surface.
 //!
-//! `serde_yaml`'s text deserializer coerces *any* plain scalar into its raw text when a
+//! `yaml_serde`'s text deserializer coerces *any* plain scalar into its raw text when a
 //! field asks for a string: `dir: null` used to parse as the literal path `"null"`,
 //! `source: 5` as `"5"`. The generated JSON Schema (and the JSON data model it
 //! validates) types these fields as strings, so the coercion made the deserializer
@@ -12,7 +12,7 @@
 //! The helpers here route string-typed fields through `deserialize_any`, which surfaces
 //! the *resolved* scalar type (a number arrives as `visit_u64`, `null` as `visit_unit`,
 //! ...), so non-string scalars are rejected uniformly in every context — under both the
-//! `serde_yaml` text deserializer and `serde_json` values, which keeps the parser and
+//! `yaml_serde` text deserializer and `serde_json` values, which keeps the parser and
 //! the generated schema in agreement by construction.
 
 use std::collections::HashMap;
@@ -83,7 +83,7 @@ impl<'de> Deserialize<'de> for StrictPath {
 
 /// Deserializes a defaulted field, mapping an explicit `null` to `T::default()`.
 ///
-/// `serde_yaml` already deserializes an *empty* value into the default for container
+/// `yaml_serde` already deserializes an *empty* value into the default for container
 /// fields (a section whose entries are all commented out stays valid), but an explicit
 /// `null` used to be rejected. Mapping `null` to the default makes `null`, the empty
 /// form, and an omitted key all mean the same thing — which is also how the generated

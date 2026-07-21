@@ -13,8 +13,8 @@
 //! `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
 //! `Privilege`/`TaskIsolation`/`ShellTask`/`MitamaeTask` dispatch, but not the semantic
 //! `Profile::validate`), and the schema verdict comes from the compiled validator. Then through
-//! a YAML round-trip (`serde_yaml::to_string` -> `from_str`), because production parses YAML
-//! text and serde_yaml's acceptance surface is not identical to the JSON value model — the
+//! a YAML round-trip (`yaml_serde::to_string` -> `from_str`), because production parses YAML
+//! text and yaml_serde's acceptance surface is not identical to the JSON value model — the
 //! round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
 //! through `de::null_to_default`).
 
@@ -49,12 +49,12 @@ fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
     );
 
     // Production parses YAML *text*, whose acceptance surface is wider than the JSON value
-    // model (empty scalars, serde_yaml scalar handling). Re-run the same document through a
-    // YAML round-trip so a serde_yaml-only acceptance difference violates the property too.
-    let yaml = serde_yaml::to_string(doc).expect("generated document must serialize to YAML");
-    let deser_ok_yaml = serde_yaml::from_str::<Profile>(&yaml).is_ok();
+    // model (empty scalars, yaml_serde scalar handling). Re-run the same document through a
+    // YAML round-trip so a yaml_serde-only acceptance difference violates the property too.
+    let yaml = yaml_serde::to_string(doc).expect("generated document must serialize to YAML");
+    let deser_ok_yaml = yaml_serde::from_str::<Profile>(&yaml).is_ok();
     let schema_ok_yaml =
-        serde_yaml::from_str::<Value>(&yaml).is_ok_and(|instance| VALIDATOR.is_valid(&instance));
+        yaml_serde::from_str::<Value>(&yaml).is_ok_and(|instance| VALIDATOR.is_valid(&instance));
     prop_assert!(
         !deser_ok_yaml || schema_ok_yaml,
         "SCHEMA FALSE-REJECT (YAML round-trip): deserializer accepts but schema rejects\n{yaml}"

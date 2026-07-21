@@ -2,7 +2,7 @@
 	"$defs": {
 		"AssembleConfig": {
 			"additionalProperties": false,
-			"description": "Assemble phase configuration (named-field, schema-first).\n\nThe single field is an optional singleton; a duplicate YAML key is rejected\nby `serde_yaml` at parse time and an unknown key by `deny_unknown_fields`.",
+			"description": "Assemble phase configuration (named-field, schema-first).\n\nThe single field is an optional singleton; a duplicate YAML key is rejected\nby `yaml_serde` at parse time and an unknown key by `deny_unknown_fields`.",
 			"properties": {
 				"resolv_conf": {
 					"anyOf": [
@@ -618,7 +618,7 @@
 		},
 		"PrepareConfig": {
 			"additionalProperties": false,
-			"description": "Prepare phase configuration (named-field, schema-first).\n\nBoth fields are optional singletons. A duplicate YAML key (e.g. two `mount`\nentries) is rejected by `serde_yaml` at parse time, and an unknown key is\nrejected by `deny_unknown_fields` — so the \"at most one\" invariants hold\nstructurally instead of being validated after parsing.",
+			"description": "Prepare phase configuration (named-field, schema-first).\n\nBoth fields are optional singletons. A duplicate YAML key (e.g. two `mount`\nentries) is rejected by `yaml_serde` at parse time, and an unknown key is\nrejected by `deny_unknown_fields` — so the \"at most one\" invariants hold\nstructurally instead of being validated after parsing.",
 			"properties": {
 				"mount": {
 					"anyOf": [

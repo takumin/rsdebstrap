@@ -84,7 +84,7 @@ fn inline_task(content: &str) -> ProvisionTask {
 /// Helper to create an inline shell task with isolation disabled (direct execution).
 fn inline_task_direct(content: &str) -> ProvisionTask {
     let yaml = format!("content: \"{}\"\nisolation: false\n", content);
-    let mut task: ShellTask = serde_yaml::from_str(&yaml).unwrap();
+    let mut task: ShellTask = yaml_serde::from_str(&yaml).unwrap();
     task.resolve_privilege(None).unwrap();
     task.resolve_isolation(&IsolationConfig::chroot()); // Disabled stays Disabled
     ProvisionTask::Shell(task)

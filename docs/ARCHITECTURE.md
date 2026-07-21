@@ -85,7 +85,7 @@ Key invariants:
 `prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, resolv_conf }`,
 `AssembleConfig { resolv_conf }`), not lists. This makes the singleton invariants structural:
 "at most one mount" / "at most one resolv_conf" hold because each is an `Option` (a duplicate
-YAML key is a `serde_yaml` parse error, an unknown key a `deny_unknown_fields` error), and the
+YAML key is a `yaml_serde` parse error, an unknown key a `deny_unknown_fields` error), and the
 `mount → resolv_conf` order is fixed by `items()` rather than by key order. The former
 count/order validators (`validate_prepare_order`, and the count checks in
 `validate_mounts`/`validate_resolv_conf`/`validate_assemble_resolv_conf`) were therefore
@@ -158,14 +158,14 @@ compiles somewhere.
 
 The non-obvious parts are all about keeping the schema faithful to the *deserializer*:
 
-- **The YAML text layer is aligned with the JSON data model** (`src/de.rs`). `serde_yaml`'s text
+- **The YAML text layer is aligned with the JSON data model** (`src/de.rs`). `yaml_serde`'s text
   deserializer hands the raw scalar text to any field that asks for a string — `dir: null` would
   otherwise parse as the literal path `"null"` (and only outside internally tagged enums, whose
   content buffering resolves scalars first, so acceptance was context-dependent) — and it accepts
   an *empty* value as the default for container fields while rejecting an explicit `null`.
   String-typed fields therefore deserialize through the `deserialize_any`-based helpers in
   `src/de.rs`, which reject non-string scalars uniformly, and defaulted section/list/map fields
-  (including `defaults.mitamae`, whose empty form serde_yaml already accepted) map an explicit
+  (including `defaults.mitamae`, whose empty form yaml_serde already accepted) map an explicit
   `null` to the default. The net rule: an explicit `null` and an empty value are equivalent
   everywhere, and on defaulted section/list/map fields they additionally mean "key omitted" (what
   a fully commented-out section leaves behind). Fields that reject the empty form — scalars, the
@@ -202,7 +202,7 @@ The non-obvious parts are all about keeping the schema faithful to the *deserial
   `Bootstrap` / `IsolationConfig` variants because serde's internally-tagged newtype-variant
   deserialization consumes the `type` tag when selecting the variant and hands only the remaining
   fields to the variant struct (so the tag is not seen as an unknown field) — serde-core behavior
-  that holds under `serde_json` and `serde_yaml` alike, not a parser quirk. The well-known serde
+  that holds under `serde_json` and `yaml_serde` alike, not a parser quirk. The well-known serde
   limitation is narrower: `deny_unknown_fields` is a no-op when placed on the internally-tagged
   *enum* itself, which is why both `Bootstrap` and `IsolationConfig` put it on their variant
   payload structs instead. On the schema side, `schemars` inlines the `type` const into each
@@ -233,7 +233,7 @@ Drift guards (all in `cargo test`, so CI fails on drift):
   critical safety invariant: whenever the structural deserializer accepts a document, the schema
   must accept it too (no false rejections that would make editor tooling flag valid configs). The
   property test asserts this twice per generated document — once on the `serde_json::Value` and
-  once through a YAML text round-trip, because production parses YAML and `serde_yaml`'s
+  once through a YAML text round-trip, because production parses YAML and `yaml_serde`'s
   acceptance surface is not identical to the JSON value model. The known divergences in the
   other direction (annotational `ipv4`/`ipv6` formats; duplicate mapping keys, which serde
   rejects but the YAML→JSON conversion resolves last-wins before the schema can see them; and

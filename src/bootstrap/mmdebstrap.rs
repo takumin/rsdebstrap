@@ -115,7 +115,7 @@ pub enum Format {
 // consumes the `type` tag when selecting the variant and hands the *remaining* fields to this
 // struct, so the tag is not seen as an unknown field. This is serde-core behavior, not
 // parser-specific — it holds identically under `serde_json` (which the schema property test
-// relies on) and `serde_yaml`. (The well-known serde limitation is that `deny_unknown_fields`
+// relies on) and `yaml_serde`. (The well-known serde limitation is that `deny_unknown_fields`
 // is a no-op when placed on the internally-tagged *enum* itself, not — as here — on a
 // variant's struct.)
 #[derive(Debug, Deserialize)]
