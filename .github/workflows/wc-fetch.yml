@@ -38,6 +38,15 @@ jobs:
       with:
         key: setup-build-aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
         path: ~/.local/share/aquaproj-aqua/
+    - name: Restore rustup toolchain cache
+      id: rustup-toolchain-cache-restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        path: ~/.rustup/
+    - name: Install rust toolchain
+      run: |-
+        task tool:rustup:toolchain
     - name: Fetch cargo deps
       run: |-
         task tool:cargo:fetch
@@ -56,3 +65,9 @@ jobs:
       with:
         key: ${{ steps.deps-cache-restore.outputs.cache-primary-key }}
         path: ~/.cargo/registry/
+    - name: Save rustup toolchain cache
+      if: github.ref == 'refs/heads/main' && steps.rustup-toolchain-cache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.rustup-toolchain-cache-restore.outputs.cache-primary-key }}
+        path: ~/.rustup/

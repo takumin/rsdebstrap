@@ -43,10 +43,28 @@ tasks:
         TAG: '{{index .MATCH 0}}'
         ARGS: -t {{index .MATCH 0}}
 
+  rustup:toolchain:
+    desc: '{{.TASK}}'
+    label: rustup:toolchain
+    dir: '{{.ROOT_DIR}}'
+    # Multiple tasks (rustup:target/component, cargo:fetch) depend on this one;
+    # `run: once` makes `rustup toolchain install` run a single time per
+    # invocation instead of racing itself (rustup is not concurrency-safe).
+    run: once
+    # Skip when the pinned toolchain is already installed (e.g. ~/.rustup
+    # restored from cache). Inspect the toolchains directory directly instead of
+    # calling rustup, which would auto-install the override as a side effect.
+    status:
+    - ls "${RUSTUP_HOME:-$HOME/.rustup}/toolchains" | rg -q "^$(rg -N -o -r '$1' 'channel\s*=\s*"([^"]+)"' rust-toolchain.toml)-"
+    cmds:
+    - rustup toolchain install
+
   rustup:component:*:
     desc: '{{.TASK}}'
     label: rustup:component:{{index .MATCH 0}}
     dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: rustup:toolchain
     status:
     - rustup component list --installed | rg -q '^{{index .MATCH 0}}'
     cmds:
@@ -56,6 +74,8 @@ tasks:
     desc: '{{.TASK}}'
     label: rustup:target:{{index .MATCH 0}}
     dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: rustup:toolchain
     status:
     - rustup target list --installed | rg -q '^{{index .MATCH 0}}$'
     cmds:
@@ -65,6 +85,8 @@ tasks:
     desc: '{{.TASK}}'
     label: cargo:fetch
     dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: rustup:toolchain
     sources:
     - 'Cargo.lock'
     generates:
