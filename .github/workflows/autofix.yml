@@ -6,6 +6,14 @@ on:
   pull_request:
 permissions:
   contents: read
+env:
+  CARGO_INCREMENTAL: '0'
+  RUSTC_WRAPPER: ${{ !startsWith(github.ref, 'refs/tags/') && 'sccache' || '' }}
+  SCCACHE_CACHE_SIZE: '1G'
+  # cargo runs the RUSTC_WRAPPER from each crate's source dir, where aqua can't
+  # find .aqua/aqua.yaml by upward search; point it at the repo config so the
+  # `sccache` command resolves regardless of the working directory.
+  AQUA_GLOBAL_CONFIG: ${{ github.workspace }}/.aqua/aqua.yaml
 jobs:
   autofix:
     name: autofix.ci
@@ -27,16 +35,29 @@ jobs:
         restore-keys: |-
           deps-
         path: ~/.cargo/registry/
-    - name: Restore test cache
+    - name: Restore rustup toolchain cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        key: test-${{ hashFiles('**/Cargo.lock') }}
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
         restore-keys: |-
-          test-
-        path: target/
+          rustup-
+        path: ~/.rustup/
+    - name: Setup sccache
+      run: task tool:aqua:tag:sccache
+    - name: Restore sccache (deps, read-only)
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: sccache-test-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |-
+          sccache-test-
+        path: ~/.cache/sccache
     - name: Formatting
       run: task format
     - name: Generate schema
       run: task schema
+    - name: sccache stats
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      run: sccache --show-stats
     - name: Autofix
       uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a # v1.3.4
