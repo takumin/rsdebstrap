@@ -47,18 +47,17 @@ tasks:
     desc: '{{.TASK}}'
     label: rustup:toolchain
     dir: '{{.ROOT_DIR}}'
-    # deps of multiple tasks (rustup:target/component, cargo:fetch) fan into this
-    # one; `run: once` makes rustup toolchain install execute a single time per
+    # Multiple tasks (rustup:target/component, cargo:fetch) depend on this one;
+    # `run: once` makes `rustup toolchain install` run a single time per
     # invocation instead of racing itself (rustup is not concurrency-safe).
     run: once
-    sources:
-    - rust-toolchain.toml
-    generates:
-    - .task/.done_rustup:toolchain
+    # Skip when the pinned toolchain is already installed (e.g. ~/.rustup
+    # restored from cache). Inspect the toolchains directory directly instead of
+    # calling rustup, which would auto-install the override as a side effect.
+    status:
+    - ls "${RUSTUP_HOME:-$HOME/.rustup}/toolchains" | rg -q "^$(rg -N -o -r '$1' 'channel\s*=\s*"([^"]+)"' rust-toolchain.toml)-"
     cmds:
     - rustup toolchain install
-    - cmd: touch .task/.done_rustup:toolchain
-      silent: true
 
   rustup:component:*:
     desc: '{{.TASK}}'
