@@ -3,6 +3,10 @@ name: Test
 on:
   workflow_call:
 permissions: {}
+env:
+  CARGO_INCREMENTAL: '0'
+  RUSTC_WRAPPER: ${{ !startsWith(github.ref, 'refs/tags/') && 'sccache' || '' }}
+  SCCACHE_CACHE_SIZE: '1G'
 concurrency:
   group: test-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -29,12 +33,15 @@ jobs:
         restore-keys: |-
           deps-
         path: ~/.cargo/registry/
-    - name: Restore test cache
-      id: test-cache-restore
+    - name: Restore sccache (deps)
+      id: sccache
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        key: test-${{ hashFiles('**/Cargo.lock') }}
-        path: target/
+        key: sccache-test-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |-
+          sccache-test-
+        path: ~/.cache/sccache
     - name: Restore rustup toolchain cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -42,15 +49,20 @@ jobs:
         restore-keys: |-
           rustup-
         path: ~/.rustup/
+    - name: Setup sccache
+      run: task tool:aqua:tag:sccache
     - name: Setup test
       run: |-
         task setup:test
     - name: Test
       run: |-
         task test
-    - name: Save test cache
-      if: github.ref == 'refs/heads/main' && steps.test-cache-restore.outputs.cache-hit != 'true'
+    - name: sccache stats
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      run: sccache --show-stats
+    - name: Save sccache (deps)
+      if: github.ref == 'refs/heads/main' && steps.sccache.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        key: ${{ steps.test-cache-restore.outputs.cache-primary-key }}
-        path: target/
+        key: ${{ steps.sccache.outputs.cache-primary-key }}
+        path: ~/.cache/sccache

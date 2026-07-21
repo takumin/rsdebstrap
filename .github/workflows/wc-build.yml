@@ -3,6 +3,10 @@ name: Build
 on:
   workflow_call:
 permissions: {}
+env:
+  CARGO_INCREMENTAL: '0'
+  RUSTC_WRAPPER: ${{ !startsWith(github.ref, 'refs/tags/') && 'sccache' || '' }}
+  SCCACHE_CACHE_SIZE: '1G'
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -73,12 +77,15 @@ jobs:
         restore-keys: |-
           setup-build-aqua-
         path: ~/.local/share/aquaproj-aqua/
-    - name: Restore build cache
-      id: build-cache-restore
+    - name: Restore sccache (deps)
+      id: sccache
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        key: build-${{ matrix.profile }}-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-        path: target/
+        key: sccache-build-${{ matrix.target }}-${{ matrix.profile }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |-
+          sccache-build-${{ matrix.target }}-${{ matrix.profile }}-
+        path: ~/.cache/sccache
     - name: Restore rustup toolchain cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -96,9 +103,11 @@ jobs:
       run: |-
         task build:build
       env:
-        CARGO_INCREMENTAL: ${{ !startsWith(github.ref, 'refs/tag/') && '1' || '0' }}
         BUILD_PROFILE: ${{ matrix.profile }}
         BUILD_TARGET: ${{ matrix.target }}
+    - name: sccache stats
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      run: sccache --show-stats
     - name: Generate sha256sum
       run: |-
         task build:sha256sum
@@ -129,9 +138,9 @@ jobs:
       with:
         name: rsdebstrap-${{ matrix.profile }}-${{ matrix.target }}
         path: dist/
-    - name: Save build cache
-      if: github.ref == 'refs/heads/main' && steps.build-cache-restore.outputs.cache-hit != 'true'
+    - name: Save sccache (deps)
+      if: github.ref == 'refs/heads/main' && steps.sccache.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        key: ${{ steps.build-cache-restore.outputs.cache-primary-key }}
-        path: target/
+        key: ${{ steps.sccache.outputs.cache-primary-key }}
+        path: ~/.cache/sccache
