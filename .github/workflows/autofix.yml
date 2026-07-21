@@ -10,6 +10,10 @@ env:
   CARGO_INCREMENTAL: '0'
   RUSTC_WRAPPER: ${{ !startsWith(github.ref, 'refs/tags/') && 'sccache' || '' }}
   SCCACHE_CACHE_SIZE: '1G'
+  # cargo runs the RUSTC_WRAPPER from each crate's source dir, where aqua can't
+  # find .aqua/aqua.yaml by upward search; point it at the repo config so the
+  # `sccache` command resolves regardless of the working directory.
+  AQUA_GLOBAL_CONFIG: ${{ github.workspace }}/.aqua/aqua.yaml
 jobs:
   autofix:
     name: autofix.ci
