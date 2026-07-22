@@ -536,12 +536,10 @@ impl Profile {
             _ => return Ok(()),
         };
 
-        // mounts require chroot isolation
-        if !matches!(self.defaults.isolation, IsolationConfig::Chroot(_)) {
-            return Err(RsdebstrapError::Validation(
-                "mounts require chroot isolation (defaults.isolation must be chroot)".to_string(),
-            ));
-        }
+        // No isolation guard: `IsolationConfig` has a single `Chroot` variant, so
+        // `defaults.isolation` is always chroot and mounts (which assume a chroot rootfs)
+        // can never observe a non-chroot backend. Reintroduce a guard next to a second
+        // backend if one is ever added, where it would be reachable and testable.
 
         // mounts require privilege to be configured
         if self.defaults.privilege.is_none() {
@@ -566,16 +564,9 @@ impl Profile {
     /// Validates resolv_conf-related configuration.
     fn validate_resolv_conf(&self) -> Result<(), RsdebstrapError> {
         // The named-field `prepare.resolv_conf` guarantees at most one task.
+        // No isolation guard here for the same reason as `validate_mounts`: the sole
+        // `IsolationConfig::Chroot` variant makes `defaults.isolation` always chroot.
         if let Some(task) = &self.prepare.resolv_conf {
-            // resolv_conf requires chroot isolation
-            if !matches!(self.defaults.isolation, IsolationConfig::Chroot(_)) {
-                return Err(RsdebstrapError::Validation(
-                    "resolv_conf requires chroot isolation \
-                    (defaults.isolation must be chroot)"
-                        .to_string(),
-                ));
-            }
-
             task.config().validate()?;
         }
 
