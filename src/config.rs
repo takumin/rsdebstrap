@@ -1533,4 +1533,110 @@ mod tests {
         // `sh` is reliably on PATH in the test environment (matches the repo's sh idiom).
         assert!(validate_command_in_path("sh", "shell").is_ok());
     }
+
+    // =========================================================================
+    // Profile::validate_mounts / validate_resolv_conf tests
+    //
+    // `IsolationConfig` has a single `Chroot` variant, so `defaults.isolation` is
+    // always chroot; the former "require chroot isolation" guards were removed as
+    // unreachable dead code (e0fd092). These tests cover the two private validators
+    // directly, complementing the integration-level `test_profile_validation_*`
+    // tests in tests/config_test.rs.
+    // =========================================================================
+
+    /// Builds a minimal valid `Profile` YAML document; `extra` splices in more
+    /// top-level keys (e.g. `defaults:`, `prepare:`).
+    fn minimal_profile_yaml(extra: &str) -> String {
+        let base = concat!(
+            "dir: /tmp/rootfs\n",
+            "bootstrap:\n",
+            "  type: mmdebstrap\n",
+            "  suite: trixie\n",
+            "  target: rootfs\n",
+        );
+        format!("{base}{extra}")
+    }
+
+    fn parse_profile(yaml: &str) -> Profile {
+        yaml_serde::from_str::<Profile>(yaml)
+            .unwrap_or_else(|e| panic!("failed to parse profile: {e}\nyaml:\n{yaml}"))
+    }
+
+    #[test]
+    fn test_validate_mounts_no_mount_task_is_ok() {
+        let profile = parse_profile(&minimal_profile_yaml(""));
+        assert!(profile.validate_mounts().is_ok());
+    }
+
+    #[test]
+    fn test_validate_mounts_empty_mount_task_is_ok() {
+        // No preset and no custom mounts: `has_mounts()` is false, so validation
+        // short-circuits to Ok without requiring privilege.
+        let yaml = minimal_profile_yaml("prepare:\n  mount:\n    mounts: []\n");
+        let profile = parse_profile(&yaml);
+        assert!(profile.validate_mounts().is_ok());
+    }
+
+    #[test]
+    fn test_validate_mounts_requires_privilege() {
+        // A mount task without `defaults.privilege` must fail with the privilege guard.
+        // Regression guard for e0fd092: the error is about privilege, never about
+        // isolation/chroot (the removed "mounts require chroot isolation" guard).
+        let yaml = minimal_profile_yaml("prepare:\n  mount:\n    preset: recommends\n");
+        let profile = parse_profile(&yaml);
+        let err = profile.validate_mounts().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)), "unexpected: {err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("defaults.privilege must be configured"), "unexpected: {msg}");
+        assert!(!msg.contains("isolation"), "unexpected isolation-related error: {msg}");
+        assert!(!msg.contains("chroot"), "unexpected chroot-related error: {msg}");
+    }
+
+    #[test]
+    fn test_validate_mounts_custom_mounts_without_preset_requires_privilege() {
+        // Custom mounts (no preset) also make `has_mounts()` true, so the privilege
+        // guard fires before any mount/umount PATH check.
+        let yaml = minimal_profile_yaml(
+            "prepare:\n  mount:\n    mounts:\n      - source: proc\n        target: /proc\n",
+        );
+        let profile = parse_profile(&yaml);
+        let err = profile.validate_mounts().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)), "unexpected: {err:?}");
+        assert!(
+            err.to_string()
+                .contains("defaults.privilege must be configured"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_resolv_conf_no_task_is_ok() {
+        let profile = parse_profile(&minimal_profile_yaml(""));
+        assert!(profile.validate_resolv_conf().is_ok());
+    }
+
+    #[test]
+    fn test_validate_resolv_conf_valid_copy_is_ok() {
+        // `validate_resolv_conf` delegates to `ResolvConfConfig::validate`; a valid
+        // `copy: true` task must pass. Hermetic — no host dependency.
+        let yaml = minimal_profile_yaml("prepare:\n  resolv_conf:\n    copy: true\n");
+        let profile = parse_profile(&yaml);
+        assert!(profile.validate_resolv_conf().is_ok());
+    }
+
+    #[test]
+    fn test_validate_resolv_conf_propagates_underlying_validation_error() {
+        // `search` without `name_servers` is invalid; the underlying
+        // `ResolvConfConfig::validate` error must propagate through the Profile method.
+        // Regression guard for e0fd092: the error is config-related, not isolation/chroot.
+        let yaml =
+            minimal_profile_yaml("prepare:\n  resolv_conf:\n    search:\n      - example.com\n");
+        let profile = parse_profile(&yaml);
+        let err = profile.validate_resolv_conf().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)), "unexpected: {err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("name_servers"), "unexpected: {msg}");
+        assert!(!msg.contains("isolation"), "unexpected isolation-related error: {msg}");
+        assert!(!msg.contains("chroot"), "unexpected chroot-related error: {msg}");
+    }
 }
