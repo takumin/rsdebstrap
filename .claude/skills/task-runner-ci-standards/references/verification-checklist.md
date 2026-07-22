@@ -16,6 +16,15 @@ Use this in **VERIFY** and **UPDATE** mode. Walk every item, **open the actual f
 Every non-PASS needs: the **evidence** (`file:line` or "no such file"), and a **one-line
 fix**. Check, don't assume — a `lint` target existing is not proof it fails the build.
 
+**Un-inspectable items.** Some criteria (branch protection, which checks are *required* to
+merge) live in repo settings, not files — a checkout often can't confirm them. Don't guess:
+grade them "can't verify from files — confirm in repo settings" and say what to look for.
+
+**Scoring.** Score each pillar as **PASS count / applicable principles**, excluding N/A from
+the denominator; WARN and FAIL both count as not-yet-passing. E.g. Pillar C with C15 marked
+N/A and C12–C14 all PASS scores **3/3**. It's a rough posture signal, not a grade — the FAIL
+list is what actually drives the work.
+
 ## Orientation (do this first)
 
 - [ ] What does the repo **ship**? library / app / one-or-more binaries / container /
@@ -75,9 +84,12 @@ fix**. Check, don't assume — a `lint` target existing is not proof it fails th
       `pull_request_target` for untrusted input. *Check:* checkout options; trigger types.
 - [ ] **C14** Caching is **restore-always / save-on-trunk-only**, keyed by lockfile hash.
       *Check:* is `save` gated to the trunk branch? can a PR write the shared cache?
-- [ ] **C15** *(if it ships artifacts)* Checksums generated **and verified**; artifacts
-      **signed** (keyless/OIDC) and **attested**; publish step **tag-gated**. *Check:* each
-      sub-item; mark N/A with a reason if nothing ships.
+- [ ] **C15** *(only for artifacts you publish/distribute)* Checksums generated **and
+      verified**; artifacts **signed** (keyless/OIDC) and **attested**; publish step
+      **tag-gated**. *Check:* each sub-item; mark N/A with a reason if nothing is published.
+      Note: an ephemeral `upload-artifact` used only to hand build output between CI jobs is
+      **not** a release — C15 covers what reaches users (release assets, pushed images,
+      published packages), not inter-job handoffs.
 
 ## Cross-cutting
 
@@ -104,9 +116,9 @@ apply the top fixes.
 
 ## Summary
 <2–3 sentences: overall posture, the single highest-value fix, biggest risk.>
-Score: A __/5   B __/6   C __/4(+N/A)
+Score (PASS / applicable, N/A excluded): A _/_   B _/_   C _/_
 
-## FAIL (fix first)
+## FAIL (most severe first)
 - **[A2] CI re-implements the build.** `.github/workflows/ci.yml:41–63` runs a 20-line
   build inline; nothing equivalent in the task runner.
   → Move it into a `build` task; replace the steps with `run: task build`.

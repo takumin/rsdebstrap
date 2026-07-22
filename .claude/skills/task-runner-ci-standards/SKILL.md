@@ -101,12 +101,18 @@ actually ships (library / app / one or more binaries / container). Then pick the
 mode.
 
 ### Mode: VERIFY / AUDIT ("is my CI any good?", "audit my workflows")
-1. Read **`references/verification-checklist.md`** and walk every item.
-2. For each principle record **PASS / WARN / FAIL** with concrete evidence
+1. Read **`references/standards.md`** for the depth behind each principle, then
+   walk every item in **`references/verification-checklist.md`**.
+2. For each principle record **PASS / WARN / FAIL / N/A** with concrete evidence
    (`file:line`) and a one-line concrete fix. Check, don't guess — open the
-   workflow files, the task runner, the tool-manager config, branch-protection
-   expectations.
-3. Produce the audit report using the template in that file, ordered worst-first.
+   workflow files, the task runner, the tool-manager config. Some criteria (branch
+   protection, which checks are *required* to merge) live in repo settings, not
+   files; grade those "can't verify from files — confirm in repo settings" instead
+   of assuming.
+3. Produce the audit report using the template in the checklist file. Within it,
+   the FAIL list is ordered by **severity** (blast radius); the separate "order of
+   work" is the recommended **fix sequence** — they are different orderings on
+   purpose.
 4. Change nothing unless the user asks; end by offering to apply the top fixes.
 
 ### Mode: CREATE ("set up CI", "scaffold a Taskfile", "add a pipeline")
