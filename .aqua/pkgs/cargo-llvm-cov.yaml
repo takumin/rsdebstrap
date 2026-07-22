@@ -1,0 +1,5 @@
+---
+packages:
+- name: taiki-e/cargo-llvm-cov@v0.8.7
+  tags:
+  - cargo-llvm-cov

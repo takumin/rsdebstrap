@@ -11,6 +11,14 @@ cargo build --quiet
 # Run tests
 cargo test --quiet
 
+# Measure code coverage (cargo-llvm-cov). Opt-in — not part of `task all`; rebuilds
+# the workspace with instrumentation and prints a per-file + TOTAL table. CI runs it
+# via aqua as an informational (non-gating) job (.github/workflows/wc-coverage.yml).
+# Run the command directly rather than `task coverage` in environments where aqua
+# cannot fetch GitHub Releases (e.g. Claude Code on the web) — install from crates.io:
+cargo install cargo-llvm-cov --version 0.8.7 --locked  # once; matches the aqua pin
+cargo llvm-cov --workspace
+
 # Check for errors without building
 cargo check --all-targets --all-features --quiet
 
