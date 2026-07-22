@@ -89,6 +89,20 @@ provision:
     // editorconfig-checker-enable
 }
 
+/// Minimal bootstrap-only YAML using the debootstrap backend.
+fn bootstrap_only_debootstrap_yaml() -> &'static str {
+    // editorconfig-checker-disable
+    r#"---
+dir: /tmp/orchestration-test-debootstrap
+bootstrap:
+  type: debootstrap
+  suite: trixie
+  target: rootfs
+  mirror: https://deb.debian.org/debian
+"#
+    // editorconfig-checker-enable
+}
+
 #[test]
 fn run_apply_uses_executor_with_built_args() {
     let file = write_yaml_tempfile(bootstrap_only_yaml());
@@ -111,6 +125,31 @@ fn run_apply_uses_executor_with_built_args() {
     assert_eq!(calls.len(), 1);
     let (command, args) = calls.first().expect("at least one call");
     assert_eq!(command, "mmdebstrap");
+    assert!(!args.is_empty(), "expected args to be populated");
+}
+
+#[test]
+fn run_apply_uses_executor_with_debootstrap_args() {
+    let file = write_yaml_tempfile(bootstrap_only_debootstrap_yaml());
+    let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
+    let opts = cli::ApplyArgs {
+        common: cli::CommonArgs {
+            file: path.to_owned(),
+            log_level: cli::LogLevel::Error,
+        },
+        dry_run: true,
+    };
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+
+    run_apply(&opts, executor).expect("run_apply should succeed");
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let (command, args) = calls.first().expect("at least one call");
+    assert_eq!(command, "debootstrap");
     assert!(!args.is_empty(), "expected args to be populated");
 }
 

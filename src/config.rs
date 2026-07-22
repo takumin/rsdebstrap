@@ -1502,4 +1502,35 @@ mod tests {
         let deserialized: ResolvConfConfig = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);
     }
+
+    // =========================================================================
+    // validate_command_in_path tests
+    // =========================================================================
+
+    #[test]
+    fn test_validate_command_in_path_missing() {
+        let err = validate_command_in_path("rsdebstrap-definitely-missing-command", "test command")
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                RsdebstrapError::CommandNotFound { command, label }
+                    if command == "rsdebstrap-definitely-missing-command"
+                        && label == "test command"
+            ),
+            "Expected CommandNotFound with matching fields, got: {:?}",
+            err
+        );
+        assert!(
+            err.to_string().contains("not found in PATH"),
+            "Expected 'not found in PATH' in message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_validate_command_in_path_present() {
+        // `sh` is reliably on PATH in the test environment (matches the repo's sh idiom).
+        assert!(validate_command_in_path("sh", "shell").is_ok());
+    }
 }

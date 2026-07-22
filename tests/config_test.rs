@@ -1743,6 +1743,12 @@ prepare:
         "Expected error about privilege, got: {}",
         err
     );
+    // Pin the exact guard branch, not merely any message mentioning privilege.
+    assert!(
+        err.to_string().contains("must be configured"),
+        "Expected the 'defaults.privilege must be configured' guard, got: {}",
+        err
+    );
 
     Ok(())
 }
