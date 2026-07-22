@@ -61,6 +61,13 @@ jobs:
     - name: Test
       run: |-
         task test
+    # GitHub-hosted runners execute steps as the non-root `runner` user, so the
+    # two #[ignore]d permission tests (which assert permission-denied I/O and thus
+    # need chmod bits to actually apply) run here. Kept as a separate step because
+    # `task test` runs `cargo test`, which skips #[ignore]d tests.
+    - name: Test (ignored)
+      run: |-
+        task test:ignored
     - name: sccache stats
       if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       run: sccache --show-stats
