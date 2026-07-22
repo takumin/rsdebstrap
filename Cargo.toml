@@ -40,5 +40,5 @@ which = "8.0.0"
 yaml_serde = "0.10.4"
 
 [dev-dependencies]
-jsonschema = "=0.48.2"
+jsonschema = "=0.48.5"
 proptest = "=1.11.0"
