@@ -271,7 +271,7 @@ fn test_run_fails_when_context_execute_errors() {
 }
 
 #[test]
-#[ignore] // Non-root only (fails as root); CI runs it via `task test:ignored`
+#[ignore] // Non-root only (fails as root); CI runs it via `task test:non_root`
 fn test_run_fails_when_script_copy_fails() {
     use std::os::unix::fs::PermissionsExt;
 

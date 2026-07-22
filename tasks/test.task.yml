@@ -38,9 +38,9 @@ tasks:
     - cmd: touch .task/.done_{{.TASK}}
       silent: true
 
-  ignored:
+  non_root:
     desc: '{{.TASK}}'
-    label: test:ignored
+    label: test:non_root
     dir: '{{.ROOT_DIR}}'
     deps:
     - task: setup:test

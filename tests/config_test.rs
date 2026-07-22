@@ -671,7 +671,7 @@ bootstrap:
 }
 
 #[test]
-#[ignore] // Non-root only (fails as root); CI runs it via `task test:ignored`
+#[ignore] // Non-root only (fails as root); CI runs it via `task test:non_root`
 fn test_load_profile_permission_denied() -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
