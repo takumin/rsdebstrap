@@ -38,7 +38,7 @@ tasks:
     - cmd: touch .task/.done_{{.TASK}}
       silent: true
 
-  test:ignored:
+  ignored:
     desc: '{{.TASK}}'
     label: test:ignored
     dir: '{{.ROOT_DIR}}'
