@@ -10,6 +10,12 @@ includes:
     internal: true
 
 vars:
+  # Base reviewdog flags applied in every environment (local and CI). These are
+  # the lint gate: -filter-mode nofilter lints the whole tree (not just changed
+  # lines) and -fail-level any makes reviewdog exit non-zero on any finding, so
+  # lint issues fail the job. CI appends its own flags via the REVIEWDOG_ARGS
+  # env var (see the reviewdog task); they are added to these, not substituted,
+  # so the gate can never be silently dropped.
   REVIEWDOG_ARGS:
   - -filter-mode 'nofilter'
   - -log-level 'warning'
@@ -40,11 +46,15 @@ tasks:
     deps:
     - task: tool:aqua:tag:reviewdog
     cmds:
+    # Base flags always apply; REVIEWDOG_ARGS (env) is appended as extra flags,
+    # so CI can add debug logging without dropping the -fail-level gate. For a
+    # repeated flag reviewdog keeps the last value (Go's flag package).
     - >-
       reviewdog
       -runners '{{.REVIEWDOG_RUNNER}}'
       -reporter '{{env "REVIEWDOG_REPORTER" | default "local"}}'
-      {{env "REVIEWDOG_ARGS" | default (.REVIEWDOG_ARGS | join " ")}}
+      {{.REVIEWDOG_ARGS | join " "}}
+      {{env "REVIEWDOG_ARGS"}}
 
   editorconfig-checker:
     desc: '{{.TASK}}'
