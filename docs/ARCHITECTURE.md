@@ -89,10 +89,13 @@ YAML key is a `yaml_serde` parse error, an unknown key a `deny_unknown_fields` e
 `mount → resolv_conf` order is fixed by `items()` rather than by key order. The former
 count/order validators (`validate_prepare_order`, and the count checks in
 `validate_mounts`/`validate_resolv_conf`/`validate_assemble_resolv_conf`) were therefore
-removed; only cross-field checks remain in `Profile::validate_*` (mounts → chroot + privilege;
-prepare `resolv_conf` → chroot; `mount`/`umount` in `PATH`). Prepare and assemble may each
-carry a `resolv_conf` task — they play different roles (temporary DNS during provisioning vs.
-the permanent installed file).
+removed; only cross-field checks remain in `Profile::validate_*` (mounts → privilege;
+`mount`/`umount` in `PATH`; prepare `resolv_conf` → `ResolvConfConfig::validate`). The former
+"mounts/`resolv_conf` require chroot isolation" guards were removed as well: `IsolationConfig`
+has a single `Chroot` variant, so `defaults.isolation` is always chroot and those guards were
+unreachable dead code — reintroduce one next to a second isolation backend if ever added, where
+it would be reachable and testable. Prepare and assemble may each carry a `resolv_conf` task —
+they play different roles (temporary DNS during provisioning vs. the permanent installed file).
 
 ## Filesystem safety: TOCTOU & RAII
 
