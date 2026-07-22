@@ -14,7 +14,6 @@ jobs:
   ##############################################################################
   format:
     name: Format
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     permissions:
       contents: read
     uses: ./.github/workflows/wc-format.yml
@@ -23,7 +22,6 @@ jobs:
   ##############################################################################
   reviewdog:
     name: Reviewdog
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     permissions:
       actions: read
       checks: write
@@ -43,7 +41,6 @@ jobs:
   ##############################################################################
   test:
     name: Test
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     permissions:
       contents: read
     uses: ./.github/workflows/wc-test.yml
@@ -52,7 +49,6 @@ jobs:
   ##############################################################################
   audit:
     name: Audit
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     permissions:
       contents: read
     uses: ./.github/workflows/wc-audit.yml
@@ -71,6 +67,10 @@ jobs:
   ##############################################################################
   release:
     needs:
+    - format
+    - reviewdog
+    - test
+    - audit
     - build
     name: Release
     permissions:
