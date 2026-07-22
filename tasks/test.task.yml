@@ -37,3 +37,21 @@ tasks:
     - cargo check --frozen --workspace --all-targets --no-default-features
     - cmd: touch .task/.done_{{.TASK}}
       silent: true
+
+  non_root:
+    desc: '{{.TASK}}'
+    label: test:non_root
+    dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: setup:test
+    cmds:
+    # The two #[ignore]d tests assert permission-denied I/O rendering by making a
+    # path unreadable/unwritable with chmod; as root those bits are bypassed, so the
+    # operation succeeds and the assertion fails. Run them only as a non-root user.
+    - cmd: |-
+        if [ "$(id -u)" -eq 0 ]; then
+          echo 'skipping #[ignore]d permission tests: they require a non-root user'
+        else
+          cargo test --frozen --workspace -- --ignored
+        fi
+      silent: true

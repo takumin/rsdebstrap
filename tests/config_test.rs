@@ -671,7 +671,7 @@ bootstrap:
 }
 
 #[test]
-#[ignore] // Skip in CI: requires file permission manipulation
+#[ignore] // Non-root only (fails as root); CI runs it via `task test:non_root`
 fn test_load_profile_permission_denied() -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
