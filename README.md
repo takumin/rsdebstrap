@@ -79,12 +79,12 @@ With the installed binary, the core commands are:
 
 ```sh
 # Validate, then dry-run, then build for real
-rsdebstrap validate -f profile.yaml
-rsdebstrap apply -f profile.yaml --dry-run
-rsdebstrap apply -f profile.yaml
+rsdebstrap validate -f profile.yml
+rsdebstrap apply -f profile.yml --dry-run
+rsdebstrap apply -f profile.yml
 ```
 
-`-f`/`--file` defaults to `profile.yaml`, and `-l`/`--log-level` controls
+`-f`/`--file` defaults to `profile.yml`, and `-l`/`--log-level` controls
 verbosity (`trace`, `debug`, `info`, `warn`, `error`; default `info`).
 
 ### Shell completions
