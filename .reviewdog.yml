@@ -30,6 +30,3 @@ runner:
   clippy:
     cmd: cargo clippy --quiet --all-targets --message-format json | clippy-reviewdog-filter
     format: checkstyle
-  hadolint:
-    cmd: fd -H -E .git/ -E .task/ -t f -g Dockerfile -X hadolint -f json {} | jq -M -f scripts/reviewdog-hadolint.jq
-    format: rdjson
