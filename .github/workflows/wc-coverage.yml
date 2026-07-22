@@ -1,0 +1,58 @@
+---
+name: Coverage
+on:
+  workflow_call:
+permissions: {}
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  ##############################################################################
+  # Coverage
+  ##############################################################################
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@96a9bc20066c5bf5e275b41019cfc165b25f4e2e # v4.0.5
+      with:
+        aqua_version: v2.62.1
+    - name: Restore cargo deps cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: deps-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |-
+          deps-
+        path: ~/.cargo/registry/
+    - name: Restore rustup toolchain cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        restore-keys: |-
+          rustup-
+        path: ~/.rustup/
+    - name: Setup coverage
+      run: task setup:coverage
+    - name: Coverage
+      run: task coverage
+    # Surface the per-file table and TOTAL line in the run's job summary for
+    # at-a-glance visibility. `report` re-renders from the profdata the previous
+    # step already collected (no recompile, no test re-run), so it is cheap.
+    - name: Summary
+      if: ${{ always() }}
+      run: |-
+        {
+          echo '## Coverage'
+          echo ''
+          echo '```text'
+          cargo llvm-cov report --summary-only || echo '(coverage data unavailable)'
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"

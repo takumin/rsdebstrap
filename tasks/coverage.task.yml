@@ -1,0 +1,33 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+includes:
+  setup:
+    taskfile: setup.task.yml
+    internal: true
+
+tasks:
+  default:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task: coverage
+
+  # Source-based coverage via cargo-llvm-cov. Not part of the default `task all`
+  # pipeline: it rebuilds the workspace with instrumentation (a separate object
+  # graph from the plain test build), so it is opt-in locally and runs as its own
+  # informational CI job (.github/workflows/wc-coverage.yml). Visibility only —
+  # there is no coverage threshold gate (see #732).
+  coverage:
+    desc: '{{.TASK}}'
+    label: coverage:workspace
+    dir: '{{.ROOT_DIR}}'
+    deps:
+    - task: setup:coverage
+    cmds:
+    # `--frozen` mirrors the test task: fail rather than touch the network or
+    # Cargo.lock. Prints a per-file table plus a TOTAL line to stdout.
+    - cargo llvm-cov --frozen --workspace

@@ -45,6 +45,17 @@ jobs:
       contents: read
     uses: ./.github/workflows/wc-test.yml
   ##############################################################################
+  # Coverage
+  ##############################################################################
+  # Informational only (see #732): reports a coverage number for visibility but
+  # is intentionally left out of the `release` and `ci` gates below, so it never
+  # blocks a merge or release. Test correctness is already gated by `test`.
+  coverage:
+    name: Coverage
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wc-coverage.yml
+  ##############################################################################
   # Audit
   ##############################################################################
   audit:
