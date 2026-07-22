@@ -248,6 +248,15 @@ Drift guards (all in `cargo test`, so CI fails on drift):
   `name_servers` exclusivity, mitamae binary resolution) stay in `Profile::validate_*` and are out
   of scope here.
 
+## MSRV policy
+
+The Minimum Supported Rust Version is **declared** as `rust-version` in `Cargo.toml` (the
+machine-readable floor `cargo` and packagers read) and **pinned** to an exact patch release in
+`rust-toolchain.toml` (`channel`) for reproducible builds. The policy uses a single pinned stable
+toolchain; `rust-version` declares the MSRV floor, while `tests/msrv_test.rs` enforces
+`major.minor` agreement (patch versions may differ) rather than a matrix-verified range. Bumping
+the pin to a new minor therefore requires a deliberate `rust-version` bump in the same change.
+
 ## Testing pattern
 
 Mock-executor pattern (`tests/helpers/mod.rs`):
