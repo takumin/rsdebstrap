@@ -5,6 +5,7 @@ description = "A declarative CLI tool to build Debian-based rootfs images using 
 license = "Apache-2.0"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.97"
 readme = "README.md"
 homepage = "https://github.com/takumin/rsdebstrap"
 repository = "https://github.com/takumin/rsdebstrap"
