@@ -1,0 +1,26 @@
+---
+name: Cron Audit
+on:
+  # Catch newly disclosed advisories against unchanged, pinned dependencies.
+  schedule:
+  - cron: '0 0 * * *'
+  workflow_dispatch:
+  # Gate dependency-changing PRs (incl. Renovate bumps) on advisories, without
+  # blocking unrelated PRs on an advisory disclosed elsewhere in the tree.
+  pull_request:
+    paths:
+    - Cargo.lock
+    - '**/Cargo.toml'
+    - deny.toml
+permissions: {}
+jobs:
+  ##############################################################################
+  # Advisories
+  ##############################################################################
+  advisories:
+    name: Advisories
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wc-audit.yml
+    with:
+      task: 'audit:advisories'

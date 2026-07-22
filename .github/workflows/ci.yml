@@ -48,6 +48,15 @@ jobs:
       contents: read
     uses: ./.github/workflows/wc-test.yml
   ##############################################################################
+  # Audit
+  ##############################################################################
+  audit:
+    name: Audit
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wc-audit.yml
+  ##############################################################################
   # Build
   ##############################################################################
   build:
@@ -76,6 +85,7 @@ jobs:
     - reviewdog
     - fetch
     - test
+    - audit
     - build
     - release
     name: CI

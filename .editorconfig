@@ -17,6 +17,9 @@ function_next_line = true
 [*.{yaml,yml}]
 indent_style = space
 
+[*.toml]
+indent_style = space
+
 [*.rs]
 max_line_length = 100
 indent_style    = space
