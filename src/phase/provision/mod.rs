@@ -73,7 +73,7 @@ impl PhaseItem for ProvisionTask {
 }
 
 impl ProvisionTask {
-    /// Returns the display name of this task (e.g., "shell:<inline>", "mitamae:recipe.rb").
+    /// Returns the display name of this task (e.g., `shell:<inline>`, `mitamae:recipe.rb`).
     pub fn name(&self) -> Cow<'_, str> {
         match self {
             Self::Shell(task) => Cow::Owned(format!("shell:{}", task.name())),
