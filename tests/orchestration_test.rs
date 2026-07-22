@@ -150,7 +150,16 @@ fn run_apply_uses_executor_with_debootstrap_args() {
     assert_eq!(calls.len(), 1);
     let (command, args) = calls.first().expect("at least one call");
     assert_eq!(command, "debootstrap");
-    assert!(!args.is_empty(), "expected args to be populated");
+    // Exact argv guards against a wrong suite/target/mirror slipping through.
+    assert_eq!(
+        args,
+        &vec![
+            "trixie".to_string(),
+            "/tmp/orchestration-test-debootstrap/rootfs".to_string(),
+            "https://deb.debian.org/debian".to_string(),
+        ],
+        "debootstrap should be invoked with the built suite/target/mirror argv"
+    );
 }
 
 #[test]
