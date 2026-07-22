@@ -95,7 +95,7 @@ pub struct CommonArgs {
     /// This file should contain a valid rsdebstrap profile. It is used
     /// by the `apply` command to configure and execute a bootstrap, and by
     /// the `validate` command to check for syntax and schema correctness.
-    #[arg(short, long, default_value = "profile.yaml", value_hint = ValueHint::FilePath)]
+    #[arg(short, long, default_value = "profile.yml", value_hint = ValueHint::FilePath)]
     pub file: Utf8PathBuf,
 
     /// Set the log level for controlling verbosity of output.
