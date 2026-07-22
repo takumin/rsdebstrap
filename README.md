@@ -17,7 +17,7 @@ and run `rsdebstrap apply`.
 ## Features
 
 - **Declarative** — the entire rootfs build lives in one YAML profile.
-- **Multiple backends** — `mmdebstrap` (default) or `debootstrap`.
+- **Multiple backends** — `mmdebstrap` or `debootstrap`.
 - **Three-phase pipeline** — `prepare` → `provision` → `assemble`, run in order.
 - **Provisioners** — inline or external shell scripts and mitamae recipes.
 - **Per-task isolation & privilege** — chroot isolation by default, with optional
@@ -40,7 +40,10 @@ Building from source additionally requires **Rust 1.97+** (edition 2024).
 
 ## Installation
 
-Install the latest from source with cargo:
+rsdebstrap is not yet published to crates.io, and no prebuilt binaries are
+available yet — install from source for now.
+
+With cargo, install the latest directly from Git:
 
 ```sh
 cargo install --git https://github.com/takumin/rsdebstrap
