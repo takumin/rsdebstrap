@@ -18,6 +18,9 @@ all-features = true
 # `advisories` check. Add an ID here only with a comment justifying why it is not
 # actionable (e.g. no fixed version yet, not reachable from our usage).
 ignore = []
+# Fail (rather than cargo-deny's default `warn`) when a locked crate has been
+# yanked from the registry, so a dependency bump onto a yanked version is caught.
+yanked = "deny"
 
 [licenses]
 # Allow-list only: every crate's SPDX expression must be satisfiable by this set,
