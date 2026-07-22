@@ -170,6 +170,11 @@ tasks:
     - task: tool:cargo:fetch
     sources:
     - '**/*.rs'
+    # Fingerprint the task's own definition and the pinned toolchain so editing
+    # this task's commands or bumping rust-toolchain.toml re-runs it locally
+    # instead of being skipped on a stale .task/.done_* marker (see #764).
+    - 'tasks/reviewdog.task.yml'
+    - 'rust-toolchain.toml'
     generates:
     - .task/.done_{{.TASK}}
     cmds:
