@@ -10,6 +10,7 @@ includes:
   format: ./tasks/format.task.yml
   schema: ./tasks/schema.task.yml
   reviewdog: ./tasks/reviewdog.task.yml
+  audit: ./tasks/audit.task.yml
   test: ./tasks/test.task.yml
   build: ./tasks/build.task.yml
   release: ./tasks/release.task.yml
@@ -24,5 +25,6 @@ tasks:
     - task: format
     - task: schema
     - task: reviewdog
+    - task: audit:policy
     - task: test
     - task: build

@@ -1,0 +1,57 @@
+# cargo-deny configuration — dependency advisory / license / bans / sources policy.
+# Reference: https://embarkstudios.github.io/cargo-deny/
+#
+# Split-gate model (see .github/workflows/wc-audit.yml, ci.yml, cron-audit.yml):
+#   - `cargo deny check bans licenses sources` — deterministic; gates every PR/push.
+#   - `cargo deny check advisories`            — time-dependent (RustSec DB); runs on
+#                                                a daily schedule and on dependency-
+#                                                changing PRs, so a newly disclosed
+#                                                advisory never blocks unrelated PRs.
+
+[graph]
+# Evaluate the full feature graph so optionally-enabled and platform-specific
+# dependencies are still policy-checked.
+all-features = true
+
+[advisories]
+# The RustSec advisory database gates the tree. Any unlisted advisory fails the
+# `advisories` check. Add an ID here only with a comment justifying why it is not
+# actionable (e.g. no fixed version yet, not reachable from our usage).
+ignore = []
+
+[licenses]
+# Allow-list only: every crate's SPDX expression must be satisfiable by this set,
+# so a dependency introducing an unlisted (e.g. copyleft) license fails CI and
+# forces a human decision — important given Renovate `automerge: true`.
+#
+# This is the minimal set that covers the current dependency tree. Each entry is
+# load-bearing; the trailing note names a representative crate that requires it.
+allow = [
+  "Apache-2.0",          # bulk of the tree (MIT OR Apache-2.0)
+  "MIT",                 # bulk of the tree
+  "ISC",                 # rustls-webpki, untrusted, ring / aws-lc-* components
+  "BSD-3-Clause",        # subtle, aws-lc-sys component
+  "Unicode-3.0",         # icu_*, zerovec, yoke, tinystr, unicode-ident
+  "Zlib",                # foldhash
+  "MIT-0",               # borrow-or-share
+  "CDLA-Permissive-2.0", # webpki-root-certs (Mozilla CA bundle)
+]
+# Some allowed licenses belong to crates that only appear under certain
+# target/feature resolutions (e.g. the `jsonschema` dev-dependency subtree), so
+# they may not be encountered on every evaluation. They are still genuinely in
+# Cargo.lock, so keep them listed and do not warn when one is unused here.
+unused-allowed-license = "allow"
+
+[bans]
+# Duplicate transitive versions already exist in the tree (syn 1/2, windows-sys,
+# getrandom, r-efi). Warn rather than deny: surface duplication growth without
+# failing CI on pre-existing, unavoidable duplicates.
+multiple-versions = "warn"
+# A wildcard ("*") version requirement defeats version pinning — reject it.
+wildcards = "deny"
+
+[sources]
+# Trust only crates.io. A dependency repointed at a git or alternate registry
+# source (a supply-chain red flag) fails the check.
+unknown-registry = "deny"
+unknown-git = "deny"
