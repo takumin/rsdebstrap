@@ -18,7 +18,8 @@ tasks:
     - task: advisories
 
   # Deterministic supply-chain policy (bans + licenses + sources). Depends only on
-  # the committed tree, so it is cached on its inputs and gates every PR/push.
+  # the committed tree, so it is cached on its inputs and gates every PR and
+  # push to main.
   policy:
     desc: '{{.TASK}}'
     dir: '{{.ROOT_DIR}}'
@@ -38,8 +39,8 @@ tasks:
       silent: true
 
   # RustSec advisory scan. Time-dependent (the advisory DB changes without any
-  # local change), so it is never cached — always re-run. Wired to a daily cron
-  # and to dependency-changing PRs, not to every PR.
+  # local change), so it is never cached — always re-run. Runs in the required
+  # `audit` gate on every PR and push to main (see .github/workflows/wc-audit.yml).
   advisories:
     desc: '{{.TASK}}'
     dir: '{{.ROOT_DIR}}'

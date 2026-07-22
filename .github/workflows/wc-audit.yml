@@ -2,14 +2,9 @@
 name: Audit
 on:
   workflow_call:
-    inputs:
-      task:
-        description: cargo-deny task to run (audit:policy or audit:advisories).
-        type: string
-        default: 'audit:policy'
 permissions: {}
 concurrency:
-  group: audit-${{ inputs.task }}-${{ github.ref }}
+  group: audit-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   ##############################################################################
@@ -45,6 +40,4 @@ jobs:
           rustup-
         path: ~/.rustup/
     - name: Audit
-      env:
-        AUDIT_TASK: ${{ inputs.task }}
-      run: task "${AUDIT_TASK}"
+      run: task audit
