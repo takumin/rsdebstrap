@@ -2,14 +2,9 @@
 name: Audit
 on:
   workflow_call:
-    inputs:
-      task:
-        description: cargo-deny task to run (audit:policy or audit:advisories).
-        type: string
-        default: 'audit:policy'
 permissions: {}
 concurrency:
-  group: audit-${{ inputs.task }}-${{ github.ref }}
+  group: audit-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   ##############################################################################
@@ -44,7 +39,12 @@ jobs:
         restore-keys: |-
           rustup-
         path: ~/.rustup/
-    - name: Audit
-      env:
-        AUDIT_TASK: ${{ inputs.task }}
-      run: task "${AUDIT_TASK}"
+    # Policy (deterministic) and advisories (time-dependent) run as separate
+    # steps rather than a single `task audit`. Both run on every PR and push to
+    # main today, but keeping them split lets the advisory step be scoped
+    # independently later — e.g. gated to dependency-changing PRs once declarative
+    # path-filter tooling is in place — without disturbing the policy step.
+    - name: Policy
+      run: task audit:policy
+    - name: Advisories
+      run: task audit:advisories

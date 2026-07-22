@@ -1,12 +1,10 @@
 # cargo-deny configuration — dependency advisory / license / bans / sources policy.
 # Reference: https://embarkstudios.github.io/cargo-deny/
 #
-# Split-gate model (see .github/workflows/wc-audit.yml, ci.yml, cron-audit.yml):
-#   - `cargo deny check bans licenses sources` — deterministic; gates every PR/push.
-#   - `cargo deny check advisories`            — time-dependent (RustSec DB); runs on
-#                                                a daily schedule and on dependency-
-#                                                changing PRs, so a newly disclosed
-#                                                advisory never blocks unrelated PRs.
+# The required `audit` job runs `cargo deny check` (advisories + bans + licenses +
+# sources) on every PR and push to main — see .github/workflows/ci.yml and
+# wc-audit.yml — a vulnerable or policy-violating dependency fails the required
+# CI check.
 
 [graph]
 # Evaluate the full feature graph so optionally-enabled and platform-specific
