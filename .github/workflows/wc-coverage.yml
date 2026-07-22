@@ -45,7 +45,9 @@ jobs:
       run: task coverage
     # Surface the per-file table and TOTAL line in the run's job summary for
     # at-a-glance visibility. `report` re-renders from the profdata the previous
-    # step already collected (no recompile, no test re-run), so it is cheap.
+    # step already collected (no recompile, no test re-run), so it is cheap. Its
+    # default text output is exactly the per-file summary table (no line-by-line
+    # detail), so no extra flag is needed.
     - name: Summary
       if: ${{ always() }}
       run: |-
@@ -53,6 +55,6 @@ jobs:
           echo '## Coverage'
           echo ''
           echo '```text'
-          cargo llvm-cov report --summary-only || echo '(coverage data unavailable)'
+          cargo llvm-cov report || echo '(coverage data unavailable)'
           echo '```'
         } >> "$GITHUB_STEP_SUMMARY"

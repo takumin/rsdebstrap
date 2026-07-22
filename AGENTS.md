@@ -16,7 +16,7 @@ cargo test --quiet
 # via aqua as an informational (non-gating) job (.github/workflows/wc-coverage.yml).
 # Run the command directly rather than `task coverage` in environments where aqua
 # cannot fetch GitHub Releases (e.g. Claude Code on the web) — install from crates.io:
-cargo install cargo-llvm-cov --locked  # once; skip if already installed
+cargo install cargo-llvm-cov --version 0.8.7 --locked  # once; matches the aqua pin
 cargo llvm-cov --workspace
 
 # Check for errors without building
