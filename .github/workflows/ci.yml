@@ -53,6 +53,14 @@ jobs:
       contents: read
     uses: ./.github/workflows/wc-audit.yml
   ##############################################################################
+  # Doc
+  ##############################################################################
+  doc:
+    name: Doc
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wc-doc.yml
+  ##############################################################################
   # Build
   ##############################################################################
   build:
@@ -71,6 +79,7 @@ jobs:
     - reviewdog
     - test
     - audit
+    - doc
     - build
     name: Release
     permissions:
@@ -86,6 +95,7 @@ jobs:
     - fetch
     - test
     - audit
+    - doc
     - build
     - release
     name: CI

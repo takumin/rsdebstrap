@@ -1,0 +1,72 @@
+---
+name: Doc
+on:
+  workflow_call:
+permissions: {}
+env:
+  CARGO_INCREMENTAL: '0'
+  RUSTC_WRAPPER: ${{ !startsWith(github.ref, 'refs/tags/') && 'sccache' || '' }}
+  SCCACHE_CACHE_SIZE: '1G'
+  # cargo runs the RUSTC_WRAPPER from each crate's source dir, where aqua can't
+  # find .aqua/aqua.yaml by upward search; point it at the repo config so the
+  # `sccache` command resolves regardless of the working directory.
+  AQUA_GLOBAL_CONFIG: ${{ github.workspace }}/.aqua/aqua.yaml
+concurrency:
+  group: doc-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  doc:
+    name: Doc
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@96a9bc20066c5bf5e275b41019cfc165b25f4e2e # v4.0.5
+      with:
+        aqua_version: v2.62.1
+    - name: Restore cargo deps cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: deps-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |-
+          deps-
+        path: ~/.cargo/registry/
+    - name: Restore sccache (deps)
+      id: sccache
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: sccache-doc-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |-
+          sccache-doc-
+        path: ~/.cache/sccache
+    - name: Restore rustup toolchain cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        restore-keys: |-
+          rustup-
+        path: ~/.rustup/
+    - name: Setup sccache
+      run: task tool:aqua:tag:sccache
+    - name: Setup doc
+      run: |-
+        task setup:test
+    - name: Doc
+      run: |-
+        task doc
+    - name: sccache stats
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      run: sccache --show-stats
+    - name: Save sccache (deps)
+      if: github.ref == 'refs/heads/main' && steps.sccache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.sccache.outputs.cache-primary-key }}
+        path: ~/.cache/sccache

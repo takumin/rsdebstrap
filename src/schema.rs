@@ -6,7 +6,7 @@
 //! The canonical case is [`camino::Utf8PathBuf`]: `schemars` has no camino support and
 //! the orphan rule forbids implementing `JsonSchema` for it in this crate. Instead of
 //! hand-writing schema JSON at each path field, every path field points at
-//! [`Utf8PathSchema`] via `#[schemars(with = "...")]`, so the "path is a string"
+//! `Utf8PathSchema` via `#[schemars(with = "...")]`, so the "path is a string"
 //! definition lives in exactly one place.
 
 use std::borrow::Cow;
