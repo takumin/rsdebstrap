@@ -41,5 +41,8 @@ which = "8.0.0"
 yaml_serde = "0.10.4"
 
 [dev-dependencies]
+# The `=` pins below are applied automatically by Renovate's :pinDevDependencies (part of
+# config:best-practices; see .renovaterc.json), not a hard requirement of these crates —
+# Cargo.lock already pins exact versions, so test runs stay reproducible without them.
 jsonschema = "=0.48.5"
 proptest = "=1.11.0"
