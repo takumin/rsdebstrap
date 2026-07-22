@@ -167,3 +167,58 @@ fn test_build_debootstrap_args_with_non_default_variant() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_build_debootstrap_args_with_all_non_default_flags() -> Result<()> {
+    let config = helpers::DebootstrapConfigBuilder::new("trixie", "rootfs")
+        .exclude(["systemd"])
+        .foreign(true)
+        .merged_usr(false)
+        .no_resolve_deps(true)
+        .verbose(true)
+        .print_debs(true)
+        .build();
+    let dir = Utf8PathBuf::from("/tmp/test-debootstrap");
+
+    let args = config.build_args(&dir)?;
+
+    // Valued flags use `--flag=value` (Equals) style; boolean flags are bare.
+    // --variant is omitted because minbase is the default.
+    let expected = vec![
+        "--exclude=systemd",
+        "--foreign",
+        "--no-merged-usr",
+        "--no-resolve-deps",
+        "--verbose",
+        "--print-debs",
+        "trixie",
+        "/tmp/test-debootstrap/rootfs",
+    ];
+
+    assert_eq!(
+        args, expected,
+        "All non-default debootstrap flags should be emitted in the expected order"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_build_debootstrap_args_filters_empty_mirror() -> Result<()> {
+    let config = helpers::DebootstrapConfigBuilder::new("bookworm", "rootfs")
+        .mirror("   ")
+        .build();
+    let dir = Utf8PathBuf::from("/tmp/test-debootstrap-mirror");
+
+    let args = config.build_args(&dir)?;
+
+    // A whitespace-only mirror is filtered out, leaving only the positional suite/target.
+    let expected = vec!["bookworm", "/tmp/test-debootstrap-mirror/rootfs"];
+
+    assert_eq!(
+        args, expected,
+        "Whitespace-only mirror should be filtered out of debootstrap arguments"
+    );
+
+    Ok(())
+}
