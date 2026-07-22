@@ -105,6 +105,8 @@ jobs:
         REVIEWDOG_TARGET: ${{ matrix.target }}
         REVIEWDOG_REPORTER: ${{ steps.reporter.outputs.type }}
         REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Appended to the task's base REVIEWDOG_ARGS, which carry the
+        # -fail-level/-filter-mode lint gate; these only add CI debug output.
         REVIEWDOG_ARGS: -log-level 'debug' -tee
     - name: sccache stats
       if: ${{ matrix.name == 'clippy' && !startsWith(github.ref, 'refs/tags/') }}
