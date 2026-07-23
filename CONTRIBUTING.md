@@ -39,7 +39,7 @@ The profile JSON Schema at `schema/rsdebstrap.schema.json` is generated from the
 Rust config types. After changing any config type, regenerate it:
 
 ```bash
-task schema
+cargo run -- schema > schema/rsdebstrap.schema.json
 ```
 
 CI enforces that the committed schema is up to date.
@@ -48,7 +48,8 @@ CI enforces that the committed schema is up to date.
 
 - Branch off `main`.
 - Make sure `cargo test` passes and `cargo clippy` / `cargo fmt` are clean.
-- Regenerate the schema (`task schema`) if you changed any config type.
+- Regenerate the schema (`cargo run -- schema > schema/rsdebstrap.schema.json`) if
+  you changed any config type.
 - Add an entry under `[Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md) for
   user-visible changes.
 - Open the PR against `main` and fill in the pull request template.
