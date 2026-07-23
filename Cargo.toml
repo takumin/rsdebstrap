@@ -7,6 +7,11 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
 readme = "README.md"
+# Distribution is via GitHub Releases (signed binaries), not crates.io. The publish
+# metadata below (description/keywords/categories/homepage/repository) is retained for
+# the crate's identity, but publishing to crates.io is intentionally disabled for now so
+# `cargo publish` can never ship 0.1.0 by accident. Flip this to enable it. (#740)
+publish = false
 homepage = "https://github.com/takumin/rsdebstrap"
 repository = "https://github.com/takumin/rsdebstrap"
 keywords = ["debian", "ubuntu", "debootstrap", "mmdebstrap", "rootfs"]
