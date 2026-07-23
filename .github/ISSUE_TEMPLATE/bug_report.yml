@@ -1,0 +1,58 @@
+---
+name: Bug report
+description: Report a problem with rsdebstrap
+labels:
+- bug
+body:
+- type: markdown
+  attributes:
+    value: |
+      Thanks for taking the time to file a bug report. Please fill in as much
+      detail as you can so the issue can be reproduced.
+- type: textarea
+  id: description
+  attributes:
+    label: Description
+    description: A clear description of the bug and its impact.
+  validations:
+    required: true
+- type: textarea
+  id: reproduction
+  attributes:
+    label: Steps to reproduce
+    description: >-
+      Include a minimal profile YAML and the exact command you ran
+      (for example, `rsdebstrap apply -f profile.yml`).
+    render: shell
+  validations:
+    required: true
+- type: textarea
+  id: expected
+  attributes:
+    label: Expected behavior
+  validations:
+    required: true
+- type: textarea
+  id: actual
+  attributes:
+    label: Actual behavior
+    description: What happened instead. Include error output if any.
+  validations:
+    required: true
+- type: textarea
+  id: environment
+  attributes:
+    label: Environment
+    description: >-
+      Output of `rsdebstrap --version`, your OS/distribution, and the
+      bootstrap backend (mmdebstrap or debootstrap).
+  validations:
+    required: true
+- type: textarea
+  id: logs
+  attributes:
+    label: Logs
+    description: Relevant log output. This will be rendered as code.
+    render: shell
+  validations:
+    required: false
