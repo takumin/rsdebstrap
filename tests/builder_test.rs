@@ -22,7 +22,6 @@ fn test_build_mmdebstrap_args_with_mirrors() -> Result<()> {
 
     let args_str = args;
 
-    // Expected arguments in exact order
     // Note: --mode, --format, and --variant are omitted as they are all default values
     let expected = vec![
         "bookworm",
@@ -57,7 +56,6 @@ fn test_build_debootstrap_args() -> Result<()> {
 
     let args_str = args;
 
-    // Expected arguments
     // Note: --variant is omitted as it's the default value (minbase)
     let expected = vec![
         "--arch=amd64",
@@ -89,7 +87,6 @@ fn test_build_mmdebstrap_args_with_non_default_values() -> Result<()> {
 
     let args_str = args;
 
-    // Expected arguments - non-default values should be included
     let expected = vec![
         "--mode",
         "sudo",
@@ -119,7 +116,6 @@ fn test_build_debootstrap_args_with_non_default_variant() -> Result<()> {
 
     let args_str = args;
 
-    // Expected arguments - non-default variant should be included
     let expected = vec!["--variant=buildd", "bookworm", "/tmp/test/rootfs"];
 
     assert_eq!(args_str, expected, "Non-default variant should generate --variant flag");

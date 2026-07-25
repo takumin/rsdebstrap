@@ -58,7 +58,6 @@ pub(super) fn read_pipe_to_log<R: Read>(pipe: Option<R>, stream_type: StreamType
         match reader.read_until(b'\n', &mut line_buf) {
             Ok(0) => break, // EOF
             Ok(_) => {
-                // Log output (excluding newline)
                 let log_content = line_buf.strip_suffix(b"\n").unwrap_or(&line_buf);
                 log_line(log_content, stream_type);
             }

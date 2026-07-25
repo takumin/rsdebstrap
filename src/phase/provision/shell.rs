@@ -286,7 +286,6 @@ impl ShellTask {
         let shell_path = self.shell.trim_start_matches('/');
         crate::phase::validate_no_parent_dirs(camino::Utf8Path::new(shell_path), "shell")?;
 
-        // Check if the specified shell exists and is a file in rootfs
         let shell_in_rootfs = rootfs.join(shell_path);
         let metadata = match fs::metadata(&shell_in_rootfs) {
             Ok(metadata) => metadata,

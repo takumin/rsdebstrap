@@ -147,7 +147,6 @@ impl AssembleResolvConfTask {
                 ));
             }
         } else {
-            // Delegate to ResolvConfConfig for nameserver/search validation
             let config = ResolvConfConfig {
                 copy: false,
                 name_servers: self.name_servers.clone(),

@@ -334,7 +334,6 @@ fn test_execute_inline_script_success() {
 
     assert!(result.is_ok(), "non-dry_run inline script should succeed, got: {:?}", result);
 
-    // Verify the correct command was executed
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
     assert_eq!(commands[0][0], "/bin/sh");
@@ -370,7 +369,6 @@ fn test_execute_external_script_success() {
 
     setup_valid_rootfs(&temp_dir);
 
-    // Create an external script file
     let script_path = temp_dir.path().join("external_script.sh");
     std::fs::write(&script_path, "#!/bin/sh\necho external\n").expect("failed to write script");
     let script_path_utf8 =
@@ -385,7 +383,6 @@ fn test_execute_external_script_success() {
 
     assert!(result.is_ok(), "non-dry_run external script should succeed, got: {:?}", result);
 
-    // Verify the correct command was executed
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
     assert_eq!(commands[0][0], "/bin/sh");
@@ -458,7 +455,6 @@ fn test_execute_inline_script_verifies_file_written() {
             _privilege: Option<rsdebstrap::privilege::PrivilegeMethod>,
         ) -> Result<ExecutionResult> {
             self.executed_commands.borrow_mut().push(command.to_vec());
-            // Read the script file that was written to rootfs
             if command.len() >= 2 {
                 let script_path_in_isolation = &command[1];
                 let script_path_on_host = self
@@ -467,7 +463,6 @@ fn test_execute_inline_script_verifies_file_written() {
                 if let Ok(content) = std::fs::read_to_string(&script_path_on_host) {
                     *self.captured_content.lock().unwrap() = Some(content);
                 }
-                // Verify the script is executable
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -495,7 +490,6 @@ fn test_execute_inline_script_verifies_file_written() {
     let result = task.execute(&context);
     assert!(result.is_ok(), "execute should succeed, got: {:?}", result);
 
-    // Verify the inline content was written correctly
     let captured = captured_content.lock().unwrap();
     assert_eq!(
         captured.as_deref(),
@@ -580,7 +574,6 @@ fn test_execute_external_script_verifies_file_copied() {
     let result = task.execute(&context);
     assert!(result.is_ok(), "execute should succeed, got: {:?}", result);
 
-    // Verify the external script was copied correctly
     let captured = captured_content.lock().unwrap();
     assert_eq!(
         captured.as_deref(),
@@ -613,7 +606,6 @@ fn test_execute_with_custom_shell() {
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .expect("path should be valid UTF-8");
 
-    // Setup rootfs with /tmp and custom shell /bin/bash
     std::fs::create_dir(temp_dir.path().join("tmp")).expect("failed to create tmp dir");
     std::fs::create_dir_all(temp_dir.path().join("bin")).expect("failed to create bin dir");
     std::fs::write(temp_dir.path().join("bin/bash"), "#!/bin/bash\n")
@@ -629,7 +621,6 @@ fn test_execute_with_custom_shell() {
 
     assert!(result.is_ok(), "execute with custom shell should succeed, got: {:?}", result);
 
-    // Verify the custom shell was used in the command
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1, "Expected exactly one command executed");
     assert_eq!(
@@ -715,7 +706,6 @@ fn test_execute_nonzero_exit_returns_execution_error() {
         "Expected RsdebstrapError::Execution, got: {:?}",
         downcast.unwrap(),
     );
-    // Verify the command field contains isolation backend info
     if let RsdebstrapError::Execution { command, status } = downcast.unwrap() {
         assert!(
             command.contains("isolation: mock"),

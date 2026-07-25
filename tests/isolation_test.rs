@@ -105,10 +105,7 @@ fn test_chroot_context_teardown_is_idempotent() {
 
     let mut context = provider.setup(rootfs, executor, false).unwrap();
 
-    // First teardown should succeed
     assert!(context.teardown().is_ok());
-
-    // Second teardown should also succeed (idempotent)
     assert!(context.teardown().is_ok());
 }
 
@@ -123,7 +120,6 @@ fn test_chroot_context_multiple_executions() {
 
     let context = provider.setup(rootfs, executor, false).unwrap();
 
-    // Execute multiple commands
     let cmd1: Vec<String> = vec!["/bin/echo".to_string(), "hello".to_string()];
     let cmd2: Vec<String> = vec!["/bin/ls".to_string(), "-la".to_string()];
 
@@ -133,12 +129,10 @@ fn test_chroot_context_multiple_executions() {
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
 
-    // Verify first command
     assert_eq!(calls[0].0, "chroot");
     assert_eq!(calls[0].1[0], "/tmp/rootfs");
     assert_eq!(calls[0].1[1], "/bin/echo");
 
-    // Verify second command
     assert_eq!(calls[1].0, "chroot");
     assert_eq!(calls[1].1[0], "/tmp/rootfs");
     assert_eq!(calls[1].1[1], "/bin/ls");
@@ -320,10 +314,7 @@ fn test_direct_context_teardown_is_idempotent() {
 
     let mut context = provider.setup(rootfs, executor, false).unwrap();
 
-    // First teardown should succeed
     assert!(context.teardown().is_ok());
-
-    // Second teardown should also succeed (idempotent)
     assert!(context.teardown().is_ok());
 }
 
@@ -347,10 +338,8 @@ fn test_direct_context_multiple_executions() {
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
 
-    // Verify first command (absolute paths translated)
     assert_eq!(calls[0].0, "/tmp/rootfs/bin/echo");
 
-    // Verify second command (absolute paths translated, relative preserved)
     assert_eq!(calls[1].0, "/tmp/rootfs/bin/ls");
     assert_eq!(calls[1].1[0], "-la"); // relative arg preserved
 }

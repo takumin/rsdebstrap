@@ -62,6 +62,21 @@ see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).** Read it before changing th
 resolution model, the phase pipeline, isolation/privilege plumbing, or the
 filesystem-safety code — it captures decisions that are not obvious from the source.
 
+## Code Comments
+
+- Write `//` comments only for what the code cannot say: rationale, constraints,
+  invariants, platform quirks, rejected alternatives, ordering requirements, and
+  external tool contracts. Never write a comment that restates what the adjacent code
+  does — it adds nothing and goes stale when the code changes. Delete such comments on
+  sight.
+- In tests, comments that explain scenario choreography (which mock call fails and why,
+  what an expected argv shape maps to, why a fixture deliberately omits something) are
+  valuable; comments that restate the assertion below them are not.
+- `///` doc comments are product surface, not commentary: on config types they become
+  `description` fields in the generated JSON Schema, and in `src/cli.rs` they become
+  `--help` text. Keep maintainer-only notes in plain `//` comments so they do not leak
+  into schema or help output.
+
 ## Profile Structure (YAML)
 
 A machine-readable JSON Schema for this format is committed at

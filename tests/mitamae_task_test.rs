@@ -71,7 +71,6 @@ fn test_execute_external_recipe_success() {
     setup_rootfs_with_tmp(&temp_dir);
     let binary = create_fake_binary(&temp_dir);
 
-    // Create an external recipe file
     let recipe_path = temp_dir.path().join("default.rb");
     std::fs::write(&recipe_path, "package 'vim'\n").expect("failed to write recipe");
     let recipe_utf8 =

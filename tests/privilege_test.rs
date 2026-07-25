@@ -32,7 +32,6 @@ fn test_default_privilege_sudo_inherited_by_bootstrap_and_tasks() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    // Bootstrap should have resolved to Sudo
     match &profile.bootstrap {
         Bootstrap::Mmdebstrap(cfg) => {
             assert_eq!(cfg.privilege, Privilege::Method(PrivilegeMethod::Sudo));
@@ -70,7 +69,6 @@ fn test_task_level_privilege_overrides_default() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    // Bootstrap inherits sudo from defaults
     match &profile.bootstrap {
         Bootstrap::Mmdebstrap(cfg) => {
             assert_eq!(cfg.privilege, Privilege::Method(PrivilegeMethod::Sudo));
@@ -106,7 +104,6 @@ fn test_privilege_false_disables_escalation() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    // Bootstrap privilege should be disabled
     match &profile.bootstrap {
         Bootstrap::Mmdebstrap(cfg) => {
             assert_eq!(cfg.privilege, Privilege::Disabled);
@@ -195,8 +192,6 @@ fn test_no_defaults_no_privilege_results_in_none() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    // Bootstrap with no defaults and no explicit privilege
-    // → Disabled (resolved from Inherit with no defaults)
     match &profile.bootstrap {
         Bootstrap::Mmdebstrap(cfg) => {
             assert_eq!(
@@ -233,7 +228,6 @@ fn test_default_privilege_doas_inherited() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    // Bootstrap should have resolved to Doas
     match &profile.bootstrap {
         Bootstrap::Debootstrap(cfg) => {
             assert_eq!(cfg.privilege, Privilege::Method(PrivilegeMethod::Doas));
@@ -291,7 +285,6 @@ fn test_shell_task_propagates_none_privilege_to_mock_context() {
     setup_valid_rootfs(&temp_dir);
 
     let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
-    // No defaults → privilege resolves to None
     task.resolve_privilege(None)
         .expect("resolve_privilege should succeed");
 

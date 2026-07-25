@@ -92,7 +92,6 @@ impl IsolationContext for DirectContext {
             .into());
         }
 
-        // Translate absolute paths to rootfs-prefixed paths
         let translated: Vec<String> = command
             .iter()
             .map(|arg| {

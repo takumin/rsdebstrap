@@ -198,16 +198,12 @@ fn run_apply_with_pipeline_tasks_uses_isolation() {
     // Expect 2 calls: 1 for bootstrap (mmdebstrap), 1 for pipeline task (chroot)
     assert_eq!(calls.len(), 2);
 
-    // First call should be mmdebstrap
     let (command, _) = &calls[0];
     assert_eq!(command, "mmdebstrap");
 
-    // Second call should be chroot (from pipeline task via isolation)
     let (command, args) = &calls[1];
     assert_eq!(command, "chroot");
-    // First arg should be the rootfs path
     assert!(args[0].contains("rootfs"));
-    // Second arg should be the shell
     assert_eq!(args[1], "/bin/sh");
 }
 
@@ -270,13 +266,11 @@ fn test_run_apply_pipeline_and_teardown_both_fail() {
 
     let result = run_apply(&opts, executor);
 
-    // Should fail
     assert!(result.is_err());
 
     let err = result.unwrap_err();
     let err_string = format!("{:#}", err);
 
-    // The error should be about the pipeline task failing
     assert!(
         err_string.contains("failed to run provision"),
         "Expected provisioner error, got: {}",
