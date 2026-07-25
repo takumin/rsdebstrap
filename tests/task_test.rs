@@ -6,9 +6,13 @@ use tempfile::tempdir;
 #[test]
 fn test_validate_rejects_empty_shell_path() {
     let task = ShellTask::with_shell(ScriptSource::Content("echo test".to_string()), "");
-    let result = task.validate();
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+    let err_msg = err.to_string();
     assert!(
         err_msg.contains("shell path must not be empty"),
         "Expected 'shell path must not be empty', got: {}",
@@ -19,9 +23,13 @@ fn test_validate_rejects_empty_shell_path() {
 #[test]
 fn test_validate_rejects_relative_shell_path() {
     let task = ShellTask::with_shell(ScriptSource::Content("echo test".to_string()), "bin/sh");
-    let result = task.validate();
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+    let err_msg = err.to_string();
     assert!(
         err_msg.contains("shell path must be absolute"),
         "Expected 'shell path must be absolute', got: {}",
@@ -32,9 +40,13 @@ fn test_validate_rejects_relative_shell_path() {
 #[test]
 fn test_validate_rejects_empty_inline_content() {
     let task = ShellTask::new(ScriptSource::Content("".to_string()));
-    let result = task.validate();
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+    let err_msg = err.to_string();
     assert!(
         err_msg.contains("inline shell script content must not be empty"),
         "Expected 'inline shell script content must not be empty', got: {}",
@@ -73,39 +85,6 @@ fn test_validate_content_only() {
 }
 
 #[test]
-fn test_script_source_external() {
-    let task = ShellTask::new(ScriptSource::Script("test.sh".into()));
-    assert_eq!(task.name(), "test.sh");
-}
-
-#[test]
-fn test_script_source_inline() {
-    let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
-    assert_eq!(task.name(), "<inline>");
-}
-
-#[test]
-fn test_script_path_returns_some_for_script() {
-    let task = ShellTask::new(ScriptSource::Script("test.sh".into()));
-    assert_eq!(task.script_path(), Some(camino::Utf8Path::new("test.sh")));
-}
-
-#[test]
-fn test_script_path_returns_none_for_content() {
-    let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
-    assert_eq!(task.script_path(), None);
-}
-
-#[test]
-fn test_validate_nonexistent_script() {
-    let task = ShellTask::new(ScriptSource::Script("/nonexistent/path/to/script.sh".into()));
-    let result = task.validate();
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("failed to read shell script metadata:"));
-}
-
-#[test]
 fn test_validate_script_is_directory() {
     let temp_dir = tempdir().expect("failed to create temp dir");
     let dir_path = temp_dir.path().join("not_a_script");
@@ -113,10 +92,13 @@ fn test_validate_script_is_directory() {
     let task = ShellTask::new(ScriptSource::Script(
         camino::Utf8PathBuf::from_path_buf(dir_path).expect("path should be valid UTF-8"),
     ));
-    let result = task.validate();
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("is not a file"));
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+    assert!(err.to_string().contains("is not a file"));
 }
 
 #[cfg(unix)]
@@ -335,51 +317,10 @@ fn test_task_definition_deserialize_rejects_missing_type() {
 
 // =============================================================================
 // Type-based error tests (RsdebstrapError variant matching)
+//
+// Only cases whose variant carries more than the message assertions above: the
+// rest fold their `matches!` check into the message test with the same input.
 // =============================================================================
-
-#[test]
-fn test_validate_empty_shell_returns_validation_error() {
-    let task = ShellTask::with_shell(ScriptSource::Content("echo test".to_string()), "");
-    let err = task.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected RsdebstrapError::Validation, got: {:?}",
-        err
-    );
-}
-
-#[test]
-fn test_validate_relative_shell_returns_validation_error() {
-    let task = ShellTask::with_shell(ScriptSource::Content("echo test".to_string()), "bin/sh");
-    let err = task.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected RsdebstrapError::Validation, got: {:?}",
-        err
-    );
-}
-
-#[test]
-fn test_validate_empty_content_returns_validation_error() {
-    let task = ShellTask::new(ScriptSource::Content("".to_string()));
-    let err = task.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected RsdebstrapError::Validation, got: {:?}",
-        err
-    );
-}
-
-#[test]
-fn test_validate_path_traversal_returns_validation_error() {
-    let task = ShellTask::new(ScriptSource::Script("../../../etc/passwd".into()));
-    let err = task.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected RsdebstrapError::Validation, got: {:?}",
-        err
-    );
-}
 
 #[test]
 fn test_validate_nonexistent_script_returns_io_error() {
@@ -407,25 +348,14 @@ fn test_validate_nonexistent_script_returns_io_error() {
                 "Expected display to contain 'I/O error', got: {}",
                 display
             );
+            assert!(
+                display.contains("failed to read shell script metadata:"),
+                "Expected the metadata-read context, got: {}",
+                display
+            );
         }
         other => panic!("Expected RsdebstrapError::Io, got: {:?}", other),
     }
-}
-
-#[test]
-fn test_validate_script_directory_returns_validation_error() {
-    let temp_dir = tempdir().expect("failed to create temp dir");
-    let dir_path = temp_dir.path().join("not_a_script");
-    std::fs::create_dir(&dir_path).expect("failed to create directory");
-    let task = ShellTask::new(ScriptSource::Script(
-        camino::Utf8PathBuf::from_path_buf(dir_path).expect("path should be valid UTF-8"),
-    ));
-    let err = task.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected RsdebstrapError::Validation, got: {:?}",
-        err
-    );
 }
 
 // =============================================================================

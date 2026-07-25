@@ -212,25 +212,8 @@ fn test_chroot_context_propagates_doas_privilege() {
     assert_eq!(*privilege, Some(PrivilegeMethod::Doas));
 }
 
-#[test]
-fn test_chroot_context_propagates_none_privilege() {
-    let provider = ChrootProvider;
-    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
-    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
-        calls: Arc::clone(&calls),
-    });
-    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
-    let command: Vec<String> = vec!["/bin/sh".to_string()];
-
-    let context = provider.setup(rootfs, executor, false).unwrap();
-    let result = context.execute(&command, None);
-    assert!(result.is_ok());
-
-    let calls = calls.lock().unwrap();
-    assert_eq!(calls.len(), 1);
-    let (_, _, privilege) = &calls[0];
-    assert_eq!(*privilege, None);
-}
+// The `None` case is covered by `test_chroot_context_execute_builds_correct_args`,
+// which asserts the same recorded privilege for the same call.
 
 // =============================================================================
 // DirectProvider tests
@@ -276,10 +259,11 @@ fn test_direct_context_execute_translates_absolute_paths() {
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
-    let (cmd, args, _) = &calls[0];
+    let (cmd, args, privilege) = &calls[0];
     assert_eq!(cmd, "/tmp/rootfs/bin/sh");
     assert_eq!(args.len(), 1);
     assert_eq!(args[0], "/tmp/rootfs/tmp/script.sh");
+    assert_eq!(*privilege, None);
 }
 
 #[test]
@@ -437,22 +421,5 @@ fn test_direct_context_propagates_doas_privilege() {
     assert_eq!(*privilege, Some(PrivilegeMethod::Doas));
 }
 
-#[test]
-fn test_direct_context_propagates_none_privilege() {
-    let provider = DirectProvider;
-    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
-    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
-        calls: Arc::clone(&calls),
-    });
-    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
-    let command: Vec<String> = vec!["/bin/sh".to_string()];
-
-    let context = provider.setup(rootfs, executor, false).unwrap();
-    let result = context.execute(&command, None);
-    assert!(result.is_ok());
-
-    let calls = calls.lock().unwrap();
-    assert_eq!(calls.len(), 1);
-    let (_, _, privilege) = &calls[0];
-    assert_eq!(*privilege, None);
-}
+// The `None` case is covered by `test_direct_context_execute_translates_absolute_paths`,
+// which asserts the same recorded privilege for the same call.

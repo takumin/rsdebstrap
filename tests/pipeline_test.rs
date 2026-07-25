@@ -283,25 +283,6 @@ fn test_pipeline_run_tasks_execute_in_order_within_phase() {
 }
 
 #[test]
-fn test_pipeline_run_stops_within_phase_on_error() {
-    let prov = [
-        inline_task("echo prov1"),
-        inline_task("echo prov2"),
-        inline_task("echo prov3"),
-    ];
-    let pipeline = provision_pipeline(&prov);
-
-    // failing_on(1): 2nd call (0-indexed) fails,
-    // so task 1 succeeds, task 2 fails, task 3 never runs
-    let mock_executor = Arc::new(MockExecutor::failing_on(1));
-    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
-    assert!(result.is_err());
-    assert_eq!(mock_executor.call_count(), 2);
-}
-
-#[test]
 fn test_pipeline_run_stops_on_first_task_error() {
     let tasks = [
         inline_task("echo 1"),

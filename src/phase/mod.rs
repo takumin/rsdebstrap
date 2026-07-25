@@ -445,10 +445,13 @@ mod tests {
         let file_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("nonexistent.tmp"))
             .expect("path should be valid UTF-8");
 
+        // Drop must not panic when the file is already gone — a task that removed its
+        // own script would otherwise abort the process while unwinding.
         {
             let _guard = TempFileGuard::new(file_path.clone(), false);
         }
-        // If we get here, no panic occurred
+
+        assert!(!file_path.exists(), "guard must not resurrect the file");
     }
 
     #[test]
