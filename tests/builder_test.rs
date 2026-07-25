@@ -4,47 +4,6 @@ use anyhow::Result;
 use camino::Utf8PathBuf;
 use rsdebstrap::bootstrap::BootstrapBackend;
 use rsdebstrap::bootstrap::mmdebstrap::MmdebstrapConfig;
-use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
-
-#[test]
-fn test_run_mmdebstrap_with_mock_success() -> Result<()> {
-    let config = helpers::MmdebstrapConfigBuilder::new("bookworm", "rootfs.tar.zst")
-        .components(["main", "contrib"])
-        .architectures(["amd64"])
-        .include(["curl", "ca-certificates"])
-        .build();
-    let dir = Utf8PathBuf::from("/tmp/test-success");
-
-    // Create a mock executor that will "succeed"
-    let executor = RealCommandExecutor { dry_run: false };
-
-    // This should succeed because our mock is configured to succeed
-    let spec = CommandSpec::new("echo", config.build_args(&dir)?);
-    let result = executor.execute(&spec)?;
-    assert!(result.success());
-
-    Ok(())
-}
-
-#[test]
-fn test_run_mmdebstrap_with_mock_failure() -> Result<()> {
-    let config = helpers::MmdebstrapConfigBuilder::new("bookworm", "rootfs.tar.zst")
-        .components(["main", "contrib"])
-        .architectures(["amd64"])
-        .include(["curl", "ca-certificates"])
-        .build();
-    let dir = Utf8PathBuf::from("/tmp/test-failure");
-
-    // Create a mock executor that will "fail"
-    let executor = RealCommandExecutor { dry_run: false };
-
-    // This should succeed in execution but return non-zero status
-    let spec = CommandSpec::new("false", config.build_args(&dir)?);
-    let result = executor.execute(&spec)?;
-    assert!(!result.success());
-
-    Ok(())
-}
 
 #[test]
 fn test_build_mmdebstrap_args_with_mirrors() -> Result<()> {

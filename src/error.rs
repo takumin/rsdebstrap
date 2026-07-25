@@ -257,15 +257,6 @@ mod tests {
     }
 
     #[test]
-    fn test_into_anyhow_error_command_not_found() {
-        let err = RsdebstrapError::command_not_found("doas", "privilege escalation command");
-        let anyhow_err: anyhow::Error = err.into();
-        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
-        assert!(downcast.is_some());
-        assert!(matches!(downcast.unwrap(), RsdebstrapError::CommandNotFound { .. }));
-    }
-
-    #[test]
     fn test_isolation_display() {
         let err = RsdebstrapError::Isolation(
             "cannot execute command: chroot context has already been torn down".to_string(),
@@ -365,52 +356,35 @@ mod tests {
         assert_eq!(err.to_string(), "command execution failed:  (isolation: mock): exit status: 2");
     }
 
+    /// Every variant survives the trip through `anyhow::Error` as its own type, so
+    /// callers can still `downcast_ref` and branch on the variant. One case per
+    /// variant guards against a future hand-written `From` impl that flattens one.
     #[test]
-    fn test_into_anyhow_error_validation() {
-        let err = RsdebstrapError::Validation("test".to_string());
-        let anyhow_err: anyhow::Error = err.into();
-        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
-        assert!(downcast.is_some());
-        assert!(matches!(downcast.unwrap(), RsdebstrapError::Validation(_)));
-    }
+    fn test_every_variant_is_recoverable_from_anyhow() {
+        let cases: Vec<RsdebstrapError> = vec![
+            RsdebstrapError::Validation("test".to_string()),
+            RsdebstrapError::Execution {
+                command: "test".to_string(),
+                status: "failed".to_string(),
+            },
+            RsdebstrapError::Isolation("test".to_string()),
+            RsdebstrapError::Config("test".to_string()),
+            RsdebstrapError::io("/path", io::Error::new(io::ErrorKind::NotFound, "test")),
+            RsdebstrapError::command_not_found("doas", "privilege escalation command"),
+        ];
 
-    #[test]
-    fn test_into_anyhow_error_execution() {
-        let err = RsdebstrapError::Execution {
-            command: "test".to_string(),
-            status: "failed".to_string(),
-        };
-        let anyhow_err: anyhow::Error = err.into();
-        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
-        assert!(downcast.is_some());
-        assert!(matches!(downcast.unwrap(), RsdebstrapError::Execution { .. }));
-    }
-
-    #[test]
-    fn test_into_anyhow_error_isolation() {
-        let err = RsdebstrapError::Isolation("test".to_string());
-        let anyhow_err: anyhow::Error = err.into();
-        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
-        assert!(downcast.is_some());
-        assert!(matches!(downcast.unwrap(), RsdebstrapError::Isolation(_)));
-    }
-
-    #[test]
-    fn test_into_anyhow_error_config() {
-        let err = RsdebstrapError::Config("test".to_string());
-        let anyhow_err: anyhow::Error = err.into();
-        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
-        assert!(downcast.is_some());
-        assert!(matches!(downcast.unwrap(), RsdebstrapError::Config(_)));
-    }
-
-    #[test]
-    fn test_into_anyhow_error_io() {
-        let err = RsdebstrapError::io("/path", io::Error::new(io::ErrorKind::NotFound, "test"));
-        let anyhow_err: anyhow::Error = err.into();
-        let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
-        assert!(downcast.is_some());
-        assert!(matches!(downcast.unwrap(), RsdebstrapError::Io { .. }));
+        for original in cases {
+            let expected = format!("{:?}", original);
+            let anyhow_err: anyhow::Error = original.into();
+            let recovered = anyhow_err
+                .downcast_ref::<RsdebstrapError>()
+                .unwrap_or_else(|| panic!("expected RsdebstrapError for {}", expected));
+            assert_eq!(
+                format!("{:?}", recovered),
+                expected,
+                "variant changed while passing through anyhow::Error",
+            );
+        }
     }
 
     #[test]

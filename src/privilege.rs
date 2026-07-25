@@ -289,13 +289,10 @@ mod tests {
 
     #[test]
     fn privilege_method_command_name() {
+        // `Display` delegates to `command_name()`, so both are pinned together here.
         assert_eq!(PrivilegeMethod::Sudo.command_name(), "sudo");
-        assert_eq!(PrivilegeMethod::Doas.command_name(), "doas");
-    }
-
-    #[test]
-    fn privilege_method_display() {
         assert_eq!(PrivilegeMethod::Sudo.to_string(), "sudo");
+        assert_eq!(PrivilegeMethod::Doas.command_name(), "doas");
         assert_eq!(PrivilegeMethod::Doas.to_string(), "doas");
     }
 

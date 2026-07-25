@@ -129,14 +129,4 @@ mod tests {
         assert!(items[0].name().starts_with("mount:"));
         assert!(items[1].name().starts_with("resolv_conf:"));
     }
-
-    #[test]
-    fn serde_roundtrip_via_json() {
-        // PrepareConfig is Deserialize-only; validate the value is stable across
-        // a re-parse of an equivalent YAML document.
-        let yaml = "mount:\n  preset: recommends\nresolv_conf:\n  name_servers:\n  - 8.8.8.8\n";
-        let a: PrepareConfig = yaml_serde::from_str(yaml).unwrap();
-        let b: PrepareConfig = yaml_serde::from_str(yaml).unwrap();
-        assert_eq!(a, b);
-    }
 }
