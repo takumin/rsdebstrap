@@ -122,7 +122,6 @@ impl CommandExecutor for RealCommandExecutor {
             })
         };
 
-        // Resolve the actual command to execute, wrapping with privilege if needed
         let (resolved_program, resolved_args) = if let Some(method) = &spec.privilege {
             let privilege_cmd =
                 find_command(method.command_name(), "privilege escalation command")?;
@@ -174,7 +173,6 @@ impl CommandExecutor for RealCommandExecutor {
 
         let (stdout_handle, stderr_handle) = spawn_reader_threads(&mut child, spec)?;
 
-        // Wait for the child process to complete
         let status = match child.wait() {
             Ok(s) => s,
             Err(e) => {
@@ -189,7 +187,6 @@ impl CommandExecutor for RealCommandExecutor {
             }
         };
 
-        // Wait for reader threads to complete (with error propagation on panic)
         let mut panicked_streams = Vec::new();
         let handles = [("stdout", stdout_handle), ("stderr", stderr_handle)];
         for (name, handle) in handles {

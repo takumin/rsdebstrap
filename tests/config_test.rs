@@ -268,7 +268,6 @@ provision:
     // editorconfig-checker-enable
 
     assert!(result.is_err());
-    // The error message should indicate that neither 'script' nor 'content' was found
     let err_msg = format!("{:#}", result.unwrap_err());
     assert!(
         err_msg.contains("either 'script' or 'content' must be specified"),
@@ -455,11 +454,9 @@ fn test_shell_task_path_resolution_with_relative_profile_path() -> Result<()> {
     let scripts_dir = profile_dir.join("scripts");
     std::fs::create_dir_all(&scripts_dir)?;
 
-    // Create a dummy script file
     let script_path = scripts_dir.join("test.sh");
     std::fs::write(&script_path, "#!/bin/bash\necho test")?;
 
-    // Create profile YAML with relative script path
     let profile_path = profile_dir.join("profile.yml");
     // editorconfig-checker-disable
     std::fs::write(
@@ -480,17 +477,12 @@ provision:
     )?;
     // editorconfig-checker-enable
 
-    // Use RAII guard to automatically restore working directory
     let cwd_guard = helpers::CwdGuard::new()?;
     cwd_guard.change_to(temp_dir.path())?;
 
-    // Load profile using relative path from the new working directory
     let relative_profile_path = Utf8Path::new("configs/profile.yml");
     let profile = load_profile(relative_profile_path)?;
 
-    // CwdGuard will automatically restore the original directory when dropped
-
-    // Verify the script path resolves to the expected absolute path
     let expected_script_path = Utf8PathBuf::from_path_buf(script_path.canonicalize()?)
         .expect("script path should be valid UTF-8");
     match &profile.provision[..] {
@@ -693,7 +685,6 @@ bootstrap:
     )?;
     // editorconfig-checker-enable
 
-    // Remove read permissions
     std::fs::set_permissions(&profile_path, std::fs::Permissions::from_mode(0o000))?;
 
     let path = Utf8Path::from_path(&profile_path).unwrap();
@@ -805,7 +796,6 @@ dir: /tmp/test
         "Expected error message to contain column number, got: {}",
         err_msg
     );
-    // Should contain the file path
     assert!(
         err_msg.contains(path.as_str()),
         "Expected error message to contain file path, got: {}",
@@ -1253,7 +1243,6 @@ provision:
         _ => panic!("expected one mitamae task"),
     }
 
-    // Validation should fail because binary is not set
     let err = profile.validate().unwrap_err();
     assert!(
         matches!(err, RsdebstrapError::Validation(_)),
@@ -1606,7 +1595,6 @@ prepare:
     // Recommends has 6, custom replaces /dev entry => 6
     assert_eq!(mounts.len(), 6);
 
-    // The /dev entry should be the custom bind mount
     let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
     assert_eq!(dev_entry.source, "/dev");
     assert!(dev_entry.options.contains(&"bind".to_string()), "Expected bind option");

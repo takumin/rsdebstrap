@@ -77,13 +77,11 @@ pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &Utf8Path) -> Result<U
         let name = component.as_str();
         current_path.push(name);
 
-        // Try to open the existing directory
         match open_dir_nofollow(&current_fd, name) {
             Ok(fd) => {
                 current_fd = fd;
             }
             Err(rustix::io::Errno::NOENT) => {
-                // Directory doesn't exist, create it
                 match rfs::mkdirat(
                     &current_fd,
                     name,
@@ -96,7 +94,6 @@ pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &Utf8Path) -> Result<U
                     }
                     Err(e) => return Err(map_openat_error(e, &current_path, "mount point")),
                 }
-                // Open the just-created (or racing) directory
                 current_fd = open_dir_nofollow(&current_fd, name)
                     .map_err(|e| map_openat_error(e, &current_path, "mount point"))?;
             }
@@ -183,9 +180,8 @@ impl RootfsMounts {
         info!("mounting {} filesystem(s) in rootfs", self.entries.len());
 
         for (i, entry) in self.entries.iter().enumerate() {
-            // Create mount point directory with symlink-safe openat/mkdirat
             let abs_target = if self.dry_run {
-                // In dry-run mode, compute path by string concatenation (no filesystem access)
+                // Dry-run must not touch the filesystem.
                 self.rootfs
                     .join(entry.target.strip_prefix("/").unwrap_or(&entry.target))
             } else {
@@ -697,7 +693,6 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        // Create a symlink at rootfs/proc -> /tmp
         let symlink_path = rootfs.join("proc");
         std::os::unix::fs::symlink("/tmp", &symlink_path).unwrap();
 
@@ -719,7 +714,6 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        // Create a symlink at rootfs/dev -> /tmp
         let symlink_path = rootfs.join("dev");
         std::os::unix::fs::symlink("/tmp", &symlink_path).unwrap();
 
@@ -756,7 +750,6 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        // Create the directory first
         std::fs::create_dir_all(rootfs.join("proc")).unwrap();
 
         let result = safe_create_mount_point(&rootfs, Utf8Path::new("/proc"));
@@ -769,7 +762,6 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        // Create a symlink at rootfs/dev -> /tmp
         std::os::unix::fs::symlink("/tmp", rootfs.join("dev")).unwrap();
 
         let err = safe_create_mount_point(&rootfs, Utf8Path::new("/dev/pts")).unwrap_err();
@@ -799,7 +791,6 @@ mod tests {
         let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
         mounts.mount().unwrap();
 
-        // Verify that mounted_paths contain the expected paths
         assert!(mounts.mounted_paths[0].is_some());
         assert!(mounts.mounted_paths[1].is_some());
 

@@ -230,7 +230,6 @@ impl MitamaeTask {
         crate::phase::validate_no_parent_dirs(binary, "mitamae binary")?;
         crate::phase::validate_host_file_exists(binary, "mitamae binary")?;
 
-        // Validate recipe source
         self.source.validate("mitamae recipe")
     }
 

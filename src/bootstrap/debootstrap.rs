@@ -97,12 +97,10 @@ impl BootstrapBackend for DebootstrapConfig {
     fn build_args(&self, output_dir: &Utf8Path) -> Result<Vec<String>> {
         let mut builder = CommandArgsBuilder::new();
 
-        // Add options
         if let Some(ref arch) = self.arch {
             builder.push_flag_value("--arch", arch, FlagValueStyle::Equals);
         }
 
-        // Only add --variant if it's not the default (Minbase)
         builder.push_if_not_default("--variant", &self.variant, FlagValueStyle::Equals);
 
         builder.push_comma_joined("--components", &self.components, FlagValueStyle::Equals);
@@ -131,7 +129,6 @@ impl BootstrapBackend for DebootstrapConfig {
             builder.push_flag("--print-debs");
         }
 
-        // Add positional arguments: SUITE TARGET [MIRROR]
         builder.push_arg(self.suite.clone());
 
         let target_path = output_dir.join(&self.target);
@@ -139,6 +136,7 @@ impl BootstrapBackend for DebootstrapConfig {
 
         let mut cmd_args = builder.into_args();
 
+        // debootstrap's positional arguments are SUITE TARGET [MIRROR], in that order.
         if let Some(ref mirror) = self.mirror
             && !mirror.trim().is_empty()
         {

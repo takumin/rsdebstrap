@@ -78,7 +78,6 @@ impl MountTask {
             return self.mounts.clone();
         }
 
-        // Build lookup from target path to custom mount entry
         let mut custom_by_target: HashMap<&Utf8Path, &MountEntry> = self
             .mounts
             .iter()
@@ -106,7 +105,6 @@ impl MountTask {
     ///
     /// Checks each mount entry and validates mount order.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        // Check for duplicate targets in custom mounts
         let mut seen_targets = HashSet::new();
         for entry in &self.mounts {
             if !seen_targets.insert(&entry.target) {
@@ -122,7 +120,6 @@ impl MountTask {
         for entry in &resolved_mounts {
             entry.validate()?;
 
-            // Validate bind mount source exists on host
             if entry.is_bind_mount() {
                 let source_path = Utf8Path::new(&entry.source);
                 if !source_path.exists() {
@@ -134,7 +131,6 @@ impl MountTask {
             }
         }
 
-        // Validate mount order: parent directories must come before children
         crate::config::validate_mount_order(&resolved_mounts)?;
 
         Ok(())

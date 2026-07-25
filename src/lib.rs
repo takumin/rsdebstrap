@@ -75,7 +75,8 @@ fn run_pipeline_phase(
         return Ok(());
     }
 
-    // Get rootfs directory (validation ensures it's a directory if tasks exist)
+    // Profile validation has already rejected non-directory output when tasks
+    // exist, so the error below is a defensive backstop.
     let backend = profile.bootstrap.as_backend();
     let bootstrap::RootfsOutput::Directory(rootfs) = backend.rootfs_output(&profile.dir)? else {
         return Err(RsdebstrapError::Validation(
@@ -87,7 +88,6 @@ fn run_pipeline_phase(
         .into());
     };
 
-    // Set up filesystem mounts (if configured in prepare phase)
     let mount_entries = profile
         .prepare
         .mount
@@ -101,8 +101,7 @@ fn run_pipeline_phase(
         .mount()
         .context("failed to mount filesystems in rootfs")?;
 
-    // Set up resolv.conf (if configured in prepare phase)
-    // setup failure is handled by Drop guards for mounts cleanup
+    // resolv.conf setup failure is handled by Drop guards for mounts cleanup.
     let resolv_conf_config = profile.prepare.resolv_conf.as_ref().map(|rc| rc.config());
     let mut resolv_conf = RootfsResolvConf::new(
         &rootfs,

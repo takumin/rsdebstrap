@@ -182,7 +182,6 @@ impl BootstrapBackend for MmdebstrapConfig {
     fn build_args(&self, output_dir: &Utf8Path) -> Result<Vec<String>> {
         let mut builder = CommandArgsBuilder::new();
 
-        // Only add flags if they differ from defaults
         builder.push_if_not_default("--mode", &self.mode, FlagValueStyle::Separate);
         builder.push_if_not_default("--format", &self.format, FlagValueStyle::Separate);
         builder.push_if_not_default("--variant", &self.variant, FlagValueStyle::Separate);
@@ -214,7 +213,7 @@ impl BootstrapBackend for MmdebstrapConfig {
 
         let mut cmd_args = builder.into_args();
 
-        // Add mirrors as positional arguments after suite and target
+        // mmdebstrap's positional arguments are SUITE TARGET [MIRROR...], in that order.
         cmd_args.extend(
             self.mirrors
                 .iter()

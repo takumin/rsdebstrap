@@ -497,13 +497,9 @@ impl Profile {
             )));
         }
 
-        // Validate mounts configuration
         self.validate_mounts()?;
-
-        // Validate resolv_conf configuration
         self.validate_resolv_conf()?;
 
-        // Validate all tasks across phases
         let pipeline = self.pipeline();
         pipeline.validate()?;
 
@@ -541,7 +537,6 @@ impl Profile {
         // can never observe a non-chroot backend. Reintroduce a guard next to a second
         // backend if one is ever added, where it would be reachable and testable.
 
-        // mounts require privilege to be configured
         if self.defaults.privilege.is_none() {
             return Err(RsdebstrapError::Validation(
                 "defaults.privilege must be configured when mounts are specified \
@@ -550,7 +545,6 @@ impl Profile {
             ));
         }
 
-        // Validate mount/umount commands exist in PATH
         validate_command_in_path("mount", "mount command")?;
         validate_command_in_path("umount", "umount command")?;
 
@@ -619,7 +613,6 @@ fn format_yaml_parse_error(err: yaml_serde::Error, file_path: &Utf8Path) -> Rsde
 }
 
 fn read_profile_file(path: &Utf8Path) -> Result<(BufReader<File>, Utf8PathBuf), RsdebstrapError> {
-    // Resolve symlinks so we operate on the real file path.
     let canonical_path = path
         .canonicalize_utf8()
         .map_err(|e| RsdebstrapError::io(path.to_string(), e))?;
@@ -661,7 +654,6 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
         );
     }
 
-    // Resolve privilege for bootstrap
     profile.bootstrap.resolve_privilege(privilege_defaults)?;
 
     for task in profile.provision.iter_mut() {
@@ -674,7 +666,6 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
         task.resolve_isolation(&isolation_defaults);
     }
 
-    // Resolve privilege for assemble tasks
     if let Some(task) = profile.assemble.resolv_conf.as_mut() {
         task.resolve_privilege(privilege_defaults)?;
     }
@@ -687,7 +678,6 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
         profile.dir = profile_dir.join(&profile.dir);
     }
 
-    // Resolve relative paths in defaults.mitamae.binary
     for binary in profile.defaults.mitamae.binary.values_mut() {
         if binary.is_relative() {
             *binary = profile_dir.join(&*binary);

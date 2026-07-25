@@ -148,7 +148,7 @@ impl RootfsResolvConf {
             .into());
         }
 
-        // Back up existing resolv.conf (may be a regular file or a symlink)
+        // symlink_metadata: the original may be a regular file or a symlink.
         let had_original = resolv_path.symlink_metadata().is_ok();
         if had_original {
             let spec =
@@ -157,7 +157,6 @@ impl RootfsResolvConf {
             self.executor.execute_checked(&spec)?;
         }
 
-        // Write new resolv.conf
         let write_result = if config.copy {
             let spec = CommandSpec::new(
                 "cp",
@@ -186,7 +185,6 @@ impl RootfsResolvConf {
         };
 
         if let Err(write_err) = write_result {
-            // Roll back: restore backup
             if had_original {
                 let rollback_spec =
                     CommandSpec::new("mv", vec![backup_path.to_string(), resolv_path.to_string()])
@@ -201,7 +199,6 @@ impl RootfsResolvConf {
             return Err(write_err);
         }
 
-        // Set permissions to 0o644
         let chmod_spec =
             CommandSpec::new("chmod", vec!["644".to_string(), resolv_path.to_string()])
                 .with_privilege(self.privilege);
@@ -225,7 +222,6 @@ impl RootfsResolvConf {
         let resolv_path = self.resolv_conf_path();
         let backup_path = self.backup_path();
 
-        // Remove the written resolv.conf
         let rm_spec = CommandSpec::new("rm", vec!["-f".to_string(), resolv_path.to_string()])
             .with_privilege(self.privilege);
         self.executor.execute_checked(&rm_spec)?;
