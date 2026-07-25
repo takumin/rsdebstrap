@@ -643,64 +643,30 @@ bootstrap:
 }
 
 #[test]
-fn test_load_profile_format_tar_xz() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
+fn test_load_profile_archive_formats() -> Result<()> {
+    let cases = [
+        ("tar.xz", Format::TarXz),
+        ("tar.gz", Format::TarGz),
+        ("tar.zst", Format::TarZst),
+    ];
+
+    for (name, expected) in cases {
+        // editorconfig-checker-disable
+        let profile = helpers::load_profile_from_yaml(format!(
+            r#"---
 dir: /tmp/test
 bootstrap:
   type: mmdebstrap
   suite: bookworm
-  target: rootfs.tar.xz
-  format: tar.xz
+  target: rootfs.{name}
+  format: {name}
 "#
-    ))?;
-    // editorconfig-checker-enable
+        ))?;
+        // editorconfig-checker-enable
 
-    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
-    assert_eq!(cfg.format, Format::TarXz);
-
-    Ok(())
-}
-
-#[test]
-fn test_load_profile_format_tar_gz() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs.tar.gz
-  format: tar.gz
-"#
-    ))?;
-    // editorconfig-checker-enable
-
-    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
-    assert_eq!(cfg.format, Format::TarGz);
-
-    Ok(())
-}
-
-#[test]
-fn test_load_profile_format_tar_zst() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs.tar.zst
-  format: tar.zst
-"#
-    ))?;
-    // editorconfig-checker-enable
-
-    let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
-    assert_eq!(cfg.format, Format::TarZst);
+        let cfg = helpers::get_mmdebstrap_config(&profile).expect("expected mmdebstrap config");
+        assert_eq!(cfg.format, expected, "wrong format parsed for `{name}`");
+    }
 
     Ok(())
 }
