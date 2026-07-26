@@ -75,7 +75,16 @@ jobs:
     # and, on the default branch, publishes the report to the Actions Artifacts
     # datastore for aggregation by takumin/octocov-central. No acceptable
     # threshold is configured, so this stays informational (see #732).
+    #
+    # The Artifacts datastore needs ACTIONS_RUNTIME_TOKEN, which the runner
+    # injects into action steps only — from a plain `run:` step octocov aborts
+    # with "env ACTIONS_RUNTIME_TOKEN is only available from the context of an
+    # action". So invoke it through a JavaScript action; github-script execs the
+    # aqua-pinned binary, keeping aqua the single source of truth for the octocov
+    # version (k1LoW/octocov-action would install a second copy of its own).
     - name: Octocov
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: octocov
+      with:
+        script: await exec.exec('octocov')
