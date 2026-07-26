@@ -129,7 +129,7 @@ provision:
 
 - Full annotated example: [`examples/debian_trixie_mmdebstrap.yml`](examples/debian_trixie_mmdebstrap.yml)
 - Machine-readable schema: [`schema/rsdebstrap.schema.json`](schema/rsdebstrap.schema.json)
-- Field-by-field reference: [`AGENTS.md`](AGENTS.md)
+- Field-by-field reference: [`docs/PROFILE.md`](docs/PROFILE.md)
 - Internal design and invariants: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 ## Contributing
