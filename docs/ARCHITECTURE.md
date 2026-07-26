@@ -4,8 +4,8 @@ Design rationale for rsdebstrap internals. This documents the *why* — decision
 and invariants that are not obvious from reading the code. Exhaustive field and
 method lists are intentionally omitted; the source is authoritative for those.
 
-For the high-level map, build commands, and the YAML profile contract, see
-[`AGENTS.md`](../AGENTS.md).
+For the high-level map and build commands, see [`AGENTS.md`](../AGENTS.md); for the
+YAML profile contract, see [`PROFILE.md`](PROFILE.md).
 
 ## Core flow
 
