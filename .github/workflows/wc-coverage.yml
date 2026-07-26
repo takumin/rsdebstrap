@@ -16,6 +16,10 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      # octocov posts a coverage comment on pull requests and reads/writes the
+      # report from the GitHub Actions Artifacts datastore.
+      actions: read
+      pull-requests: write
     steps:
     - name: Checkout
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,3 +62,20 @@ jobs:
           cargo llvm-cov report || echo '(coverage data unavailable)'
           echo '```'
         } >> "$GITHUB_STEP_SUMMARY"
+    # Render the LCOV report octocov consumes. Like the Summary step, this
+    # re-renders from the profdata the Coverage step already collected — no
+    # recompile, no test re-run — into octocov's default path.
+    - name: Generate lcov
+      run: |-
+        mkdir -p coverage
+        cargo llvm-cov report --lcov --output-path coverage/lcov.info
+    - name: Setup octocov
+      run: task tool:aqua:tag:octocov
+    # octocov posts a coverage/code-to-test/exec-time comment on pull requests
+    # and, on the default branch, publishes the report to the Actions Artifacts
+    # datastore for aggregation by takumin/octocov-central. No acceptable
+    # threshold is configured, so this stays informational (see #732).
+    - name: Octocov
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: octocov

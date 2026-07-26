@@ -1,0 +1,33 @@
+---
+# octocov configuration. See https://github.com/k1LoW/octocov
+#
+# Informational only: no `coverage.acceptable` / `codeToTestRatio.acceptable`
+# thresholds are set, so octocov never fails the build (keeps coverage
+# non-gating, see #732). Test Execution Time is measured automatically on
+# GitHub Actions, so no `testExecutionTime` block is needed.
+coverage:
+  # LCOV report generated from cargo-llvm-cov profdata in wc-coverage.yml
+  # (octocov uses SF/DA records only).
+  paths:
+  - coverage/lcov.info
+codeToTestRatio:
+  # Unit tests live inline in `src/**` under `#[cfg(test)]`, so they are counted
+  # as code; only the `tests/**` integration crates count as test lines here.
+  code:
+  - src/**/*.rs
+  test:
+  - tests/**/*.rs
+comment:
+  if: is_pull_request
+  updatePrevious: true
+report:
+  # Publish the report to GitHub Actions Artifacts only from the default branch,
+  # so the aggregating repo (takumin/octocov-central) sees main's coverage and
+  # PR diffs compare against it.
+  if: is_default_branch
+  datastores:
+  - artifact://${GITHUB_REPOSITORY}
+diff:
+  # Compare the current run against the report stored in the Artifacts datastore.
+  datastores:
+  - artifact://${GITHUB_REPOSITORY}

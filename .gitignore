@@ -2,6 +2,7 @@
 /target
 /target.tar
 /.task
+/coverage
 /schema/*.tmp
 **/.claude/worktrees
 **/.claude/settings.local.json
