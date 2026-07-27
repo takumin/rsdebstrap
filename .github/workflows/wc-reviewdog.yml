@@ -90,20 +90,21 @@ jobs:
         restore-keys: |-
           sccache-clippy-
         path: ~/.cache/sccache
-    - name: Setup reporter
-      id: reporter
-      run: |-
-        case "${{ github.event_name }}" in
-        "push" )                echo "type=github-check" >> "$GITHUB_OUTPUT" ;;
-        "pull_request" )        echo "type=github-pr-review" >> "$GITHUB_OUTPUT" ;;
-        "pull_request_target" ) echo "type=github-pr-review" >> "$GITHUB_OUTPUT" ;;
-        * )                     echo "type=local" >> "$GITHUB_OUTPUT" ;;
-        esac
     - name: Running reviewdog
       run: task "${REVIEWDOG_TARGET}"
       env:
         REVIEWDOG_TARGET: ${{ matrix.target }}
-        REVIEWDOG_REPORTER: ${{ steps.reporter.outputs.type }}
+        # A pull_request raised from a fork gets a read-only GITHUB_TOKEN
+        # whatever this job's `permissions` asks for, so a review-posting
+        # reporter answers 403. Falling back to `local` keeps the -fail-level
+        # gate in the task, so findings still fail the job; only the inline
+        # annotations are lost. pull_request_target keeps a write token even
+        # from a fork, so it stays on the review reporter.
+        REVIEWDOG_REPORTER: >-
+          ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && 'local'
+          || (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && 'github-pr-review'
+          || github.event_name == 'push' && 'github-check'
+          || 'local' }}
         REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Appended to the task's base REVIEWDOG_ARGS, which carry the
         # -fail-level/-filter-mode lint gate; these only add CI debug output.
