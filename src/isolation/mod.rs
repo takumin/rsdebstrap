@@ -24,6 +24,7 @@ use std::borrow::Cow;
 use std::sync::{Arc, LazyLock};
 
 use crate::config::IsolationConfig;
+use crate::domain::resolution::{self, Tri};
 use crate::executor::{CommandExecutor, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
 
@@ -145,6 +146,30 @@ pub enum TaskIsolation {
 }
 
 impl TaskIsolation {
+    /// Projects the YAML-facing enum onto the domain's override model.
+    ///
+    /// Borrows rather than clones: `IsolationConfig` is owned data, and resolution never
+    /// looks inside the payload, so the caller decides when a clone is actually needed.
+    fn as_tri(&self) -> Tri<&IsolationConfig> {
+        match self {
+            Self::Inherit => Tri::Inherit,
+            Self::UseDefault => Tri::UseDefault,
+            Self::Disabled => Tri::Disabled,
+            Self::Config(config) => Tri::Explicit(config),
+        }
+    }
+
+    /// The reverse projection. Takes ownership, where [`as_tri`](Self::as_tri) only borrows:
+    /// this one produces a state to store, not one to inspect.
+    fn from_tri(state: Tri<IsolationConfig>) -> Self {
+        match state {
+            Tri::Inherit => Self::Inherit,
+            Tri::UseDefault => Self::UseDefault,
+            Tri::Disabled => Self::Disabled,
+            Tri::Explicit(config) => Self::Config(config),
+        }
+    }
+
     /// Returns the resolved isolation config.
     ///
     /// Should only be called after [`resolve_in_place()`](Self::resolve_in_place).
@@ -154,7 +179,7 @@ impl TaskIsolation {
     /// the default isolation config as a safe fallback (fail-closed).
     pub fn resolved_config(&self) -> Option<&IsolationConfig> {
         debug_assert!(
-            !matches!(self, Self::Inherit | Self::UseDefault),
+            self.as_tri().is_resolved(),
             "resolved_config() called on an unresolved TaskIsolation state. This is a logic error."
         );
         match self {
@@ -176,10 +201,7 @@ impl TaskIsolation {
     /// resolved variant (`Config` or `Disabled`).
     pub fn resolve_in_place(&mut self, defaults: &IsolationConfig) {
         let resolved = self.resolve(defaults);
-        *self = match resolved {
-            Some(config) => Self::Config(config),
-            None => Self::Disabled,
-        };
+        *self = Self::from_tri(resolution::collapse(resolved));
     }
 
     /// Resolves the isolation setting against the profile defaults.
@@ -190,12 +212,11 @@ impl TaskIsolation {
     /// Unlike `Privilege::resolve()`, this never returns an error because
     /// `IsolationConfig` always has a default (chroot).
     pub fn resolve(&self, defaults: &IsolationConfig) -> Option<IsolationConfig> {
-        match self {
-            Self::Inherit => Some(defaults.clone()),
-            Self::UseDefault => Some(defaults.clone()),
-            Self::Disabled => None,
-            Self::Config(c) => Some(c.clone()),
-        }
+        // The infallible domain rule, not a separate implementation: property R8 pins it
+        // against the fallible `resolution::resolve` under a present default, so the two
+        // cannot drift. Cloning is deferred until after the decision, so a `Disabled` task
+        // never clones a config it will not use.
+        resolution::resolve_with_default(self.as_tri(), defaults).cloned()
     }
 }
 

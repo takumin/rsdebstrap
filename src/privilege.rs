@@ -11,6 +11,7 @@ use std::borrow::Cow;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
+use crate::domain::resolution::{self, Tri};
 use crate::error::RsdebstrapError;
 
 /// Privilege escalation method.
@@ -70,6 +71,30 @@ pub enum Privilege {
 }
 
 impl Privilege {
+    /// Projects the YAML-facing enum onto the domain's override model.
+    ///
+    /// The two enums are deliberately separate: this one owns the wire shape (and the
+    /// hand-written `Serialize`/`Deserialize` that goes with it), `Tri` owns the decision
+    /// rules. The projection is the seam between them, and it is total in both directions.
+    fn as_tri(&self) -> Tri<PrivilegeMethod> {
+        match self {
+            Self::Inherit => Tri::Inherit,
+            Self::UseDefault => Tri::UseDefault,
+            Self::Disabled => Tri::Disabled,
+            Self::Method(method) => Tri::Explicit(*method),
+        }
+    }
+
+    /// Inverse of [`as_tri`](Self::as_tri).
+    fn from_tri(state: Tri<PrivilegeMethod>) -> Self {
+        match state {
+            Tri::Inherit => Self::Inherit,
+            Tri::UseDefault => Self::UseDefault,
+            Tri::Disabled => Self::Disabled,
+            Tri::Explicit(method) => Self::Method(method),
+        }
+    }
+
     /// Returns the resolved privilege method.
     ///
     /// Should only be called after [`resolve()`](Self::resolve) or
@@ -81,7 +106,7 @@ impl Privilege {
     /// as a safe fallback.
     pub fn resolved_method(&self) -> Option<PrivilegeMethod> {
         debug_assert!(
-            !matches!(self, Self::Inherit | Self::UseDefault),
+            self.as_tri().is_resolved(),
             "resolved_method() called on an unresolved Privilege state. This is a logic error."
         );
         match self {
@@ -113,10 +138,7 @@ impl Privilege {
         defaults: Option<&PrivilegeDefaults>,
     ) -> Result<(), RsdebstrapError> {
         let resolved = self.resolve(defaults)?;
-        *self = match resolved {
-            Some(method) => Self::Method(method),
-            None => Self::Disabled,
-        };
+        *self = Self::from_tri(resolution::collapse(resolved));
         Ok(())
     }
 
@@ -133,18 +155,13 @@ impl Privilege {
         &self,
         defaults: Option<&PrivilegeDefaults>,
     ) -> Result<Option<PrivilegeMethod>, RsdebstrapError> {
-        match self {
-            Self::Inherit => Ok(defaults.map(|d| d.method)),
-            Self::UseDefault => match defaults {
-                Some(d) => Ok(Some(d.method)),
-                None => Err(RsdebstrapError::Validation(
-                    "privilege: true requires defaults.privilege.method to be configured"
-                        .to_string(),
-                )),
-            },
-            Self::Disabled => Ok(None),
-            Self::Method(method) => Ok(Some(*method)),
-        }
+        // The decision itself lives in the domain layer; all this adds is the YAML key the
+        // user has to go fix, which the payload-free domain error deliberately does not know.
+        resolution::resolve(self.as_tri(), defaults.map(|d| d.method)).map_err(|_| {
+            RsdebstrapError::Validation(
+                "privilege: true requires defaults.privilege.method to be configured".to_string(),
+            )
+        })
     }
 }
 
