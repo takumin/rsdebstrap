@@ -42,6 +42,8 @@ tasks:
     desc: '{{.TASK}}'
     label: verify:kani
     dir: '{{.ROOT_DIR}}'
+    vars:
+      MANIFEST_BACKUP: '{{.ROOT_DIR}}/.task/Cargo.toml.pre-kani'
     preconditions:
     - sh: cargo kani --version
       msg: |-
@@ -54,4 +56,16 @@ tasks:
         The setup step downloads the CBMC backend from GitHub Releases, so it needs network
         access to github.com.
     cmds:
+    # Kani pins its own nightly (1.93-nightly as of Kani 0.67) and cargo refuses to build a
+    # package whose `rust-version` exceeds the active toolchain, so the declared MSRV makes
+    # `cargo kani` abort before it verifies anything. The MSRV is a promise about the shipped
+    # binary, not a property of the harnesses, so it is dropped for the duration of the run
+    # and restored by the `defer` below - which fires on failure too, so an interrupted run
+    # cannot leave the manifest edited. `tests/msrv_test.rs` still gates the real thing.
+    - mkdir -p '{{.ROOT_DIR}}/.task'
+    - cp Cargo.toml '{{.MANIFEST_BACKUP}}'
+    - defer: mv '{{.MANIFEST_BACKUP}}' Cargo.toml
+    # Filtering the backup into place rather than editing in place: `sed -i` takes a mandatory
+    # argument on BSD sed and would break the macOS run.
+    - grep -v '^rust-version = ' '{{.MANIFEST_BACKUP}}' > Cargo.toml
     - cargo kani --workspace

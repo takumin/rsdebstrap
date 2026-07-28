@@ -152,6 +152,14 @@ The Kani harnesses live behind `#[cfg(kani)]`, which no ordinary `cargo build` c
 cfg is declared in `Cargo.toml`'s `[lints.rust]` so it does not trip `unexpected_cfgs`; the
 trade-off is that only `task verify:kani` can tell you the harnesses have rotted.
 
+One wrinkle worth knowing about: **Kani pins its own nightly toolchain**, which trails the MSRV
+this crate declares (1.93-nightly against `rust-version = "1.97"` as of Kani 0.67). Cargo
+refuses to build a package whose `rust-version` exceeds the active toolchain, so `cargo kani`
+would abort before verifying anything. `task verify:kani` therefore drops that one manifest
+field for the duration of the run and restores it afterwards — via a Taskfile `defer`, so an
+interrupted run cannot leave the manifest edited. The MSRV is a promise about the shipped
+binary, not a property of the harnesses, and `tests/msrv_test.rs` still gates the real thing.
+
 ## What is not verified
 
 Named so the coverage is not overstated:
