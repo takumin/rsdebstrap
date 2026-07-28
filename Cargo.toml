@@ -24,6 +24,12 @@ categories = ["command-line-utilities"]
 default = ["schema"]
 schema = ["dep:schemars", "dep:serde_json"]
 
+# `cfg(kani)` is set only by `cargo kani` (see `task verify:kani`); declaring it here keeps
+# the harnesses in `src/executor/plan.rs` from tripping `unexpected_cfgs` under a plain
+# `cargo build`, which is the only compiler that ever sees them as inert code.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [dependencies]
 anyhow = "1.0.98"
 camino = { version = "1.1.9", features = ["serde1"] }

@@ -7,6 +7,7 @@
 //! - [`RealCommandExecutor`]: Production implementation using `std::process::Command`
 
 mod pipe;
+mod plan;
 mod real;
 
 use std::process::ExitStatus;

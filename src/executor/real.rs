@@ -133,15 +133,15 @@ impl CommandExecutor for RealCommandExecutor {
                 actual_cmd.display()
             );
 
-            let mut args: Vec<String> = Vec::with_capacity(spec.args.len() + 1);
-            args.push(actual_cmd.display().to_string());
-            args.extend(spec.args.iter().cloned());
+            // The escalator is what gets exec'd, so the real command travels as its argv[0].
+            // The reshaping is `super::plan::plan_argv`, verified rather than inlined here.
+            let argv = super::plan::plan_argv(Some(actual_cmd.display().to_string()), &spec.args);
 
-            (privilege_cmd, args)
+            (privilege_cmd, argv)
         } else {
             let cmd = find_command(&spec.command, "command")?;
             tracing::trace!("command found: {}: {}", spec.command, cmd.display());
-            (cmd, spec.args.clone())
+            (cmd, super::plan::plan_argv(None, &spec.args))
         };
 
         let mut command = Command::new(&resolved_program);
