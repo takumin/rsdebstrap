@@ -58,6 +58,20 @@ jobs:
       pull-requests: write
     uses: ./.github/workflows/wc-coverage.yml
   ##############################################################################
+  # Verify
+  ##############################################################################
+  # Formal verification (Verus for the domain layer, Kani for the infrastructure
+  # layer). Informational only, and left out of the `release` and `ci` gates
+  # below for the same reason as `coverage`: both jobs install a toolchain from
+  # outside the aqua pin set at job time, so an upstream outage must not block a
+  # merge. The properties they prove are also checked — over a finite witness
+  # domain — by `test`, which is gating. See docs/FORMAL_METHODS.md.
+  verify:
+    name: Verify
+    permissions:
+      contents: read
+    uses: ./.github/workflows/wc-verify.yml
+  ##############################################################################
   # Audit
   ##############################################################################
   audit:

@@ -13,6 +13,7 @@ includes:
   audit: ./tasks/audit.task.yml
   test: ./tasks/test.task.yml
   coverage: ./tasks/coverage.task.yml
+  verify: ./tasks/verify.task.yml
   doc: ./tasks/doc.task.yml
   build: ./tasks/build.task.yml
   release: ./tasks/release.task.yml

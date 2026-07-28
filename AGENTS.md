@@ -24,6 +24,14 @@ cargo check --all-targets --no-default-features --quiet
 # Regenerate the committed copy after any config-type change, or `cargo test` fails.
 # The autofix.ci workflow also runs this on PRs and auto-commits any drift.
 task schema  # equivalent to: cargo run -- schema > schema/rsdebstrap.schema.json
+
+# Formal verification (Verus for src/domain/, Kani for the pure kernels in the
+# infrastructure layer). Opt-in — not part of `task all`, and non-gating in CI
+# (.github/workflows/wc-verify.yml). Neither tool is aqua-pinned and both install
+# from GitHub Releases, so this cannot run in environments without github.com
+# egress; `task verify` reports that rather than appearing to pass. The same
+# properties are checked over a finite domain by `cargo test`, which does gate.
+task verify  # see docs/FORMAL_METHODS.md before touching src/domain/
 ```
 
 ## Architecture Overview
@@ -32,6 +40,12 @@ task schema  # equivalent to: cargo run -- schema > schema/rsdebstrap.schema.jso
 see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).** Read it before changing the
 resolution model, the phase pipeline, isolation/privilege plumbing, or the
 filesystem-safety code — it captures decisions that are not obvious from the source.
+
+**For the verification layering — which layer is proved with which tool, the properties
+the resolution model is held to, and what is deliberately left unproved — see
+[`docs/FORMAL_METHODS.md`](docs/FORMAL_METHODS.md).** `src/domain/` is subject to a hard
+dependency rule (no I/O, no `serde`, no other module in this crate); read that document
+before adding anything to it or changing `Privilege`/`TaskIsolation` resolution.
 
 ## Code Comments
 

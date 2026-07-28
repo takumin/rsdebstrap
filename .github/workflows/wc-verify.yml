@@ -1,0 +1,102 @@
+---
+name: Verify
+on:
+  workflow_call:
+permissions: {}
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  ##############################################################################
+  # Verus
+  ##############################################################################
+  # Deductive proofs of the domain layer (verify/verus/resolution.rs).
+  #
+  # Neither this job nor Kani below is wired into the `ci` status check: both
+  # depend on toolchains fetched at job time from outside the aqua pin set, so a
+  # release outage or an upstream breaking change would block merges on
+  # something orthogonal to the change under review. Correctness of the same
+  # properties is already gated by `test` (tests/resolution_spec_test.rs); these
+  # jobs add the unbounded, payload-generic half. See docs/FORMAL_METHODS.md.
+  verus:
+    name: Verus
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    # Verus is not in the aqua standard registry and its tags are date-stamped
+    # build identifiers (release/0.YYYY.MM.DD.<hash>) with no semver ordering for
+    # Renovate to reason about, so this floats to the latest release on purpose
+    # rather than pinning a tag that would go stale silently. The asset is
+    # selected by pattern, not by exact filename, because that name has changed
+    # across releases.
+    - name: Setup verus
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |-
+        set -euo pipefail
+        url="$(gh api repos/verus-lang/verus/releases/latest \
+          --jq '.assets[] | select(.name | test("x86.*linux.*\\.zip$")) | .browser_download_url' \
+          | head -n1)"
+        if [ -z "${url}" ]; then
+          echo "no x86_64 linux asset found on the latest verus release" >&2
+          exit 1
+        fi
+        curl -fsSL -o /tmp/verus.zip "${url}"
+        unzip -q /tmp/verus.zip -d /tmp/verus-dist
+        # The binary loads vstd.vir and the builtin rlibs from its own directory,
+        # so the directory goes on PATH rather than the binary being copied out.
+        bindir="$(dirname "$(find /tmp/verus-dist -name verus -type f | head -n1)")"
+        echo "${bindir}" >> "${GITHUB_PATH}"
+    - name: Verus
+      run: task verify:verus
+  ##############################################################################
+  # Kani
+  ##############################################################################
+  # Bounded model checking of the infrastructure layer (src/executor/plan.rs).
+  kani:
+    name: Kani
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@96a9bc20066c5bf5e275b41019cfc165b25f4e2e # v4.0.5
+      with:
+        aqua_version: v2.62.1
+    - name: Restore cargo deps cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: deps-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |-
+          deps-
+        path: ~/.cargo/registry/
+    - name: Restore rustup toolchain cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: rustup-${{ hashFiles('rust-toolchain.toml') }}
+        restore-keys: |-
+          rustup-
+        path: ~/.rustup/
+    # kani-verifier is a thin driver on crates.io; `cargo kani setup` is what
+    # fetches the CBMC backend and the rustc build Kani links against. Both are
+    # left unpinned for the same reason as Verus above: the job is
+    # informational, and pinning a version nothing else in the repo tracks would
+    # rot without anyone noticing.
+    - name: Setup kani
+      run: |-
+        set -euo pipefail
+        cargo install --locked kani-verifier
+        cargo kani setup
+    - name: Kani
+      run: task verify:kani

@@ -1,0 +1,57 @@
+---
+# https://taskfile.dev
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+# Formal verification. Deliberately absent from the root `task all` pipeline: neither tool is
+# aqua-pinnable (both ship as GitHub Releases outside the aqua standard registry, and Verus
+# additionally has no stable version scheme to pin to), so requiring them would make the
+# ordinary build depend on a manual install. Opt-in locally, informational in CI - see
+# .github/workflows/wc-verify.yml and docs/FORMAL_METHODS.md.
+
+tasks:
+  default:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task: verus
+    - task: kani
+
+  # Deductive proofs of the domain layer (verify/verus/resolution.rs). A standalone Verus
+  # source file rather than a Cargo crate: vstd and builtin come from the Verus installation,
+  # so `verus` is invoked directly and nothing in the rsdebstrap crate graph depends on it.
+  verus:
+    desc: '{{.TASK}}'
+    label: verify:verus
+    dir: '{{.ROOT_DIR}}'
+    preconditions:
+    - sh: command -v verus
+      msg: |-
+        verus not found on PATH.
+
+        Install a release from https://github.com/verus-lang/verus/releases and add the
+        extracted directory itself to PATH - the binary loads vstd.vir and the builtin rlibs
+        from alongside itself, so symlinking or copying just the binary will not work.
+    cmds:
+    - verus --crate-type=lib verify/verus/resolution.rs
+
+  # Bounded model checking of the infrastructure layer. Discovers every #[kani::proof] in the
+  # crate; today that is the argv-shaping kernel in src/executor/plan.rs.
+  kani:
+    desc: '{{.TASK}}'
+    label: verify:kani
+    dir: '{{.ROOT_DIR}}'
+    preconditions:
+    - sh: cargo kani --version
+      msg: |-
+        cargo-kani not found.
+
+        Install with:
+          cargo install --locked kani-verifier
+          cargo kani setup
+
+        The setup step downloads the CBMC backend from GitHub Releases, so it needs network
+        access to github.com.
+    cmds:
+    - cargo kani --workspace

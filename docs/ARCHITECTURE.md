@@ -5,7 +5,8 @@ and invariants that are not obvious from reading the code. Exhaustive field and
 method lists are intentionally omitted; the source is authoritative for those.
 
 For the high-level map and build commands, see [`AGENTS.md`](../AGENTS.md); for the
-YAML profile contract, see [`PROFILE.md`](PROFILE.md).
+YAML profile contract, see [`PROFILE.md`](PROFILE.md); for which parts of the design
+below are machine-checked and by which tool, see [`FORMAL_METHODS.md`](FORMAL_METHODS.md).
 
 ## Core flow
 
@@ -35,9 +36,17 @@ one deliberate 4-state pattern, resolved against profile `defaults`:
   `true`/`false` shorthand in YAML is the reason these are hand-written rather than derived.
 - `resolve()` collapses a state against the profile default into a concrete
   `Option<...>` (`None` == disabled/no-op). `resolve_in_place()` mutates ahead of execution.
+- **The rule itself lives in `src/domain/resolution.rs`, not in these two types.** Both are
+  adapters: they own their YAML wire shape and their user-facing error strings, project onto
+  the payload-generic `Tri<T>`, and delegate the decision. The domain module is pure by
+  policy — no I/O, no `serde`, no `use` of any other module in this crate — because that is
+  what makes the rule mechanically verifiable. The properties it is held to (R1–R8) and the
+  Verus/Kani layering are in [`FORMAL_METHODS.md`](FORMAL_METHODS.md).
 - **Non-obvious:** for `TaskIsolation`, `UseDefault` and `Inherit` behave identically
   because `IsolationConfig` always has a default (chroot). Both variants exist only for
-  API symmetry with `Privilege`, where the distinction is real.
+  API symmetry with `Privilege`, where the distinction is real. This is property R7, and it
+  holds for *any* setting whose default is always configured — it is a consequence of the
+  resolution model rather than a quirk of `IsolationConfig`.
 
 `mount` and `resolv_conf` used to live under `IsolationConfig`; they were moved out to
 the `prepare` phase. `IsolationConfig` is now just the backend selector: an internally
@@ -131,6 +140,11 @@ patterns run throughout `src/isolation/`:
 - `CommandSpec` (`src/executor/mod.rs`) is the command value object (command/args/cwd/
   env/privilege) with a builder API. `RealCommandExecutor` supports dry-run; tests use
   mock executors to assert on constructed commands without running anything.
+- Under escalation the exec'd program becomes `sudo`/`doas`, so the requested command has to
+  travel as its `argv[0]` and the caller's arguments shift by one. That reshaping is split out
+  into `plan_argv` (`src/executor/plan.rs`) — a pure function with `#[cfg(kani)]` harnesses —
+  because an off-by-one there misaligns every flag while running as root and would surface as
+  neither a crash nor a failing test.
 
 ## Bootstrap backends
 
