@@ -446,7 +446,6 @@ provision:
 
 #[test]
 fn test_shell_task_path_resolution_with_relative_profile_path() -> Result<()> {
-    // Acquire global lock to prevent parallel CWD modifications
     let _lock = helpers::CWD_TEST_LOCK.lock().unwrap();
 
     let temp_dir = tempdir()?;
