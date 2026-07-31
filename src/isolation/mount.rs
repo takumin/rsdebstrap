@@ -604,7 +604,6 @@ mod tests {
         let calls = executor.calls();
         // 2 mounts + 2 failed umounts (first unmount()) + 2 retry umounts (Drop)
         assert_eq!(calls.len(), 6);
-        // Verify Drop triggered the retry
         assert_eq!(calls[4][0], "umount");
         assert_eq!(calls[5][0], "umount");
     }

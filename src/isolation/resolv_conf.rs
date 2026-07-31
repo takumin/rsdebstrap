@@ -827,7 +827,6 @@ mod tests {
         }
 
         let calls = executor.calls();
-        // Should have setup calls + teardown rm call
         let last = calls.last().unwrap();
         assert_eq!(last.args[0], "rm");
     }
