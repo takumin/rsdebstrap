@@ -426,7 +426,6 @@ fn test_execute_inline_script_verifies_file_written() {
     task.resolve_privilege(None).unwrap();
     task.resolve_isolation(&IsolationConfig::default());
 
-    // Use a custom mock that captures the script content at execution time
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured_content);
 
@@ -693,7 +692,6 @@ fn test_execute_nonzero_exit_returns_execution_error() {
     let result = task.execute(&context);
 
     assert!(result.is_err());
-    // The error is wrapped in anyhow, so we need to downcast
     let anyhow_err = result.unwrap_err();
     let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
     assert!(

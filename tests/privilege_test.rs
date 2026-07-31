@@ -76,7 +76,6 @@ fn test_task_level_privilege_overrides_default() {
         other => panic!("expected mmdebstrap, got: {:?}", other),
     }
 
-    // Profile loads successfully with task-level doas override
     assert_eq!(profile.provision.len(), 1);
 }
 
@@ -203,7 +202,6 @@ fn test_no_defaults_no_privilege_results_in_none() {
         other => panic!("expected mmdebstrap, got: {:?}", other),
     }
 
-    // Task should also have no privilege escalation
     assert_eq!(profile.provision.len(), 1);
 }
 

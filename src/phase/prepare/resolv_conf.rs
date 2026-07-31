@@ -93,7 +93,6 @@ impl PhaseItem for ResolvConfTask {
     }
 
     fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        // resolv_conf tasks don't use per-task isolation.
         None
     }
 }

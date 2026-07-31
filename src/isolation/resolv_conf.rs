@@ -457,11 +457,9 @@ mod tests {
 
         let calls = executor.calls();
         assert_eq!(calls.len(), 2);
-        // cp host→resolv
         assert_eq!(calls[0].args[0], "cp");
         assert_eq!(calls[0].args[1], host_path.as_str());
         assert_eq!(calls[0].args[2], rootfs.join("etc/resolv.conf").as_str());
-        // chmod 644
         assert_eq!(calls[1].args[0], "chmod");
         assert_eq!(calls[1].args[1], "644");
         assert_eq!(calls[1].args[2], rootfs.join("etc/resolv.conf").as_str());
@@ -495,7 +493,6 @@ mod tests {
         // cp temp→resolv (temp file path is random)
         assert_eq!(calls[0].args[0], "cp");
         assert_eq!(calls[0].args[2], rootfs.join("etc/resolv.conf").as_str());
-        // chmod 644
         assert_eq!(calls[1].args[0], "chmod");
         assert_eq!(calls[1].args[1], "644");
     }

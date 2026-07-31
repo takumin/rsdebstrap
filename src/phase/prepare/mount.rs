@@ -84,7 +84,6 @@ impl MountTask {
             .map(|m| (m.target.as_path(), m))
             .collect();
 
-        // Replace preset entries in-place where custom overrides exist
         for entry in &mut preset_entries {
             if let Some(custom) = custom_by_target.remove(entry.target.as_path()) {
                 *entry = custom.clone();
@@ -154,7 +153,6 @@ impl PhaseItem for MountTask {
     }
 
     fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        // Mount tasks don't use per-task isolation.
         None
     }
 }

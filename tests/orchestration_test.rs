@@ -242,7 +242,6 @@ impl CommandExecutor for FailingExecutor {
 
 #[test]
 fn test_run_apply_pipeline_and_teardown_both_fail() {
-    // This test verifies that when pipeline execution fails, the error is propagated.
     // Note: In dry_run mode, there is no separate teardown command, so only the
     // pipeline task error is verified here. The teardown error handling path is
     // tested in pipeline_test.rs with mock contexts.

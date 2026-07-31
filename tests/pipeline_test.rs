@@ -411,11 +411,9 @@ fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
     let calls = mock_executor.calls();
     assert_eq!(calls.len(), 3, "Expected 3 calls, got: {}", calls.len());
 
-    // Call 0: chroot task
     assert_eq!(calls[0][0], "chroot", "Expected first task to use chroot, got: {:?}", calls[0]);
     assert_eq!(calls[0][2], "/bin/sh-chroot1");
 
-    // Call 1: direct task
     assert!(
         calls[1][0].starts_with("/tmp/rootfs/"),
         "Expected direct task with rootfs-prefixed path, got: {:?}",
@@ -427,7 +425,6 @@ fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
         calls[1]
     );
 
-    // Call 2: chroot task
     assert_eq!(calls[2][0], "chroot", "Expected third task to use chroot, got: {:?}", calls[2]);
     assert_eq!(calls[2][2], "/bin/sh-chroot2");
 }
