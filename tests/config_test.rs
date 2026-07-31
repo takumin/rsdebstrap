@@ -708,7 +708,6 @@ bootstrap:
 
 #[test]
 fn test_load_profile_yaml_missing_required_field() -> Result<()> {
-    // Missing 'bootstrap' field which is required
     // editorconfig-checker-disable
     let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---

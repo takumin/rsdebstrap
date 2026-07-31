@@ -86,7 +86,6 @@ impl IsolationContext for ChrootContext {
     }
 
     fn teardown(&mut self) -> Result<()> {
-        // Chroot doesn't need any cleanup
         self.torn_down = true;
         Ok(())
     }

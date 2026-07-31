@@ -549,7 +549,6 @@ impl Profile {
 
         // Mount entry validation and mount order are handled by MountTask::validate()
         // which is called by the pipeline validation path.
-        // Here we only need to check privilege requirements.
 
         Ok(())
     }
@@ -579,8 +578,6 @@ fn validate_command_in_path(command: &str, label: &str) -> Result<(), Rsdebstrap
 pub(crate) fn validate_mount_order(mounts: &[MountEntry]) -> Result<(), RsdebstrapError> {
     for (i, entry) in mounts.iter().enumerate() {
         for earlier in &mounts[..i] {
-            // If this entry's target is a parent of an earlier entry's target,
-            // then this entry should have come first
             if earlier.target.starts_with(&entry.target) && earlier.target != entry.target {
                 return Err(RsdebstrapError::Validation(format!(
                     "mount order error: '{}' must be mounted before '{}' \
