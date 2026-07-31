@@ -61,7 +61,6 @@ fn map_openat_error(err: rustix::io::Errno, path: &Utf8Path, label: &str) -> any
 pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &Utf8Path) -> Result<Utf8PathBuf> {
     let relative = target.strip_prefix("/").unwrap_or(target);
 
-    // Open rootfs with O_NOFOLLOW to verify it's not a symlink
     let rootfs_fd = rfs::openat(
         CWD,
         rootfs.as_str(),

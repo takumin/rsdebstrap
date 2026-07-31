@@ -282,7 +282,6 @@ impl ShellTask {
     fn validate_rootfs(&self, rootfs: &Utf8Path) -> Result<()> {
         crate::phase::validate_tmp_directory(rootfs)?;
 
-        // Validate shell path to prevent path traversal attacks
         let shell_path = self.shell.trim_start_matches('/');
         crate::phase::validate_no_parent_dirs(camino::Utf8Path::new(shell_path), "shell")?;
 
