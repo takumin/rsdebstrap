@@ -258,8 +258,6 @@ fn test_run_apply_pipeline_and_teardown_both_fail() {
     // Fail starting from the 2nd call (pipeline task execution)
     // Call 1: mmdebstrap (succeeds)
     // Call 2: chroot for pipeline task (fails) - this is the pipeline error
-    // Note: In dry_run mode with chroot isolation, there's no separate teardown command,
-    // but the error handling path is still exercised
     let executor: Arc<dyn CommandExecutor> = Arc::new(FailingExecutor::new(2));
 
     let result = run_apply(&opts, executor);
