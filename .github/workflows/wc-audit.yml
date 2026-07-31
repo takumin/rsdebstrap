@@ -7,9 +7,6 @@ concurrency:
   group: audit-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  ##############################################################################
-  # Audit
-  ##############################################################################
   audit:
     name: Audit
     runs-on: ubuntu-latest

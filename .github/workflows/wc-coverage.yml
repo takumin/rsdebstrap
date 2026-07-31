@@ -7,9 +7,6 @@ concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  ##############################################################################
-  # Coverage
-  ##############################################################################
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

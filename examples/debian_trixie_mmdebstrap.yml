@@ -26,7 +26,6 @@ defaults:
       x86_64: /usr/local/bin/mitamae-x86_64-linux
       aarch64: /usr/local/bin/mitamae-aarch64-linux
 
-# Bootstrap backend configuration
 # Supported types: mmdebstrap, debootstrap
 #
 # debootstrap alternative:
@@ -82,9 +81,7 @@ prepare:
   resolv_conf:
     copy: true
 
-# Main provisioning steps
 provision:
-# Shell provisioner with inline script
 - type: shell
   content: |-
     #!/bin/sh
@@ -110,7 +107,6 @@ provision:
 #   External recipe alternative:
 #     script: ./recipes/setup.rb
 
-# Cleanup step
 - type: shell
   content: |-
     #!/bin/sh

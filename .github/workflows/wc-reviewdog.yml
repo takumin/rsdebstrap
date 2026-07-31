@@ -15,9 +15,6 @@ concurrency:
   group: reviewdog-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  ##############################################################################
-  # Matrix
-  ##############################################################################
   matrix:
     name: Matrix
     runs-on: ubuntu-latest
@@ -44,9 +41,6 @@ jobs:
         REVIEWDOG_MATRIX: ${{ steps.matrix.outputs.result }}
       run: |-
         echo "${REVIEWDOG_MATRIX}" | jq
-  ##############################################################################
-  # Runner
-  ##############################################################################
   reviewdog:
     needs: matrix
     name: Reviewdog (${{ matrix.name }})
