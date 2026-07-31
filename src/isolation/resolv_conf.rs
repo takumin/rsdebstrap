@@ -661,7 +661,6 @@ mod tests {
         assert_eq!(calls[0].args[0], "mv"); // backup
         assert_eq!(calls[1].args[0], "cp"); // write (failed)
         assert_eq!(calls[2].args[0], "mv"); // rollback
-        // Rollback should restore: mv backup→resolv
         let backup_path = format!("{}{}", rootfs.join("etc/resolv.conf"), BACKUP_SUFFIX);
         assert_eq!(calls[2].args[1], backup_path);
         assert_eq!(calls[2].args[2], rootfs.join("etc/resolv.conf").as_str());
