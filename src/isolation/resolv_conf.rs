@@ -838,7 +838,7 @@ mod tests {
         let after_setup = executor.calls().len();
         rc.teardown().unwrap();
         let after_first_teardown = executor.calls().len();
-        rc.teardown().unwrap(); // second call should be no-op
+        rc.teardown().unwrap();
         assert_eq!(executor.calls().len(), after_first_teardown);
         assert!(after_first_teardown > after_setup);
     }

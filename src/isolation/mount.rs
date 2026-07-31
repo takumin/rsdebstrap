@@ -496,7 +496,7 @@ mod tests {
         let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
         mounts.mount().unwrap();
         mounts.unmount().unwrap();
-        mounts.unmount().unwrap(); // second call should be no-op
+        mounts.unmount().unwrap();
 
         let calls = executor.calls();
         assert_eq!(calls.len(), 4); // Still 2 mounts + 2 umounts
