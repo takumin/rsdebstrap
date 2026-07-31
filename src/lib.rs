@@ -768,7 +768,6 @@ mod tests {
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
         let resolv = rootfs.join("etc/resolv.conf");
-        // Replace the seeded regular file with a symlink to a sibling entry.
         fs::write(rootfs.join("etc/upstream-resolv.conf"), "# upstream\n").unwrap();
         fs::remove_file(&resolv).unwrap();
         std::os::unix::fs::symlink("upstream-resolv.conf", &resolv).unwrap();

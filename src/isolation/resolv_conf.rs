@@ -512,7 +512,6 @@ mod tests {
         rc.setup().unwrap();
 
         let calls = executor.calls();
-        // mv backup, cp write, chmod
         assert_eq!(calls.len(), 3);
         assert_eq!(calls[0].args[0], "mv");
         assert_eq!(calls[0].args[1], rootfs.join("etc/resolv.conf").as_str());
@@ -622,7 +621,6 @@ mod tests {
 
         let calls = executor.calls();
         let teardown_calls = &calls[setup_call_count..];
-        // rm -f resolv_path, mv backup→resolv
         assert_eq!(teardown_calls.len(), 2);
         assert_eq!(teardown_calls[0].args[0], "rm");
         assert_eq!(teardown_calls[0].args[1], "-f");
@@ -659,7 +657,6 @@ mod tests {
         assert!(!rc.active);
 
         let calls = executor.calls();
-        // mv backup, cp (fails), mv rollback
         assert_eq!(calls.len(), 3);
         assert_eq!(calls[0].args[0], "mv"); // backup
         assert_eq!(calls[1].args[0], "cp"); // write (failed)
