@@ -22,10 +22,6 @@ fn provision_pipeline(tasks: &[ProvisionTask]) -> Pipeline<'_> {
     Pipeline::new(&EMPTY_PREPARE, tasks, &EMPTY_ASSEMBLE)
 }
 
-// =============================================================================
-// Mock infrastructure
-// =============================================================================
-
 /// Records executed commands in order, optionally failing on specific calls.
 struct MockExecutor {
     calls: Mutex<Vec<Vec<String>>>,
@@ -90,10 +86,6 @@ fn inline_task_direct(content: &str) -> ProvisionTask {
     ProvisionTask::Shell(task)
 }
 
-// =============================================================================
-// is_empty() / total_tasks() tests
-// =============================================================================
-
 #[test]
 fn test_pipeline_is_empty_when_all_phases_empty() {
     let pipeline = provision_pipeline(&[]);
@@ -123,10 +115,6 @@ fn test_pipeline_total_tasks_counts_all_phases() {
     assert!(!pipeline.is_empty());
     assert_eq!(pipeline.total_tasks(), 6);
 }
-
-// =============================================================================
-// validate() tests
-// =============================================================================
 
 #[test]
 fn test_pipeline_validate_succeeds_for_empty_pipeline() {
@@ -171,10 +159,6 @@ fn test_pipeline_validate_reports_correct_index() {
         err_msg
     );
 }
-
-// =============================================================================
-// run() tests
-// =============================================================================
 
 #[test]
 fn test_pipeline_run_empty_returns_ok_without_setup() {
@@ -323,10 +307,6 @@ fn test_pipeline_run_error_stops_remaining_tasks() {
     assert_eq!(mock_executor.call_count(), 2);
 }
 
-// =============================================================================
-// per-task isolation tests
-// =============================================================================
-
 #[test]
 fn test_pipeline_run_task_isolation_disabled_uses_direct() {
     let tasks = [inline_task_direct("echo direct")];
@@ -427,10 +407,6 @@ fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
     assert_eq!(calls[2][0], "chroot", "Expected third task to use chroot, got: {:?}", calls[2]);
     assert_eq!(calls[2][2], "/bin/sh-chroot2");
 }
-
-// =============================================================================
-// validate() variant preservation tests
-// =============================================================================
 
 #[test]
 fn test_pipeline_validate_preserves_validation_variant() {

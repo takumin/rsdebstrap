@@ -6,10 +6,6 @@ use rsdebstrap::phase::{ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 use tempfile::tempdir;
 
-// =============================================================================
-// Privilege inheritance and resolution integration tests
-// =============================================================================
-
 #[test]
 fn test_default_privilege_sudo_inherited_by_bootstrap_and_tasks() {
     // editorconfig-checker-disable
@@ -233,10 +229,6 @@ fn test_default_privilege_doas_inherited() {
         other => panic!("expected debootstrap, got: {:?}", other),
     }
 }
-
-// =============================================================================
-// MockContext-based privilege propagation tests
-// =============================================================================
 
 /// Helper to set up a valid rootfs with /tmp and /bin/sh
 fn setup_valid_rootfs(temp_dir: &tempfile::TempDir) {

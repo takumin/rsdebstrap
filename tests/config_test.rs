@@ -804,10 +804,6 @@ dir: /tmp/test
     Ok(())
 }
 
-// =============================================================================
-// pre_processors / post_processors tests
-// =============================================================================
-
 #[test]
 fn test_load_profile_prepare_rejects_unknown_task_type() -> Result<()> {
     // editorconfig-checker-disable
@@ -905,10 +901,6 @@ fn test_load_profile_phases_default_to_empty() -> Result<()> {
 
     Ok(())
 }
-
-// =============================================================================
-// MitamaeTask integration tests
-// =============================================================================
 
 #[test]
 fn test_load_profile_resolves_mitamae_binary_relative_to_profile_dir() -> Result<()> {
@@ -1087,10 +1079,6 @@ provision:
     Ok(())
 }
 
-// =============================================================================
-// MitamaeDefaults tests
-// =============================================================================
-
 #[test]
 fn test_load_profile_mitamae_defaults_binary_resolves_for_current_arch() -> Result<()> {
     let temp_dir = tempdir()?;
@@ -1258,10 +1246,6 @@ provision:
 
     Ok(())
 }
-
-// =============================================================================
-// Task-level isolation tests
-// =============================================================================
 
 #[test]
 fn test_load_profile_task_isolation_absent_resolves_to_chroot() -> Result<()> {
@@ -1494,10 +1478,6 @@ provision:
 
     Ok(())
 }
-
-// =============================================================================
-// Mount configuration tests
-// =============================================================================
 
 #[test]
 fn test_load_profile_with_mount_preset() -> Result<()> {
@@ -1757,10 +1737,6 @@ prepare:
     Ok(())
 }
 
-// =============================================================================
-// resolv_conf integration tests
-// =============================================================================
-
 #[test]
 fn test_load_profile_with_resolv_conf_copy() -> Result<()> {
     // editorconfig-checker-disable
@@ -2011,10 +1987,6 @@ prepare:
     Ok(())
 }
 
-// =============================================================================
-// PrepareConfig mount tests
-// =============================================================================
-
 #[test]
 fn test_load_profile_prepare_mount_task() -> Result<()> {
     // editorconfig-checker-disable
@@ -2078,10 +2050,6 @@ prepare:
 
     assert!(result.is_err(), "Expected a parse error for duplicate mount key, got Ok");
 }
-
-// =============================================================================
-// PrepareConfig resolv_conf tests
-// =============================================================================
 
 #[test]
 fn test_load_profile_prepare_rejects_duplicate_resolv_conf_key() {

@@ -672,10 +672,6 @@ fn test_execute_with_no_exit_status_returns_error() {
     );
 }
 
-// =============================================================================
-// Type-based error tests (RsdebstrapError variant matching)
-// =============================================================================
-
 #[test]
 fn test_execute_nonzero_exit_returns_execution_error() {
     let temp_dir = tempdir().expect("failed to create temp dir");

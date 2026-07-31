@@ -22,10 +22,6 @@ impl CommandExecutor for RecordingExecutor {
     }
 }
 
-// =============================================================================
-// IsolationProvider tests
-// =============================================================================
-
 #[test]
 fn test_chroot_provider_name() {
     let provider = ChrootProvider;
@@ -45,10 +41,6 @@ fn test_chroot_provider_setup_creates_context() {
     assert_eq!(context.name(), "chroot");
     assert_eq!(context.rootfs(), rootfs);
 }
-
-// =============================================================================
-// IsolationContext tests
-// =============================================================================
 
 #[test]
 fn test_chroot_context_execute_builds_correct_args() {
@@ -158,10 +150,6 @@ fn test_chroot_context_execute_after_teardown_returns_isolation_error() {
     );
 }
 
-// =============================================================================
-// Privilege propagation tests
-// =============================================================================
-
 #[test]
 fn test_chroot_context_propagates_sudo_privilege() {
     let provider = ChrootProvider;
@@ -209,10 +197,6 @@ fn test_chroot_context_propagates_doas_privilege() {
 // The `None` case is covered by `test_chroot_context_execute_builds_correct_args`,
 // which asserts the same recorded privilege for the same call.
 
-// =============================================================================
-// DirectProvider tests
-// =============================================================================
-
 #[test]
 fn test_direct_provider_name() {
     let provider = DirectProvider;
@@ -232,10 +216,6 @@ fn test_direct_provider_setup_creates_context() {
     assert_eq!(context.name(), "direct");
     assert_eq!(context.rootfs(), rootfs);
 }
-
-// =============================================================================
-// DirectContext execution tests
-// =============================================================================
 
 #[test]
 fn test_direct_context_execute_translates_absolute_paths() {
@@ -302,10 +282,6 @@ fn test_direct_context_execute_empty_command_returns_error() {
     );
 }
 
-// =============================================================================
-// DirectContext lifecycle tests
-// =============================================================================
-
 #[test]
 fn test_direct_context_teardown_is_idempotent() {
     let provider = DirectProvider;
@@ -363,10 +339,6 @@ fn test_direct_context_execute_after_teardown_returns_isolation_error() {
         downcast.unwrap(),
     );
 }
-
-// =============================================================================
-// DirectContext privilege propagation tests
-// =============================================================================
 
 #[test]
 fn test_direct_context_propagates_sudo_privilege() {
