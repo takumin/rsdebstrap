@@ -341,7 +341,6 @@ fn test_validate_nonexistent_script_returns_io_error() {
                 script_path,
                 context
             );
-            // Display format includes io_error_kind_message
             let display = err.to_string();
             assert!(
                 display.contains("I/O error"),

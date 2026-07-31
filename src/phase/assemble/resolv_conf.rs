@@ -228,8 +228,6 @@ impl AssembleResolvConfTask {
                 executor.execute_checked(&ln_spec)?;
             }
             None => {
-                // Generate content to a host temporary file, then copy it to
-                // the staging path.
                 let config = ResolvConfConfig {
                     copy: false,
                     name_servers: self.name_servers.clone(),
