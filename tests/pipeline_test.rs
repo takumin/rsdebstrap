@@ -383,7 +383,6 @@ fn test_pipeline_run_task_isolation_enabled_uses_chroot() {
 
 #[test]
 fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
-    // Create 3 tasks: chroot → direct → chroot
     // Use custom shell paths to distinguish each call
     let mut chroot1 =
         ShellTask::with_shell(ScriptSource::Content("echo chroot1".to_string()), "/bin/sh-chroot1");

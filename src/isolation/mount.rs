@@ -412,7 +412,6 @@ mod tests {
         mounts.unmount().unwrap();
 
         let calls = executor.calls();
-        // 2 mounts + 2 umounts = 4 calls
         assert_eq!(calls.len(), 4);
         assert_eq!(calls[0][0], "mount");
         assert_eq!(calls[1][0], "mount");

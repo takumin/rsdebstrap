@@ -503,7 +503,6 @@ impl Profile {
         let pipeline = self.pipeline();
         pipeline.validate()?;
 
-        // Validate tasks are compatible with bootstrap output format.
         // rootfs_output() returns anyhow::Result, so we attempt to downcast to
         // RsdebstrapError to preserve the original variant. If downcast fails
         // (e.g., a non-RsdebstrapError from a backend), we fall back to Validation.

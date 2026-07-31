@@ -195,7 +195,6 @@ fn run_apply_with_pipeline_tasks_uses_isolation() {
     run_apply(&opts, executor).expect("run_apply should succeed");
 
     let calls = calls.lock().unwrap();
-    // Expect 2 calls: 1 for bootstrap (mmdebstrap), 1 for pipeline task (chroot)
     assert_eq!(calls.len(), 2);
 
     let (command, _) = &calls[0];
