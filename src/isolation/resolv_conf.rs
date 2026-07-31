@@ -138,7 +138,6 @@ impl RootfsResolvConf {
         let resolv_path = self.resolv_conf_path();
         let backup_path = self.backup_path();
 
-        // Check for leftover backup from a previous crash
         if backup_path.exists() {
             return Err(RsdebstrapError::Isolation(format!(
                 "backup file {} already exists (possible leftover from a previous crash; \

@@ -301,7 +301,6 @@ fn test_run_fails_when_script_copy_fails() {
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
 
-    // Restore permissions for cleanup
     let mut perms = std::fs::metadata(&tmp_path)
         .expect("failed to get tmp metadata")
         .permissions();
