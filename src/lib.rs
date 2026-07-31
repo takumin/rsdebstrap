@@ -781,8 +781,6 @@ mod tests {
         // (mv backup, cp temp, chmod) → teardown (rm temp, mv restore) — but
         // here the backed-up and restored entry is a symlink.
         assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv"]);
-        // The original symlink is restored byte-for-byte (same link target),
-        // not replaced by a regular file.
         assert!(
             fs::symlink_metadata(&resolv)
                 .unwrap()

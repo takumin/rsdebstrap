@@ -1058,7 +1058,6 @@ provision:
     ))?;
     // editorconfig-checker-enable
 
-    // Pipeline validation should preserve the Io error variant (not flatten to Validation)
     let err = profile.validate().unwrap_err();
     match &err {
         RsdebstrapError::Io {
