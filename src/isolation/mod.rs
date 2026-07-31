@@ -309,10 +309,6 @@ impl Serialize for TaskIsolation {
 mod tests {
     use super::*;
 
-    // =========================================================================
-    // TaskIsolation deserialization tests
-    // =========================================================================
-
     #[test]
     fn task_isolation_deserialize_true() {
         let p: TaskIsolation = yaml_serde::from_str("true").unwrap();
@@ -362,10 +358,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // =========================================================================
-    // TaskIsolation::resolve tests
-    // =========================================================================
-
     #[test]
     fn resolve_inherit_uses_defaults() {
         let defaults = IsolationConfig::chroot();
@@ -394,10 +386,6 @@ mod tests {
         assert_eq!(result, Some(IsolationConfig::chroot()));
     }
 
-    // =========================================================================
-    // TaskIsolation::resolve_in_place tests
-    // =========================================================================
-
     #[test]
     fn resolve_in_place_inherit() {
         let mut iso = TaskIsolation::Inherit;
@@ -419,10 +407,6 @@ mod tests {
         assert_eq!(iso, TaskIsolation::Config(IsolationConfig::chroot()));
     }
 
-    // =========================================================================
-    // TaskIsolation::resolved_config tests
-    // =========================================================================
-
     #[test]
     fn resolved_config_returns_some_for_config() {
         let iso = TaskIsolation::Config(IsolationConfig::chroot());
@@ -434,10 +418,6 @@ mod tests {
         let iso = TaskIsolation::Disabled;
         assert_eq!(iso.resolved_config(), None);
     }
-
-    // =========================================================================
-    // Serialize → Deserialize roundtrip tests
-    // =========================================================================
 
     fn roundtrip(original: &TaskIsolation) -> TaskIsolation {
         let yaml = yaml_serde::to_string(original).unwrap();
@@ -467,10 +447,6 @@ mod tests {
             TaskIsolation::Config(IsolationConfig::chroot())
         );
     }
-
-    // =========================================================================
-    // Wire-enum parity tests
-    // =========================================================================
 
     // `TaskIsolationWire` is the schema-side mirror of the hand-written visitor. These
     // tests pin the two acceptance sets together: adding or removing a `visit_*`

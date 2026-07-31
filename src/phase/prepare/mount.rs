@@ -161,10 +161,6 @@ impl PhaseItem for MountTask {
 mod tests {
     use super::*;
 
-    // =========================================================================
-    // name() tests
-    // =========================================================================
-
     #[test]
     fn name_preset_only() {
         let task = MountTask {
@@ -209,10 +205,6 @@ mod tests {
         assert_eq!(task.name(), "empty");
     }
 
-    // =========================================================================
-    // has_mounts() tests
-    // =========================================================================
-
     #[test]
     fn has_mounts_empty() {
         let task = MountTask {
@@ -243,10 +235,6 @@ mod tests {
         };
         assert!(task.has_mounts());
     }
-
-    // =========================================================================
-    // resolved_mounts() tests
-    // =========================================================================
 
     #[test]
     fn resolved_mounts_empty() {
@@ -384,10 +372,6 @@ mod tests {
         assert!(mounts.iter().any(|m| m.target.as_str() == "/run"));
     }
 
-    // =========================================================================
-    // validate() tests
-    // =========================================================================
-
     #[test]
     fn validate_duplicate_custom_mount_targets() {
         let task = MountTask {
@@ -414,10 +398,6 @@ mod tests {
             "expected duplicate target error, got: {err}"
         );
     }
-
-    // =========================================================================
-    // serde tests
-    // =========================================================================
 
     #[test]
     fn serialize_deserialize_roundtrip() {

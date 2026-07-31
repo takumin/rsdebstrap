@@ -283,10 +283,6 @@ impl Serialize for Privilege {
 mod tests {
     use super::*;
 
-    // =========================================================================
-    // PrivilegeMethod tests
-    // =========================================================================
-
     #[test]
     fn privilege_method_command_name() {
         // `Display` delegates to `command_name()`, so both are pinned together here.
@@ -304,10 +300,6 @@ mod tests {
         let doas: PrivilegeMethod = yaml_serde::from_str("doas").unwrap();
         assert_eq!(doas, PrivilegeMethod::Doas);
     }
-
-    // =========================================================================
-    // Privilege deserialization tests
-    // =========================================================================
 
     #[test]
     fn privilege_deserialize_true() {
@@ -343,10 +335,6 @@ mod tests {
     fn privilege_default_is_inherit() {
         assert_eq!(Privilege::default(), Privilege::Inherit);
     }
-
-    // =========================================================================
-    // Privilege::resolve tests
-    // =========================================================================
 
     #[test]
     fn resolve_inherit_with_defaults() {
@@ -415,10 +403,6 @@ mod tests {
         assert_eq!(result, Some(PrivilegeMethod::Sudo));
     }
 
-    // =========================================================================
-    // Privilege::resolve_in_place tests
-    // =========================================================================
-
     #[test]
     fn resolve_in_place_inherit_with_defaults() {
         let defaults = PrivilegeDefaults {
@@ -445,10 +429,6 @@ mod tests {
         assert!(matches!(err, RsdebstrapError::Validation(_)));
     }
 
-    // =========================================================================
-    // Privilege::resolved_method tests
-    // =========================================================================
-
     #[test]
     fn resolved_method_returns_some_for_method() {
         assert_eq!(
@@ -465,10 +445,6 @@ mod tests {
     fn resolved_method_returns_none_for_disabled() {
         assert_eq!(Privilege::Disabled.resolved_method(), None);
     }
-
-    // =========================================================================
-    // Deserialization negative tests
-    // =========================================================================
 
     #[test]
     fn privilege_method_rejects_invalid_value() {
@@ -494,20 +470,12 @@ mod tests {
         assert!(result.is_err(), "pkexec should not be valid in privilege map");
     }
 
-    // =========================================================================
-    // visit_unit test
-    // =========================================================================
-
     #[test]
     fn privilege_deserialize_null_returns_inherit() {
         // An explicit null is accepted as Inherit (mirrors field absence).
         let p: Privilege = yaml_serde::from_str("~").unwrap();
         assert_eq!(p, Privilege::Inherit);
     }
-
-    // =========================================================================
-    // Serialize → Deserialize roundtrip tests
-    // =========================================================================
 
     fn roundtrip(original: &Privilege) -> Privilege {
         let yaml = yaml_serde::to_string(original).unwrap();
@@ -545,10 +513,6 @@ mod tests {
             Privilege::Method(PrivilegeMethod::Doas)
         );
     }
-
-    // =========================================================================
-    // Wire-enum parity tests
-    // =========================================================================
 
     // `PrivilegeWire` is the schema-side mirror of the hand-written visitor. These
     // tests pin the two acceptance sets together: adding or removing a `visit_*`
