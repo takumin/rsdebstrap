@@ -481,7 +481,6 @@ impl CwdGuard {
 
 impl Drop for CwdGuard {
     fn drop(&mut self) {
-        // Best effort to restore - log warning if it fails for debugging
         if let Err(err) = std::env::set_current_dir(&self.original) {
             warn!(
                 original = %self.original,

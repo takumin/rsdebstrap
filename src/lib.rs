@@ -768,7 +768,6 @@ mod tests {
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
         let resolv = rootfs.join("etc/resolv.conf");
-        // Replace the seeded regular file with a symlink to a sibling entry.
         fs::write(rootfs.join("etc/upstream-resolv.conf"), "# upstream\n").unwrap();
         fs::remove_file(&resolv).unwrap();
         std::os::unix::fs::symlink("upstream-resolv.conf", &resolv).unwrap();
@@ -782,8 +781,6 @@ mod tests {
         // (mv backup, cp temp, chmod) → teardown (rm temp, mv restore) — but
         // here the backed-up and restored entry is a symlink.
         assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv"]);
-        // The original symlink is restored byte-for-byte (same link target),
-        // not replaced by a regular file.
         assert!(
             fs::symlink_metadata(&resolv)
                 .unwrap()

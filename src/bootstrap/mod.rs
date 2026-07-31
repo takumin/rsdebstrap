@@ -65,7 +65,6 @@ fn sanitize_credential(arg: &str) -> String {
         return arg.to_string();
     }
 
-    // Try parsing the whole argument as a URL.
     if let Ok(mut parsed) = Url::parse(arg) {
         if parsed.password().is_some() {
             let _ = parsed.set_password(Some("***"));
@@ -74,7 +73,6 @@ fn sanitize_credential(arg: &str) -> String {
         return arg.to_string();
     }
 
-    // Try `--flag=<url>` form.
     if let Some((prefix, url_part)) = arg.split_once('=')
         && let Ok(mut parsed) = Url::parse(url_part)
         && parsed.password().is_some()

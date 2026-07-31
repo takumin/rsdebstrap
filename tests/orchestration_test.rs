@@ -195,7 +195,6 @@ fn run_apply_with_pipeline_tasks_uses_isolation() {
     run_apply(&opts, executor).expect("run_apply should succeed");
 
     let calls = calls.lock().unwrap();
-    // Expect 2 calls: 1 for bootstrap (mmdebstrap), 1 for pipeline task (chroot)
     assert_eq!(calls.len(), 2);
 
     let (command, _) = &calls[0];
@@ -242,7 +241,6 @@ impl CommandExecutor for FailingExecutor {
 
 #[test]
 fn test_run_apply_pipeline_and_teardown_both_fail() {
-    // This test verifies that when pipeline execution fails, the error is propagated.
     // Note: In dry_run mode, there is no separate teardown command, so only the
     // pipeline task error is verified here. The teardown error handling path is
     // tested in pipeline_test.rs with mock contexts.
@@ -260,8 +258,6 @@ fn test_run_apply_pipeline_and_teardown_both_fail() {
     // Fail starting from the 2nd call (pipeline task execution)
     // Call 1: mmdebstrap (succeeds)
     // Call 2: chroot for pipeline task (fails) - this is the pipeline error
-    // Note: In dry_run mode with chroot isolation, there's no separate teardown command,
-    // but the error handling path is still exercised
     let executor: Arc<dyn CommandExecutor> = Arc::new(FailingExecutor::new(2));
 
     let result = run_apply(&opts, executor);

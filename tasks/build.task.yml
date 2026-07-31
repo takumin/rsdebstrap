@@ -7,11 +7,8 @@ version: '3'
 vars:
   PROJNAME:
     sh: cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].name'
-  # default profile
   PROFILE: '{{env "BUILD_PROFILE" | default "debug"}}'
-  # default target
   TARGET: '{{env "BUILD_TARGET" | default "x86_64-unknown-linux-gnu"}}'
-  # target list
   MATRIX_TARGETS:
   - x86_64-unknown-linux-gnu
   - x86_64-unknown-linux-musl

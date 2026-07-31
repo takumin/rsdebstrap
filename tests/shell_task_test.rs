@@ -301,7 +301,6 @@ fn test_run_fails_when_script_copy_fails() {
     let context = MockContext::new(&rootfs);
     let result = task.execute(&context);
 
-    // Restore permissions for cleanup
     let mut perms = std::fs::metadata(&tmp_path)
         .expect("failed to get tmp metadata")
         .permissions();
@@ -426,7 +425,6 @@ fn test_execute_inline_script_verifies_file_written() {
     task.resolve_privilege(None).unwrap();
     task.resolve_isolation(&IsolationConfig::default());
 
-    // Use a custom mock that captures the script content at execution time
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured_content);
 
@@ -674,10 +672,6 @@ fn test_execute_with_no_exit_status_returns_error() {
     );
 }
 
-// =============================================================================
-// Type-based error tests (RsdebstrapError variant matching)
-// =============================================================================
-
 #[test]
 fn test_execute_nonzero_exit_returns_execution_error() {
     let temp_dir = tempdir().expect("failed to create temp dir");
@@ -693,7 +687,6 @@ fn test_execute_nonzero_exit_returns_execution_error() {
     let result = task.execute(&context);
 
     assert!(result.is_err());
-    // The error is wrapped in anyhow, so we need to downcast
     let anyhow_err = result.unwrap_err();
     let downcast = anyhow_err.downcast_ref::<RsdebstrapError>();
     assert!(

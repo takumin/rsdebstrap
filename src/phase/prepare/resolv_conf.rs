@@ -93,7 +93,6 @@ impl PhaseItem for ResolvConfTask {
     }
 
     fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        // resolv_conf tasks don't use per-task isolation.
         None
     }
 }
@@ -101,10 +100,6 @@ impl PhaseItem for ResolvConfTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // =========================================================================
-    // name() tests
-    // =========================================================================
 
     #[test]
     fn name_copy() {
@@ -125,10 +120,6 @@ mod tests {
         };
         assert_eq!(task.name(), "generate");
     }
-
-    // =========================================================================
-    // config() tests
-    // =========================================================================
 
     #[test]
     fn config_copy() {
@@ -155,10 +146,6 @@ mod tests {
         assert_eq!(config.name_servers.len(), 2);
         assert_eq!(config.search, vec!["example.com"]);
     }
-
-    // =========================================================================
-    // validate() tests
-    // =========================================================================
 
     #[test]
     fn validate_valid_copy() {
@@ -203,10 +190,6 @@ mod tests {
         assert!(matches!(err, RsdebstrapError::Validation(_)));
         assert!(err.to_string().contains("name_servers"));
     }
-
-    // =========================================================================
-    // serde tests
-    // =========================================================================
 
     #[test]
     fn serialize_deserialize_roundtrip_copy() {

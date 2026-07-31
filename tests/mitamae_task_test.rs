@@ -172,7 +172,6 @@ fn test_execute_command_construction() {
     let commands = context.executed_commands();
     assert_eq!(commands.len(), 1);
 
-    // Verify the 3-element command structure: [binary, "local", recipe]
     let cmd = &commands[0];
     assert_eq!(cmd.len(), 3, "Command should have exactly 3 elements");
 

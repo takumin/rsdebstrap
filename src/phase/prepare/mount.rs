@@ -84,7 +84,6 @@ impl MountTask {
             .map(|m| (m.target.as_path(), m))
             .collect();
 
-        // Replace preset entries in-place where custom overrides exist
         for entry in &mut preset_entries {
             if let Some(custom) = custom_by_target.remove(entry.target.as_path()) {
                 *entry = custom.clone();
@@ -154,7 +153,6 @@ impl PhaseItem for MountTask {
     }
 
     fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        // Mount tasks don't use per-task isolation.
         None
     }
 }
@@ -162,10 +160,6 @@ impl PhaseItem for MountTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // =========================================================================
-    // name() tests
-    // =========================================================================
 
     #[test]
     fn name_preset_only() {
@@ -211,10 +205,6 @@ mod tests {
         assert_eq!(task.name(), "empty");
     }
 
-    // =========================================================================
-    // has_mounts() tests
-    // =========================================================================
-
     #[test]
     fn has_mounts_empty() {
         let task = MountTask {
@@ -245,10 +235,6 @@ mod tests {
         };
         assert!(task.has_mounts());
     }
-
-    // =========================================================================
-    // resolved_mounts() tests
-    // =========================================================================
 
     #[test]
     fn resolved_mounts_empty() {
@@ -386,10 +372,6 @@ mod tests {
         assert!(mounts.iter().any(|m| m.target.as_str() == "/run"));
     }
 
-    // =========================================================================
-    // validate() tests
-    // =========================================================================
-
     #[test]
     fn validate_duplicate_custom_mount_targets() {
         let task = MountTask {
@@ -416,10 +398,6 @@ mod tests {
             "expected duplicate target error, got: {err}"
         );
     }
-
-    // =========================================================================
-    // serde tests
-    // =========================================================================
 
     #[test]
     fn serialize_deserialize_roundtrip() {

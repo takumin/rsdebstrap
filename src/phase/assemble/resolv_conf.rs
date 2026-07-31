@@ -228,8 +228,6 @@ impl AssembleResolvConfTask {
                 executor.execute_checked(&ln_spec)?;
             }
             None => {
-                // Generate content to a host temporary file, then copy it to
-                // the staging path.
                 let config = ResolvConfConfig {
                     copy: false,
                     name_servers: self.name_servers.clone(),
@@ -321,10 +319,6 @@ mod tests {
     use std::process::ExitStatus;
     use std::sync::{Arc, Mutex};
 
-    // =========================================================================
-    // name() tests
-    // =========================================================================
-
     #[test]
     fn name_link() {
         let task = make_task_link("../run/systemd/resolve/stub-resolv.conf");
@@ -336,10 +330,6 @@ mod tests {
         let task = make_task_generate(vec!["8.8.8.8"], vec![]);
         assert_eq!(task.name(), "generate");
     }
-
-    // =========================================================================
-    // validate() tests
-    // =========================================================================
 
     #[test]
     fn validate_valid_generate() {
@@ -468,10 +458,6 @@ mod tests {
         assert!(err.to_string().contains("mutually exclusive"));
     }
 
-    // =========================================================================
-    // serde tests
-    // =========================================================================
-
     #[test]
     fn deserialize_link_relative() {
         let yaml = "link: ../run/systemd/resolve/stub-resolv.conf\n";
@@ -570,10 +556,6 @@ mod tests {
         assert!(!yaml.contains("privilege"));
     }
 
-    // =========================================================================
-    // resolve_privilege() tests
-    // =========================================================================
-
     #[test]
     fn resolve_privilege_inherit_with_defaults() {
         let mut task = make_task_generate(vec!["8.8.8.8"], vec![]);
@@ -605,10 +587,6 @@ mod tests {
         task.resolve_privilege(Some(&defaults)).unwrap();
         assert_eq!(task.resolved_privilege_method(), None);
     }
-
-    // =========================================================================
-    // execute() tests
-    // =========================================================================
 
     #[test]
     fn execute_generate_writes_file() {
@@ -975,10 +953,6 @@ mod tests {
         assert!(std::fs::symlink_metadata(&staging).is_err());
     }
 
-    // =========================================================================
-    // Test helpers
-    // =========================================================================
-
     fn make_task_link(target: &str) -> AssembleResolvConfTask {
         AssembleResolvConfTask {
             privilege: Privilege::Inherit,
@@ -1014,10 +988,6 @@ mod tests {
             search: search.into_iter().map(|s| s.to_string()).collect(),
         }
     }
-
-    // =========================================================================
-    // Mock executor and context for execute tests
-    // =========================================================================
 
     /// A recorded command with its arguments and privilege setting.
     type RecordedCommand = (String, Vec<String>, Option<PrivilegeMethod>);

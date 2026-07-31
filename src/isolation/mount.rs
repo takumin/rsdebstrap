@@ -61,7 +61,6 @@ fn map_openat_error(err: rustix::io::Errno, path: &Utf8Path, label: &str) -> any
 pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &Utf8Path) -> Result<Utf8PathBuf> {
     let relative = target.strip_prefix("/").unwrap_or(target);
 
-    // Open rootfs with O_NOFOLLOW to verify it's not a symlink
     let rootfs_fd = rfs::openat(
         CWD,
         rootfs.as_str(),
@@ -413,7 +412,6 @@ mod tests {
         mounts.unmount().unwrap();
 
         let calls = executor.calls();
-        // 2 mounts + 2 umounts = 4 calls
         assert_eq!(calls.len(), 4);
         assert_eq!(calls[0][0], "mount");
         assert_eq!(calls[1][0], "mount");
@@ -498,7 +496,7 @@ mod tests {
         let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
         mounts.mount().unwrap();
         mounts.unmount().unwrap();
-        mounts.unmount().unwrap(); // second call should be no-op
+        mounts.unmount().unwrap();
 
         let calls = executor.calls();
         assert_eq!(calls.len(), 4); // Still 2 mounts + 2 umounts
@@ -557,7 +555,6 @@ mod tests {
         assert_eq!(calls[2][0], "umount");
         assert_eq!(calls[3][0], "umount");
 
-        // mounted_count should NOT be reset (unmount failed)
         assert!(!mounts.torn_down, "torn_down should be false after unmount failure");
     }
 
@@ -596,7 +593,6 @@ mod tests {
                 RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
             mounts.mount().unwrap();
 
-            // First unmount fails
             let err = mounts.unmount();
             assert!(err.is_err(), "first unmount should fail");
             assert!(!mounts.torn_down, "torn_down should be false after failed unmount");
@@ -607,7 +603,6 @@ mod tests {
         let calls = executor.calls();
         // 2 mounts + 2 failed umounts (first unmount()) + 2 retry umounts (Drop)
         assert_eq!(calls.len(), 6);
-        // Verify Drop triggered the retry
         assert_eq!(calls[4][0], "umount");
         assert_eq!(calls[5][0], "umount");
     }
@@ -801,7 +796,6 @@ mod tests {
 
         mounts.unmount().unwrap();
 
-        // After unmount, the umount commands should use the stored paths
         let calls = executor.calls();
         // Unmount in reverse order: sys first, then proc
         assert_eq!(calls[2][1], path1.to_string());

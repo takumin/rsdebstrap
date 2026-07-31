@@ -27,7 +27,6 @@ fn non_dry_run_fails_for_nonexistent_command() {
             "Expected 'not found in PATH' in error, got: {}",
             msg
         );
-        // Verify it's a CommandNotFound variant
         let typed = e.downcast_ref::<rsdebstrap::RsdebstrapError>();
         assert!(typed.is_some(), "Expected RsdebstrapError, got: {:#}", e);
         assert!(

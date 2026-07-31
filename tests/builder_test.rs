@@ -167,7 +167,6 @@ fn test_build_debootstrap_args_filters_empty_mirror() -> Result<()> {
 
     let args = config.build_args(&dir)?;
 
-    // A whitespace-only mirror is filtered out, leaving only the positional suite/target.
     let expected = vec!["bookworm", "/tmp/test-debootstrap-mirror/rootfs"];
 
     assert_eq!(

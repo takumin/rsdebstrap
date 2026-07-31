@@ -86,7 +86,6 @@ impl IsolationContext for ChrootContext {
     }
 
     fn teardown(&mut self) -> Result<()> {
-        // Chroot doesn't need any cleanup
         self.torn_down = true;
         Ok(())
     }
@@ -94,11 +93,10 @@ impl IsolationContext for ChrootContext {
 
 impl Drop for ChrootContext {
     fn drop(&mut self) {
-        if !self.torn_down {
-            // Best effort teardown - log warning on failure
-            if let Err(e) = self.teardown() {
-                tracing::warn!("chroot teardown failed: {}", e);
-            }
+        if !self.torn_down
+            && let Err(e) = self.teardown()
+        {
+            tracing::warn!("chroot teardown failed: {}", e);
         }
     }
 }

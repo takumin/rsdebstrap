@@ -302,7 +302,6 @@ mod tests {
     fn test_io_constructor_consistency() {
         let source = io::Error::new(io::ErrorKind::NotFound, "not found");
         let err = RsdebstrapError::io("/path/to/file", source);
-        // Verify display uses io_error_kind_message
         assert_eq!(err.to_string(), "/path/to/file: I/O error: not found");
         match &err {
             RsdebstrapError::Io { context, source } => {

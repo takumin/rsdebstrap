@@ -9,17 +9,11 @@ on:
   pull_request:
 permissions: {}
 jobs:
-  ##############################################################################
-  # Format
-  ##############################################################################
   format:
     name: Format
     permissions:
       contents: read
     uses: ./.github/workflows/wc-format.yml
-  ##############################################################################
-  # Reviewdog
-  ##############################################################################
   reviewdog:
     name: Reviewdog
     permissions:
@@ -28,25 +22,16 @@ jobs:
       contents: read
       pull-requests: write
     uses: ./.github/workflows/wc-reviewdog.yml
-  ##############################################################################
-  # Fetch
-  ##############################################################################
   fetch:
     name: Fetch
     permissions:
       contents: read
     uses: ./.github/workflows/wc-fetch.yml
-  ##############################################################################
-  # Test
-  ##############################################################################
   test:
     name: Test
     permissions:
       contents: read
     uses: ./.github/workflows/wc-test.yml
-  ##############################################################################
-  # Coverage
-  ##############################################################################
   # Informational only (see #732): reports a coverage number for visibility but
   # is intentionally left out of the `release` and `ci` gates below, so it never
   # blocks a merge or release. Test correctness is already gated by `test`.
@@ -57,25 +42,16 @@ jobs:
       actions: read
       pull-requests: write
     uses: ./.github/workflows/wc-coverage.yml
-  ##############################################################################
-  # Audit
-  ##############################################################################
   audit:
     name: Audit
     permissions:
       contents: read
     uses: ./.github/workflows/wc-audit.yml
-  ##############################################################################
-  # Doc
-  ##############################################################################
   doc:
     name: Doc
     permissions:
       contents: read
     uses: ./.github/workflows/wc-doc.yml
-  ##############################################################################
-  # Build
-  ##############################################################################
   build:
     name: Build
     permissions:
@@ -83,9 +59,6 @@ jobs:
       id-token: write
       attestations: write
     uses: ./.github/workflows/wc-build.yml
-  ##############################################################################
-  # Release
-  ##############################################################################
   release:
     needs:
     - format
@@ -98,9 +71,6 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/wc-release.yml
-  ##############################################################################
-  # Status Check
-  ##############################################################################
   ci:
     needs:
     - format

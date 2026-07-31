@@ -173,10 +173,6 @@ fn test_validate_mitamae_recipe_symlink_rejected() {
     assert!(msg.contains("symlink"), "Expected 'symlink' in error, got: {}", msg);
 }
 
-// =============================================================================
-// T1: ProvisionTask::resolve_paths unit tests
-// =============================================================================
-
 #[test]
 fn test_resolve_paths_joins_relative_script_with_base_dir() {
     let mut task =
@@ -219,10 +215,6 @@ fn test_resolve_paths_does_not_modify_content_source() {
         other => panic!("Expected Shell task, got: {:?}", other),
     }
 }
-
-// =============================================================================
-// T2: ShellTask direct deserialization tests
-// =============================================================================
 
 #[test]
 fn test_shell_task_deserialize_script_only() {
@@ -282,10 +274,6 @@ fn test_shell_task_deserialize_rejects_neither_script_nor_content() {
     );
 }
 
-// =============================================================================
-// T3: ProvisionTask YAML deserialization tests
-// =============================================================================
-
 #[test]
 fn test_task_definition_deserialize_rejects_unknown_type() {
     let yaml = r#"type: ansible
@@ -341,7 +329,6 @@ fn test_validate_nonexistent_script_returns_io_error() {
                 script_path,
                 context
             );
-            // Display format includes io_error_kind_message
             let display = err.to_string();
             assert!(
                 display.contains("I/O error"),
@@ -357,10 +344,6 @@ fn test_validate_nonexistent_script_returns_io_error() {
         other => panic!("Expected RsdebstrapError::Io, got: {:?}", other),
     }
 }
-
-// =============================================================================
-// MitamaeTask deserialization tests
-// =============================================================================
 
 #[test]
 fn test_task_definition_deserialize_mitamae_with_content() {
@@ -455,10 +438,6 @@ binary: /usr/local/bin/mitamae
         err_msg
     );
 }
-
-// =============================================================================
-// MitamaeTask validation and path tests
-// =============================================================================
 
 #[test]
 fn test_mitamae_validate_valid_task() {
@@ -655,10 +634,6 @@ fn test_task_definition_binary_path_mitamae_some() {
     assert_eq!(task.binary_path(), Some(Utf8Path::new("/usr/local/bin/mitamae")));
 }
 
-// =============================================================================
-// ScriptSource method tests
-// =============================================================================
-
 #[test]
 fn test_script_source_name_returns_path_for_script() {
     let source = ScriptSource::Script("/path/to/script.sh".into());
@@ -724,10 +699,6 @@ fn test_script_source_validate_accepts_valid_content() {
     assert!(source.validate("test script").is_ok());
 }
 
-// =============================================================================
-// MitamaeTask binary Option tests
-// =============================================================================
-
 #[test]
 fn test_mitamae_validate_rejects_none_binary() {
     let task = MitamaeTask::new_without_binary(ScriptSource::Content("package 'vim'".to_string()));
@@ -786,10 +757,6 @@ fn test_task_definition_binary_path_mitamae_none_when_unset() {
     )));
     assert_eq!(task.binary_path(), None);
 }
-
-// =============================================================================
-// Task-level isolation deserialization tests
-// =============================================================================
 
 #[test]
 fn test_shell_task_deserialize_isolation_true() {

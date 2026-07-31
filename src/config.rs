@@ -503,7 +503,6 @@ impl Profile {
         let pipeline = self.pipeline();
         pipeline.validate()?;
 
-        // Validate tasks are compatible with bootstrap output format.
         // rootfs_output() returns anyhow::Result, so we attempt to downcast to
         // RsdebstrapError to preserve the original variant. If downcast fails
         // (e.g., a non-RsdebstrapError from a backend), we fall back to Validation.
@@ -550,7 +549,6 @@ impl Profile {
 
         // Mount entry validation and mount order are handled by MountTask::validate()
         // which is called by the pipeline validation path.
-        // Here we only need to check privilege requirements.
 
         Ok(())
     }
@@ -580,8 +578,6 @@ fn validate_command_in_path(command: &str, label: &str) -> Result<(), Rsdebstrap
 pub(crate) fn validate_mount_order(mounts: &[MountEntry]) -> Result<(), RsdebstrapError> {
     for (i, entry) in mounts.iter().enumerate() {
         for earlier in &mounts[..i] {
-            // If this entry's target is a parent of an earlier entry's target,
-            // then this entry should have come first
             if earlier.target.starts_with(&entry.target) && earlier.target != entry.target {
                 return Err(RsdebstrapError::Validation(format!(
                     "mount order error: '{}' must be mounted before '{}' \
@@ -740,10 +736,6 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    // =========================================================================
-    // format_yaml_parse_error tests
-    // =========================================================================
-
     /// Generates a yaml_serde::Error by attempting to parse invalid YAML.
     fn make_yaml_error(yaml: &str) -> yaml_serde::Error {
         yaml_serde::from_str::<Profile>(yaml).unwrap_err()
@@ -791,10 +783,6 @@ mod tests {
             msg
         );
     }
-
-    // =========================================================================
-    // read_profile_file tests
-    // =========================================================================
 
     #[test]
     fn test_read_profile_file_success() {
@@ -844,10 +832,6 @@ mod tests {
         );
     }
 
-    // =========================================================================
-    // parse_profile_yaml tests
-    // =========================================================================
-
     #[test]
     fn test_parse_profile_yaml_valid() {
         let mut tmpfile = NamedTempFile::new().unwrap();
@@ -887,10 +871,6 @@ mod tests {
             err
         );
     }
-
-    // =========================================================================
-    // MountEntry tests
-    // =========================================================================
 
     #[test]
     fn test_mount_entry_is_pseudo_fs() {
@@ -1102,10 +1082,6 @@ mod tests {
         assert!(entry.options.is_empty());
     }
 
-    // =========================================================================
-    // MountPreset tests
-    // =========================================================================
-
     #[test]
     fn test_mount_preset_recommends_has_expected_entries() {
         let entries = MountPreset::Recommends.to_entries();
@@ -1126,10 +1102,6 @@ mod tests {
         assert_eq!(preset, MountPreset::Recommends);
     }
 
-    // =========================================================================
-    // IsolationConfig tests
-    // =========================================================================
-
     #[test]
     fn test_isolation_config_serialize_deserialize_roundtrip() {
         let config = IsolationConfig::chroot();
@@ -1137,10 +1109,6 @@ mod tests {
         let deserialized: IsolationConfig = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);
     }
-
-    // =========================================================================
-    // validate_mount_order tests
-    // =========================================================================
 
     #[test]
     fn test_validate_mount_order_correct() {
@@ -1289,10 +1257,6 @@ mod tests {
         assert!(matches!(err, RsdebstrapError::Validation(_)));
         assert!(err.to_string().contains(".."));
     }
-
-    // =========================================================================
-    // ResolvConfConfig tests
-    // =========================================================================
 
     #[test]
     fn test_resolv_conf_deserialize_copy() {
@@ -1492,10 +1456,6 @@ mod tests {
         let deserialized: ResolvConfConfig = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(config, deserialized);
     }
-
-    // =========================================================================
-    // validate_command_in_path tests
-    // =========================================================================
 
     #[test]
     fn test_validate_command_in_path_missing() {

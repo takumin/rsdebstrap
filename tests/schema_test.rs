@@ -226,7 +226,6 @@ fn schema_matches_structural_deserializer() {
             with_provision("{type: shell, script: null, content: null}"),
             false,
         ),
-        // Bad enum values.
         (
             "bad privilege method",
             with_provision("{type: shell, content: hi, privilege: {method: bogus}}"),
