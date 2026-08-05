@@ -317,6 +317,8 @@ mod tests {
 
     struct MockMountExecutor {
         calls: Mutex<Vec<Vec<String>>>,
+        /// Privilege recorded per call, positionally aligned with `calls`.
+        privileges: Mutex<Vec<Option<PrivilegeMethod>>>,
         /// Call index that returns non-zero exit status.
         fail_on_call: Option<usize>,
         /// Call indices that return non-zero exit status (for umount failures).
@@ -329,6 +331,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 calls: Mutex::new(Vec::new()),
+                privileges: Mutex::new(Vec::new()),
                 fail_on_call: None,
                 fail_umount_on_calls: vec![],
                 return_err_on_call: None,
@@ -359,6 +362,10 @@ mod tests {
         fn calls(&self) -> Vec<Vec<String>> {
             self.calls.lock().unwrap().clone()
         }
+
+        fn privileges(&self) -> Vec<Option<PrivilegeMethod>> {
+            self.privileges.lock().unwrap().clone()
+        }
     }
 
     impl CommandExecutor for MockMountExecutor {
@@ -368,6 +375,7 @@ mod tests {
             let mut args = vec![spec.command.clone()];
             args.extend(spec.args.iter().cloned());
             calls.push(args);
+            self.privileges.lock().unwrap().push(spec.privilege);
             drop(calls);
 
             if self.return_err_on_call == Some(index) {
@@ -524,10 +532,34 @@ mod tests {
         mounts.mount().unwrap();
         mounts.unmount().unwrap();
 
-        // The mock executor doesn't track privilege in its simple format,
-        // but we verify the calls were made
-        let calls = executor.calls();
-        assert_eq!(calls.len(), 2);
+        // Both the mount and the matching umount must carry the escalation:
+        // a rootfs mounted with sudo cannot be torn down without it.
+        assert_eq!(executor.calls().len(), 2);
+        assert_eq!(
+            executor.privileges(),
+            vec![Some(PrivilegeMethod::Sudo), Some(PrivilegeMethod::Sudo)],
+        );
+    }
+
+    #[test]
+    fn mount_without_privilege_leaves_commands_unescalated() {
+        let executor = Arc::new(MockMountExecutor::new());
+        let temp_dir = tempfile::tempdir().unwrap();
+        let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let entries = vec![MountEntry {
+            source: "proc".to_string(),
+            target: "/proc".into(),
+            options: vec![],
+        }];
+
+        let mut mounts = RootfsMounts::new(&rootfs, entries, executor.clone(), None, false);
+        mounts.mount().unwrap();
+        mounts.unmount().unwrap();
+
+        // Negative control for `mount_with_privilege`: without a configured
+        // method nothing is prepended.
+        assert_eq!(executor.privileges(), vec![None, None]);
     }
 
     #[test]
