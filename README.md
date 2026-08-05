@@ -24,6 +24,10 @@ and run `rsdebstrap apply`.
 - **Provisioners** — inline or external shell scripts and mitamae recipes.
 - **Per-task isolation & privilege** — chroot isolation by default, with optional
   `sudo`/`doas` escalation, both overridable per task.
+- **One privilege boundary** — rootfs modifications go through a single helper
+  process spawned once per run, not a `sudo` per file operation, and resolve
+  every path component with `O_NOFOLLOW` so a planted symlink cannot redirect a
+  privileged write.
 - **JSON Schema** — a committed schema for editor completion and validation.
 - **Shell completions** — bash, zsh, fish, powershell, elvish.
 
@@ -35,7 +39,9 @@ must be on your `PATH`:
 - **`mmdebstrap`** or **`debootstrap`** — the bootstrap backend (required; the
   chosen backend is checked on `PATH` before running).
 - **`sudo`** or **`doas`** — only when a profile requests privilege escalation
-  (required when mounts are configured).
+  (required when mounts are configured). rsdebstrap re-executes itself under it
+  once per run to serve rootfs modifications, in addition to wrapping the
+  commands that need root.
 - A **`mitamae`** binary — only when a profile uses the `mitamae` provisioner.
 
 Building from source additionally requires **Rust 1.97+** (edition 2024). This

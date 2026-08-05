@@ -58,7 +58,6 @@ assemble:                   # Optional finalization steps (named-field struct)
   resolv_conf:              # Permanent /etc/resolv.conf in final rootfs (at most one)
     name_servers: [8.8.8.8, 8.8.4.4]  # Generate resolv.conf with nameservers
     search: [example.com]   # Optional search domains
-    privilege: true          # Optional: use default privilege method
     # OR
     # link: ../run/systemd/resolve/stub-resolv.conf  # Create symlink instead
 ```
@@ -78,6 +77,11 @@ assemble:                   # Optional finalization steps (named-field struct)
   out) is a parse error there. Omit the key instead.
 
 ## Privilege field values
+
+`privilege` appears on provision tasks and on the `bootstrap:` backend. It does *not* appear on
+`assemble.resolv_conf`: that task modifies the rootfs through the privileged helper described
+below, which is opened once per run from `defaults.privilege`, so a per-task override could not
+be honored. Setting it is a parse error rather than a silent no-op.
 
 - Absent (field not specified) → `Inherit`: use defaults if available, no escalation otherwise
 - `privilege: true` → `UseDefault`: require `defaults.privilege.method` (error if not configured)
@@ -125,9 +129,28 @@ assemble:                   # Optional finalization steps (named-field struct)
 - Prepare and assemble can both have `resolv_conf` tasks — different roles: temporary DNS vs permanent config
 - The temporary prepare `resolv_conf` is removed (and the original restored) after `provision`
   and before `assemble`, so assemble `resolv_conf` output persists in the final rootfs; the
-  assemble phase only runs if that restore succeeds
-- Assemble `resolv_conf` replaces `/etc/resolv.conf` atomically: the new file/symlink is
-  staged at `/etc/resolv.conf.rsdebstrap-tmp` and renamed over the final path with a plain
-  same-directory `mv` (busybox/musl-safe; no GNU-only `-T`), so a failed assemble leaves the
-  previous resolv.conf intact. A stale staging entry may remain after a failed build; the next
-  run clears it first (both modes) before staging, so it is always overwritten
+  assemble phase only runs if that restore succeeds. The original is held in memory for the
+  duration, not copied to a backup path, so an interrupted build leaves nothing behind to clean
+  up by hand — but it also means the original is only recoverable while the process lives
+- Assemble `resolv_conf` replaces `/etc/resolv.conf` atomically, so a failed assemble leaves the
+  previous entry intact and stages nothing a later run has to clear. A pre-existing
+  `/etc/resolv.conf` is replaced whether it is a regular file or a symlink; a symlink is never
+  followed, so the entry it pointed at is left untouched
+
+## How rootfs modifications are performed
+
+Both `resolv_conf` tasks change files inside the rootfs, which normally needs root. Rather than
+running `sudo cp` / `sudo mv` per operation, rsdebstrap escalates **once** per run: it spawns a
+helper process under `defaults.privilege.method` that holds a descriptor to the rootfs and
+performs the changes as syscalls anchored to it.
+
+Two consequences are visible from a profile:
+
+- `defaults.privilege` decides whether rootfs modifications are privileged. There is no per-task
+  override for them (see *Privilege field values*).
+- Every path component is resolved with `O_NOFOLLOW`. A symlink anywhere on the way to
+  `/etc/resolv.conf` — including `/etc` itself — is an error, not something to follow. Only the
+  final component may be a symlink, and it is replaced rather than written through.
+
+Process execution (`mount`, `umount`, `chroot`, the bootstrap backend, provision tasks) still
+escalates per command, so those keep their own `privilege` settings.

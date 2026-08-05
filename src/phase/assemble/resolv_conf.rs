@@ -17,13 +17,7 @@ use crate::error::RsdebstrapError;
 use crate::isolation::IsolationContext;
 use crate::isolation::resolv_conf::generate_resolv_conf;
 use crate::phase::PhaseItem;
-use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 use crate::rootfs::RelPath;
-
-/// Returns true if the privilege setting is the default (`Inherit`).
-fn privilege_is_default(p: &Privilege) -> bool {
-    matches!(p, Privilege::Inherit)
-}
 
 /// Assemble phase resolv_conf task for writing a permanent `/etc/resolv.conf`.
 ///
@@ -35,9 +29,6 @@ fn privilege_is_default(p: &Privilege) -> bool {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssembleResolvConfTask {
-    /// Privilege escalation setting (resolved during defaults application).
-    #[serde(default, skip_serializing_if = "privilege_is_default")]
-    pub privilege: Privilege,
     /// Symlink target path (mutually exclusive with `name_servers`/`search`).
     #[serde(
         default,
@@ -71,21 +62,6 @@ impl AssembleResolvConfTask {
         } else {
             "generate"
         }
-    }
-
-    /// Resolves the privilege setting against profile defaults.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        self.privilege.resolve_in_place(defaults)
-    }
-
-    /// Returns the resolved privilege method.
-    ///
-    /// Should only be called after `resolve_privilege()`.
-    pub fn resolved_privilege_method(&self) -> Option<PrivilegeMethod> {
-        self.privilege.resolved_method()
     }
 
     /// Validates the assemble resolv_conf task configuration.
@@ -231,7 +207,6 @@ mod tests {
     #[test]
     fn validate_rejects_mutual_exclusion() {
         let task = AssembleResolvConfTask {
-            privilege: Privilege::Disabled,
             link: Some("/run/systemd/resolve/stub-resolv.conf".to_string()),
             name_servers: vec!["8.8.8.8".parse().unwrap()],
             search: vec![],
@@ -244,7 +219,6 @@ mod tests {
     #[test]
     fn validate_rejects_empty_config() {
         let task = AssembleResolvConfTask {
-            privilege: Privilege::Disabled,
             link: None,
             name_servers: vec![],
             search: vec![],
@@ -257,7 +231,6 @@ mod tests {
     #[test]
     fn validate_rejects_empty_link() {
         let task = AssembleResolvConfTask {
-            privilege: Privilege::Disabled,
             link: Some("".to_string()),
             name_servers: vec![],
             search: vec![],
@@ -270,7 +243,6 @@ mod tests {
     #[test]
     fn validate_rejects_link_with_newline() {
         let task = AssembleResolvConfTask {
-            privilege: Privilege::Disabled,
             link: Some("foo\nbar".to_string()),
             name_servers: vec![],
             search: vec![],
@@ -283,7 +255,6 @@ mod tests {
     #[test]
     fn validate_rejects_link_with_carriage_return() {
         let task = AssembleResolvConfTask {
-            privilege: Privilege::Disabled,
             link: Some("foo\rbar".to_string()),
             name_servers: vec![],
             search: vec![],
@@ -296,7 +267,6 @@ mod tests {
     #[test]
     fn validate_rejects_link_with_null() {
         let task = AssembleResolvConfTask {
-            privilege: Privilege::Disabled,
             link: Some("foo\0bar".to_string()),
             name_servers: vec![],
             search: vec![],
@@ -309,7 +279,6 @@ mod tests {
     #[test]
     fn validate_delegates_nameserver_limits() {
         let task = AssembleResolvConfTask {
-            privilege: Privilege::Disabled,
             link: None,
             name_servers: vec![
                 "8.8.8.8".parse().unwrap(),
@@ -327,7 +296,6 @@ mod tests {
     #[test]
     fn validate_link_and_search_mutual_exclusion() {
         let task = AssembleResolvConfTask {
-            privilege: Privilege::Disabled,
             link: Some("/run/systemd/resolve/stub-resolv.conf".to_string()),
             name_servers: vec![],
             search: vec!["example.com".to_string()],
@@ -344,7 +312,6 @@ mod tests {
         assert_eq!(task.link.as_deref(), Some("../run/systemd/resolve/stub-resolv.conf"));
         assert!(task.name_servers.is_empty());
         assert!(task.search.is_empty());
-        assert_eq!(task.privilege, Privilege::Inherit);
     }
 
     #[test]
@@ -360,17 +327,6 @@ mod tests {
         let yaml = "link: /foo\nunknown_field: true\n";
         let result: Result<AssembleResolvConfTask, _> = yaml_serde::from_str(yaml);
         assert!(result.is_err());
-    }
-
-    // Pins that `privilege` reaches `Privilege`'s visitor rather than being
-    // defaulted; the visitor's own acceptance set is covered in
-    // `src/privilege.rs`. Absence resolving to `Inherit` is asserted by
-    // `deserialize_link_relative`.
-    #[test]
-    fn deserialize_privilege_true() {
-        let yaml = "name_servers:\n  - 8.8.8.8\nprivilege: true\n";
-        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
-        assert_eq!(task.privilege, Privilege::UseDefault);
     }
 
     #[test]
@@ -390,16 +346,8 @@ mod tests {
     }
 
     #[test]
-    fn serialize_skips_default_privilege() {
-        let task = make_task_generate(vec!["8.8.8.8"], vec![]);
-        let yaml = yaml_serde::to_string(&task).unwrap();
-        assert!(!yaml.contains("privilege"));
-    }
-
-    #[test]
     fn serialize_skips_empty_fields() {
         let task = AssembleResolvConfTask {
-            privilege: Privilege::Inherit,
             link: None,
             name_servers: vec![],
             search: vec![],
@@ -408,44 +356,9 @@ mod tests {
         assert!(!yaml.contains("link"));
         assert!(!yaml.contains("name_servers"));
         assert!(!yaml.contains("search"));
-        assert!(!yaml.contains("privilege"));
     }
-
-    #[test]
-    fn resolve_privilege_inherit_with_defaults() {
-        let mut task = make_task_generate(vec!["8.8.8.8"], vec![]);
-        let defaults = crate::privilege::PrivilegeDefaults {
-            method: PrivilegeMethod::Sudo,
-        };
-        task.resolve_privilege(Some(&defaults)).unwrap();
-        assert_eq!(task.resolved_privilege_method(), Some(PrivilegeMethod::Sudo));
-    }
-
-    #[test]
-    fn resolve_privilege_inherit_without_defaults() {
-        let mut task = make_task_generate(vec!["8.8.8.8"], vec![]);
-        task.resolve_privilege(None).unwrap();
-        assert_eq!(task.resolved_privilege_method(), None);
-    }
-
-    #[test]
-    fn resolve_privilege_disabled() {
-        let mut task = AssembleResolvConfTask {
-            privilege: Privilege::Disabled,
-            link: None,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-        let defaults = crate::privilege::PrivilegeDefaults {
-            method: PrivilegeMethod::Sudo,
-        };
-        task.resolve_privilege(Some(&defaults)).unwrap();
-        assert_eq!(task.resolved_privilege_method(), None);
-    }
-
     fn make_task_link(target: &str) -> AssembleResolvConfTask {
         AssembleResolvConfTask {
-            privilege: Privilege::Inherit,
             link: Some(target.to_string()),
             name_servers: vec![],
             search: vec![],
@@ -454,7 +367,6 @@ mod tests {
 
     fn make_task_generate(ns: Vec<&str>, search: Vec<&str>) -> AssembleResolvConfTask {
         AssembleResolvConfTask {
-            privilege: Privilege::Inherit,
             link: None,
             name_servers: ns.into_iter().map(|s| s.parse().unwrap()).collect(),
             search: search.into_iter().map(|s| s.to_string()).collect(),
@@ -462,7 +374,7 @@ mod tests {
     }
 
     // A recorded command with its arguments and privilege setting.
-    type RecordedCommand = (String, Vec<String>, Option<PrivilegeMethod>);
+    type RecordedCommand = (String, Vec<String>, Option<crate::privilege::PrivilegeMethod>);
 
     // Records executed commands for assertion.
     struct MockCommandExecutor {
@@ -536,7 +448,6 @@ mod tests {
             name_servers: name_servers.iter().map(|s| s.parse().unwrap()).collect(),
             search: vec![],
             link: None,
-            privilege: Privilege::Disabled,
         }
     }
 
@@ -545,7 +456,6 @@ mod tests {
             name_servers: vec![],
             search: vec![],
             link: Some(target.to_string()),
-            privilege: Privilege::Disabled,
         }
     }
 
