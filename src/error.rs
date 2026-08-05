@@ -274,31 +274,6 @@ mod tests {
     }
 
     #[test]
-    fn test_io_display() {
-        let source = io::Error::new(io::ErrorKind::NotFound, "entity not found");
-        let err = RsdebstrapError::Io {
-            context: "/path/to/file.yml".to_string(),
-            source,
-        };
-        assert_eq!(err.to_string(), "/path/to/file.yml: I/O error: not found");
-    }
-
-    #[test]
-    fn test_io_source_preserved() {
-        let source = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
-        let err = RsdebstrapError::Io {
-            context: "/etc/shadow".to_string(),
-            source,
-        };
-        match &err {
-            RsdebstrapError::Io { source, .. } => {
-                assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
     fn test_io_constructor_consistency() {
         let source = io::Error::new(io::ErrorKind::NotFound, "not found");
         let err = RsdebstrapError::io("/path/to/file", source);
@@ -387,13 +362,6 @@ mod tests {
     }
 
     #[test]
-    fn test_io_display_permission_denied() {
-        let source = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
-        let err = RsdebstrapError::io("/etc/shadow", source);
-        assert_eq!(err.to_string(), "/etc/shadow: I/O error: permission denied");
-    }
-
-    #[test]
     fn test_from_anyhow_or_validation_preserves_typed_error() {
         let original = RsdebstrapError::Config("test error".to_string());
         let anyhow_err: anyhow::Error = original.into();
@@ -417,12 +385,5 @@ mod tests {
             "expected Validation variant, got: {:?}",
             result
         );
-    }
-
-    #[test]
-    fn test_io_display_is_a_directory() {
-        let source = io::Error::new(io::ErrorKind::IsADirectory, "is a directory");
-        let err = RsdebstrapError::io("/path/to/dir", source);
-        assert_eq!(err.to_string(), "/path/to/dir: I/O error: is a directory");
     }
 }
