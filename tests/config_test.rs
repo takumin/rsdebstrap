@@ -2306,6 +2306,7 @@ fn internally_tagged_isolation_variants_reject_typos_but_accept_the_tag() {
 // failure is the semantic one rather than a resolution error.
 #[test]
 fn test_pipeline_requires_the_validation_token() -> Result<()> {
+    // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/rsdebstrap-nonexistent
@@ -2322,6 +2323,7 @@ provision:
     script: /nonexistent/script.sh
 "#
     ))?;
+    // editorconfig-checker-enable
 
     let err = profile
         .validate()
