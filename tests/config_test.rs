@@ -1361,7 +1361,10 @@ provision:
 
     match &profile.provision[0] {
         ProvisionTask::Shell(task) => {
-            assert_eq!(task.task_isolation().resolve(&IsolationConfig::chroot()), Some(IsolationConfig::chroot()));
+            assert_eq!(
+                task.task_isolation().resolve(&IsolationConfig::chroot()),
+                Some(IsolationConfig::chroot())
+            );
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
@@ -1373,7 +1376,10 @@ provision:
     }
     match &profile.provision[2] {
         ProvisionTask::Shell(task) => {
-            assert_eq!(task.task_isolation().resolve(&IsolationConfig::chroot()), Some(IsolationConfig::chroot()));
+            assert_eq!(
+                task.task_isolation().resolve(&IsolationConfig::chroot()),
+                Some(IsolationConfig::chroot())
+            );
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
@@ -1476,7 +1482,10 @@ prepare:
     // Recommends has 6, custom replaces /dev entry => 6
     assert_eq!(mounts.len(), 6);
 
-    let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
+    let dev_entry = mounts
+        .iter()
+        .find(|m| m.target.to_string() == "/dev")
+        .unwrap();
     assert_eq!(dev_entry.source, "/dev");
     assert!(dev_entry.options.contains(&"bind".to_string()), "Expected bind option");
 

@@ -454,8 +454,26 @@ fn schema_divergences_are_pinned() {
     // model cannot (duplicate keys, non-finite floats). Pinning both verdicts documents each
     // exactly. An *unlisted* false-accept is a finding, not a free pass:
     // `assert_no_false_reject` in `tests/schema_proptest.rs` asserts the reverse direction
-    // too, allowing only the annotational-format class.
+    // too, allowing only the classes listed here.
     let cases: &[(&str, String, bool, bool)] = &[
+        // `mount.target` is a `RelPath` spelled absolutely, so the deserializer rejects a
+        // relative spelling, a bare `/`, and any `..` component. The schema types it as a
+        // plain string: only the leading `/` is expressible as a regex, and a regex for the
+        // rest is the fragile kind `IpAddrSchema` warns against.
+        (
+            "mount target escaping the rootfs",
+            format!(
+                "{BASE}prepare: {{mount: {{mounts: [{{source: proc, target: /a/../../b}}]}}}}\n"
+            ),
+            false,
+            true,
+        ),
+        (
+            "mount target spelled relatively",
+            format!("{BASE}prepare: {{mount: {{mounts: [{{source: proc, target: proc}}]}}}}\n"),
+            false,
+            true,
+        ),
         // `format: ipv4/ipv6` is annotational (non-asserting) by design — see IpAddrSchema:
         // a hard pattern that is slightly wrong would false-reject valid configs. The
         // deserializer rejects non-IP strings at parse time.

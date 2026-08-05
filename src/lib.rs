@@ -54,7 +54,9 @@ fn run_bootstrap_phase(
         .build_args(&profile.dir)
         .with_context(|| format!("failed to build arguments for {}", command_name))?;
 
-    let privilege = profile.bootstrap.resolve_privilege(profile.defaults.privilege.as_ref())?;
+    let privilege = profile
+        .bootstrap
+        .resolve_privilege(profile.defaults.privilege.as_ref())?;
     let spec = executor::CommandSpec::privileged(
         executor::PrivilegedProgram::Bootstrap(program),
         args,

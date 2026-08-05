@@ -14,12 +14,12 @@ use camino::Utf8Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
 use crate::isolation::mount::Unmounted;
 use crate::isolation::resolv_conf::Restored;
 use crate::isolation::{DirectProvider, IsolationProvider, PlainRootfsContext};
-use crate::config::IsolationConfig;
 use crate::phase::{
     AssembleConfig, PhaseItem, PrepareConfig, ProvisionItem, ProvisionTask, ResolvedProvisionTask,
 };

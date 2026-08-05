@@ -156,7 +156,8 @@ fn test_execute_cleans_up_files() {
     let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
 
     let context = MockContext::new(&rootfs);
-    task.execute(&context, None).expect("execute should succeed");
+    task.execute(&context, None)
+        .expect("execute should succeed");
 
     // Verify temp files were cleaned up by TempFileGuard (RAII)
     let tmp_dir = temp_dir.path().join("tmp");

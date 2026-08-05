@@ -283,7 +283,10 @@ fn test_shell_task_propagates_none_privilege_to_mock_context() {
     setup_valid_rootfs(&temp_dir);
 
     let task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
-    let privilege = task.privilege().resolve(None).expect("resolve should succeed");
+    let privilege = task
+        .privilege()
+        .resolve(None)
+        .expect("resolve should succeed");
 
     let context = helpers::MockContext::new(&rootfs);
     let result = task.execute(&context, privilege);

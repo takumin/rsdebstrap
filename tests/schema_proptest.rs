@@ -7,8 +7,8 @@
 // Two properties are asserted. The safety one, stated at `schema_divergences_are_pinned` in
 // that file: whenever the structural deserializer accepts a document, the schema must too. And
 // its converse, which is not a safety violation but marks silent drift: whenever the schema
-// accepts, the deserializer must too, except for the annotational-format class the pinned
-// table also carries.
+// accepts, the deserializer must too, except for the classes the pinned table also carries
+// (annotational formats, and rootfs paths whose shape JSON Schema cannot state).
 //
 // Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
 // `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
@@ -32,6 +32,34 @@ static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
     jsonschema::validator_for(&schema).expect("generated schema must be a valid JSON Schema")
 });
 
+// True when a mount entry's `target` is not a well-formed absolute rootfs path.
+//
+// `MountEntry::target` is a `RelPath` spelled absolutely, so the deserializer rejects `""`,
+// a bare `/`, a relative spelling, and any `..` component. The schema types it as a plain
+// string: JSON Schema can express "starts with /" only as a regex, and a regex for the rest
+// would be the fragile kind `IpAddrSchema` warns about. So the schema stays looser here, in
+// the direction it is allowed to be.
+fn has_unspellable_mount_target(doc: &Value) -> bool {
+    let Some(entries) = doc
+        .get("prepare")
+        .and_then(|p| p.get("mount"))
+        .and_then(|m| m.get("mounts"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    entries.iter().any(|entry| {
+        entry
+            .get("target")
+            .and_then(Value::as_str)
+            .is_some_and(|t| {
+                !t.starts_with('/')
+                    || t.split('/').any(|c| c == "." || c == "..")
+                    || t.trim_matches('/').is_empty()
+            })
+    })
+}
+
 // True when a document contains a `name_servers` entry that is not a valid IP address.
 //
 // The generated schema types those entries with `format: ipv4`/`ipv6`, which JSON Schema
@@ -44,9 +72,10 @@ fn has_non_ip_name_server(doc: &Value) -> bool {
         Value::Object(map) => map.iter().any(|(key, value)| {
             if key == "name_servers" {
                 value.as_array().is_some_and(|entries| {
-                    entries
-                        .iter()
-                        .any(|e| !e.as_str().is_some_and(|s| s.parse::<std::net::IpAddr>().is_ok()))
+                    entries.iter().any(|e| {
+                        !e.as_str()
+                            .is_some_and(|s| s.parse::<std::net::IpAddr>().is_ok())
+                    })
                 })
             } else {
                 has_non_ip_name_server(value)
@@ -71,7 +100,7 @@ fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
     // silently drifted looser than the parser. Only the annotational-format class above is
     // allowed to diverge here; anything else is a finding.
     prop_assert!(
-        !schema_ok || deser_ok || has_non_ip_name_server(doc),
+        !schema_ok || deser_ok || has_non_ip_name_server(doc) || has_unspellable_mount_target(doc),
         "UNPINNED SCHEMA FALSE-ACCEPT: schema accepts but deserializer rejects\n{}\n{:?}",
         serde_json::to_string_pretty(doc).unwrap(),
         serde_json::from_value::<Profile>(doc.clone()).unwrap_err()

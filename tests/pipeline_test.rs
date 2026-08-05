@@ -184,12 +184,9 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
 
 #[test]
 fn test_pipeline_run_tasks_execute_in_order_within_phase() {
-    let task1 =
-        ShellTask::with_shell(ScriptSource::Content("echo t1".to_string()), "/bin/sh-1");
-    let task2 =
-        ShellTask::with_shell(ScriptSource::Content("echo t2".to_string()), "/bin/sh-2");
-    let task3 =
-        ShellTask::with_shell(ScriptSource::Content("echo t3".to_string()), "/bin/sh-3");
+    let task1 = ShellTask::with_shell(ScriptSource::Content("echo t1".to_string()), "/bin/sh-1");
+    let task2 = ShellTask::with_shell(ScriptSource::Content("echo t2".to_string()), "/bin/sh-2");
+    let task3 = ShellTask::with_shell(ScriptSource::Content("echo t3".to_string()), "/bin/sh-3");
     let tasks = [
         ProvisionTask::Shell(task1),
         ProvisionTask::Shell(task2),

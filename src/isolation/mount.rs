@@ -20,6 +20,7 @@ use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
 use crate::isolation::resolv_conf::Restored;
 use crate::privilege::PrivilegeMethod;
+use crate::rootfs::RelPath;
 
 /// Evidence that the pipeline's mounts have been released.
 ///
@@ -78,9 +79,7 @@ fn map_openat_error(err: rustix::io::Errno, path: &Utf8Path, label: &str) -> any
 /// is not a symlink.
 ///
 /// Returns the verified absolute path for use in mount/umount commands.
-pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &Utf8Path) -> Result<Utf8PathBuf> {
-    let relative = target.strip_prefix("/").unwrap_or(target);
-
+pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &RelPath) -> Result<Utf8PathBuf> {
     let rootfs_fd = rfs::openat(
         CWD,
         rootfs.as_str(),
@@ -92,8 +91,8 @@ pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &Utf8Path) -> Result<U
     let mut current_fd = rootfs_fd;
     let mut current_path = rootfs.to_path_buf();
 
-    for component in relative.components() {
-        let name = component.as_str();
+    for name in target.components() {
+        let name = name.as_str();
         current_path.push(name);
 
         match open_dir_nofollow(&current_fd, name) {
@@ -201,8 +200,7 @@ impl RootfsMounts {
         for (i, entry) in self.entries.iter().enumerate() {
             let abs_target = if self.dry_run {
                 // Dry-run must not touch the filesystem.
-                self.rootfs
-                    .join(entry.target.strip_prefix("/").unwrap_or(&entry.target))
+                entry.target.to_host_path(&self.rootfs)
             } else {
                 match safe_create_mount_point(&self.rootfs, &entry.target) {
                     Ok(path) => path,
@@ -430,12 +428,12 @@ mod tests {
         vec![
             MountEntry {
                 source: "proc".to_string(),
-                target: "/proc".into(),
+                target: crate::config::rootfs_path("/proc"),
                 options: vec![],
             },
             MountEntry {
                 source: "sysfs".to_string(),
-                target: "/sys".into(),
+                target: crate::config::rootfs_path("/sys"),
                 options: vec![],
             },
         ]
@@ -550,7 +548,7 @@ mod tests {
 
         let entries = vec![MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: crate::config::rootfs_path("/proc"),
             options: vec![],
         }];
 
@@ -581,7 +579,7 @@ mod tests {
 
         let entries = vec![MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: crate::config::rootfs_path("/proc"),
             options: vec![],
         }];
 
@@ -729,7 +727,7 @@ mod tests {
 
         let entries = vec![MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: crate::config::rootfs_path("/proc"),
             options: vec![],
         }];
 
@@ -750,7 +748,7 @@ mod tests {
 
         let entries = vec![MountEntry {
             source: "devpts".to_string(),
-            target: "/dev/pts".into(),
+            target: crate::config::rootfs_path("/dev/pts"),
             options: vec![],
         }];
 
@@ -769,7 +767,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let result = safe_create_mount_point(&rootfs, Utf8Path::new("/dev/pts"));
+        let result = safe_create_mount_point(&rootfs, &crate::config::rootfs_path("/dev/pts"));
         assert!(result.is_ok());
         let abs = result.unwrap();
         assert_eq!(abs, rootfs.join("dev/pts"));
@@ -783,7 +781,7 @@ mod tests {
 
         std::fs::create_dir_all(rootfs.join("proc")).unwrap();
 
-        let result = safe_create_mount_point(&rootfs, Utf8Path::new("/proc"));
+        let result = safe_create_mount_point(&rootfs, &crate::config::rootfs_path("/proc"));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), rootfs.join("proc"));
     }
@@ -795,7 +793,8 @@ mod tests {
 
         std::os::unix::fs::symlink("/tmp", rootfs.join("dev")).unwrap();
 
-        let err = safe_create_mount_point(&rootfs, Utf8Path::new("/dev/pts")).unwrap_err();
+        let err =
+            safe_create_mount_point(&rootfs, &crate::config::rootfs_path("/dev/pts")).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("symlink detected"), "should detect symlink at component: {}", msg);
     }
@@ -808,7 +807,8 @@ mod tests {
         std::fs::create_dir(&real_dir).unwrap();
         std::os::unix::fs::symlink(&real_dir, &rootfs_link).unwrap();
 
-        let err = safe_create_mount_point(&rootfs_link, Utf8Path::new("/proc")).unwrap_err();
+        let err = safe_create_mount_point(&rootfs_link, &crate::config::rootfs_path("/proc"))
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("symlink detected"), "should detect rootfs symlink: {}", msg);
     }
