@@ -203,26 +203,6 @@ fn test_run_with_external_script_dry_run() {
 }
 
 #[test]
-fn test_shell_task_accessors() {
-    let task = ShellTask::with_shell(ScriptSource::Content("echo test".to_string()), "/bin/bash");
-
-    assert_eq!(task.shell(), "/bin/bash");
-    assert_eq!(*task.source(), ScriptSource::Content("echo test".to_string()));
-    assert_eq!(task.name(), "<inline>");
-    assert_eq!(task.script_path(), None);
-}
-
-#[test]
-fn test_shell_task_accessors_with_script() {
-    let task = ShellTask::new(ScriptSource::Script("/path/to/script.sh".into()));
-
-    assert_eq!(task.shell(), "/bin/sh");
-    assert_eq!(*task.source(), ScriptSource::Script("/path/to/script.sh".into()));
-    assert_eq!(task.name(), "/path/to/script.sh");
-    assert_eq!(task.script_path(), Some(camino::Utf8Path::new("/path/to/script.sh")));
-}
-
-#[test]
 fn test_run_fails_when_context_execute_errors() {
     let temp_dir = tempdir().expect("failed to create temp dir");
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())

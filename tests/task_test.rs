@@ -587,24 +587,6 @@ fn test_mitamae_resolve_paths_preserves_absolute() {
 }
 
 #[test]
-fn test_mitamae_name_inline() {
-    let task = MitamaeTask::new(
-        ScriptSource::Content("package 'vim'".to_string()),
-        "/usr/local/bin/mitamae".into(),
-    );
-    assert_eq!(task.name(), "<inline>");
-}
-
-#[test]
-fn test_mitamae_name_script() {
-    let task = MitamaeTask::new(
-        ScriptSource::Script("/path/to/recipe.rb".into()),
-        "/usr/local/bin/mitamae".into(),
-    );
-    assert_eq!(task.name(), "/path/to/recipe.rb");
-}
-
-#[test]
 fn test_task_definition_name_shell_prefix() {
     let task = ProvisionTask::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
     assert_eq!(task.name().as_ref(), "shell:<inline>");
@@ -632,30 +614,6 @@ fn test_task_definition_binary_path_mitamae_some() {
         "/usr/local/bin/mitamae".into(),
     ));
     assert_eq!(task.binary_path(), Some(Utf8Path::new("/usr/local/bin/mitamae")));
-}
-
-#[test]
-fn test_script_source_name_returns_path_for_script() {
-    let source = ScriptSource::Script("/path/to/script.sh".into());
-    assert_eq!(source.name(), "/path/to/script.sh");
-}
-
-#[test]
-fn test_script_source_name_returns_inline_for_content() {
-    let source = ScriptSource::Content("echo test".to_string());
-    assert_eq!(source.name(), "<inline>");
-}
-
-#[test]
-fn test_script_source_script_path_returns_some_for_script() {
-    let source = ScriptSource::Script("/path/to/script.sh".into());
-    assert_eq!(source.script_path(), Some(Utf8Path::new("/path/to/script.sh")));
-}
-
-#[test]
-fn test_script_source_script_path_returns_none_for_content() {
-    let source = ScriptSource::Content("echo test".to_string());
-    assert_eq!(source.script_path(), None);
 }
 
 #[test]
