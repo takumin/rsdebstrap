@@ -122,3 +122,24 @@ fn the_helper_subcommand_is_hidden_from_help() {
     assert!(!help.contains("__rootfs-helper"), "helper is listed in --help:\n{help}");
     assert!(help.contains("apply"), "sanity: apply should be listed:\n{help}");
 }
+
+// The anchor is a path argument from the unprivileged parent, so a sudo rule permitting the
+// helper permits root writes under whatever it names. The live system's own hierarchy is
+// refused outright, which is the floor under that.
+#[test]
+fn the_helper_refuses_to_anchor_to_the_live_system() {
+    for anchor in ["/", "/etc", "/usr", "/var/../"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rsdebstrap"))
+            .arg("__rootfs-helper")
+            .arg("--rootfs")
+            .arg(anchor)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("failed to spawn helper");
+        assert!(!output.status.success(), "{anchor} should be refused");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("not a rootfs"), "{anchor}: unexpected stderr: {stderr}");
+    }
+}

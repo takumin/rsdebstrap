@@ -177,13 +177,20 @@ Rootfs *mutation* does not use that path. `rootfs::open()` is called once per ru
 `run_pipeline_phase`, and when `defaults.privilege` is set it spawns one helper —
 `sudo <self> __rootfs-helper --rootfs <path>`, a hidden subcommand of this same binary — which
 opens the rootfs descriptor and serves typed `Request`s over a pipe (`src/rootfs/helper.rs`).
+Every path in a `Request` is a `RelPath`, and no variant carries a host path — host files are
+read by the parent, so only bytes cross the boundary. The anchor itself is the exception that
+cannot be typed away: it is a path argument from the unprivileged parent, so a `sudo` rule
+permitting the helper permits root writes under any directory the invoking user can name.
+`check_anchor` refuses the live system's own hierarchy; grant the rule accordingly.
 
 Privilege cannot be attached to an arbitrary command any more. `CommandSpec`'s fields are
 private, and the only constructor that sets `privilege` for a fixed program takes the closed
 `PrivilegedProgram` enum (`mount`, `umount`, `chroot`, the bootstrap backends — programs with
 no syscall equivalent in this crate). `CommandSpec::for_task_command` is the exception, since
-a provision task names its own program; `tests/privilege_boundary_test.rs` guards it, because
-Rust cannot restrict a constructor to a single module within a crate.
+a provision task names its own program. It is `pub(crate)` and takes a `TaskCommandToken`
+whose field is private to `isolation`, so only `isolation::direct` can build one and every
+other caller fails to compile. The token cannot bound *which argv* is handed to it, which is
+what `tests/privilege_boundary_test.rs` scans for.
 
 `IsolationContext` no longer exposes the executor either — that accessor existed so the
 assemble task could issue `cp`/`ln`/`mv`, and nothing needed it once `RootfsOps` replaced

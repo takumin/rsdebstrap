@@ -7,6 +7,11 @@
 //! in it is a [`RelPath`], which cannot name anything outside the rootfs, and no variant
 //! carries a host path for root to resolve. Host files are read by the parent, so what
 //! crosses the boundary is bytes.
+//!
+//! What that bound is *relative to* is the anchor, and the anchor is a path argument from
+//! the unprivileged parent. A `sudo` rule permitting this helper therefore permits root
+//! writes under any directory the invoking user can name; [`check_anchor`] only refuses the
+//! live system's own hierarchy. Grant the rule accordingly.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -54,12 +59,42 @@ pub enum Response {
     Error(String),
 }
 
+/// Directories the helper refuses to anchor to, whatever the parent asks for.
+///
+/// These are the live system's own hierarchy. A rootfs is never one of them.
+const REFUSED_ANCHORS: &[&str] = &[
+    "/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib32", "/lib64", "/libx32", "/opt",
+    "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/tmp", "/usr", "/var",
+];
+
+/// Rejects an anchor that names the live system rather than a rootfs.
+///
+/// The anchor is the one path the helper opens by name, and it comes from the *unprivileged*
+/// parent — so a `sudo` rule permitting this helper would otherwise permit root writes
+/// anywhere. This does not make the anchor trustworthy (the parent still chooses it, and any
+/// directory the invoking user could name is still reachable); it puts a floor under the
+/// damage a mistake or a hijacked argv can do.
+fn check_anchor(rootfs: &Utf8Path) -> Result<()> {
+    let canonical = rootfs
+        .canonicalize_utf8()
+        .map_err(|e| RsdebstrapError::io(format!("failed to resolve rootfs {}", rootfs), e))?;
+    if REFUSED_ANCHORS.contains(&canonical.as_str()) {
+        return Err(RsdebstrapError::Isolation(format!(
+            "refusing to serve privileged operations against {}: it is part of the live \
+            system, not a rootfs",
+            canonical
+        )));
+    }
+    Ok(())
+}
+
 /// Serves [`Request`]s on stdin against `rootfs` until stdin closes.
 ///
 /// Runs as root in the helper process. Errors are reported to the parent as
 /// [`Response::Error`] rather than terminating the loop, so one failed operation
 /// does not tear down a session the parent may still need for cleanup.
 pub fn serve(rootfs: &Utf8Path) -> Result<()> {
+    check_anchor(rootfs)?;
     let ops = LocalRootfsOps::open(rootfs)?;
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
