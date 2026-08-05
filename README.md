@@ -3,6 +3,8 @@
 > A declarative CLI tool to build Debian-based rootfs images using mmdebstrap and YAML manifests
 
 [![CI](https://github.com/takumin/rsdebstrap/actions/workflows/ci.yml/badge.svg)](https://github.com/takumin/rsdebstrap/actions/workflows/ci.yml)
+[![Coverage](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/rsdebstrap/coverage.svg)](https://github.com/takumin/rsdebstrap/actions/workflows/ci.yml)
+[![Code to Test Ratio](https://raw.githubusercontent.com/takumin/octocov-central/main/badges/takumin/rsdebstrap/ratio.svg)](https://github.com/takumin/rsdebstrap/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 rsdebstrap builds Debian/Ubuntu root filesystems from a single declarative YAML
