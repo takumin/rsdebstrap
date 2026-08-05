@@ -317,13 +317,13 @@ mod tests {
 
     struct MockMountExecutor {
         calls: Mutex<Vec<Vec<String>>>,
-        /// Privilege recorded per call, positionally aligned with `calls`.
+        // Privilege recorded per call, positionally aligned with `calls`.
         privileges: Mutex<Vec<Option<PrivilegeMethod>>>,
-        /// Call index that returns non-zero exit status.
+        // Call index that returns non-zero exit status.
         fail_on_call: Option<usize>,
-        /// Call indices that return non-zero exit status (for umount failures).
+        // Call indices that return non-zero exit status (for umount failures).
         fail_umount_on_calls: Vec<usize>,
-        /// Call index that returns `Err(anyhow!(...))`.
+        // Call index that returns `Err(anyhow!(...))`.
         return_err_on_call: Option<usize>,
     }
 

@@ -9,8 +9,8 @@ use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
 use rsdebstrap::cli::{Cli, Commands};
 
-/// The generated script must actually mention this crate's subcommands — an empty
-/// or truncated script would still "generate successfully".
+// The generated script must actually mention this crate's subcommands — an empty
+// or truncated script would still "generate successfully".
 #[test]
 fn test_completion_contents() -> Result<()> {
     let mut cmd = Cli::command();
@@ -41,7 +41,7 @@ fn test_completion_contents() -> Result<()> {
     Ok(())
 }
 
-/// The `shell` argument reaches the command handler intact.
+// The `shell` argument reaches the command handler intact.
 #[test]
 fn test_completions_command_carries_shell() -> Result<()> {
     let args = Cli::parse_from(["rsdebstrap", "completions", "bash"]);

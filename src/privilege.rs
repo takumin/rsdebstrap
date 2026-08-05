@@ -476,8 +476,8 @@ mod tests {
         yaml_serde::from_str(&yaml).unwrap()
     }
 
-    /// `Serialize` is hand-written to mirror the visitor, so every variant must
-    /// survive a round trip — including `Inherit`, which serializes to null.
+    // `Serialize` is hand-written to mirror the visitor, so every variant must
+    // survive a round trip — including `Inherit`, which serializes to null.
     #[test]
     fn serialize_roundtrip_every_variant() {
         for original in [

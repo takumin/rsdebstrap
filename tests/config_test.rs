@@ -499,7 +499,7 @@ provision:
     Ok(())
 }
 
-/// Helper function to test task validation rejection with non-directory output
+// Helper function to test task validation rejection with non-directory output
 fn test_task_validation_rejects_target(target: &str) -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(format!(
@@ -1327,9 +1327,9 @@ provision:
     Ok(())
 }
 
-/// Covers the three shorthand forms of `isolation` in one profile: `true`,
-/// `false` and absent. The map form has its own test above because it is a
-/// distinct wire shape, not because it resolves differently.
+// Covers the three shorthand forms of `isolation` in one profile: `true`,
+// `false` and absent. The map form has its own test above because it is a
+// distinct wire shape, not because it resolves differently.
 #[test]
 fn test_load_profile_mixed_task_isolation_settings() -> Result<()> {
     // editorconfig-checker-disable
@@ -2048,7 +2048,7 @@ prepare:
 // YAML strictness: string-typed fields must be genuine strings
 // =========================================================================
 
-/// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
+// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
 fn deserializes(yaml: &str) -> bool {
     yaml_serde::from_str::<rsdebstrap::config::Profile>(yaml).is_ok()
 }

@@ -173,10 +173,10 @@ impl RsdebstrapError {
 mod tests {
     use super::*;
 
-    /// The user-facing prefix each variant renders with. One table keeps the
-    /// wording of every string-carrying variant in a single place; the
-    /// constructor tests below cover the variants whose `Display` output is
-    /// assembled rather than interpolated verbatim.
+    // The user-facing prefix each variant renders with. One table keeps the
+    // wording of every string-carrying variant in a single place; the
+    // constructor tests below cover the variants whose `Display` output is
+    // assembled rather than interpolated verbatim.
     #[test]
     fn test_variant_display_prefixes() {
         let cases = [
@@ -302,9 +302,9 @@ mod tests {
         assert_eq!(err.to_string(), "command execution failed:  (isolation: mock): exit status: 2");
     }
 
-    /// Every variant survives the trip through `anyhow::Error` as its own type, so
-    /// callers can still `downcast_ref` and branch on the variant. One case per
-    /// variant guards against a future hand-written `From` impl that flattens one.
+    // Every variant survives the trip through `anyhow::Error` as its own type, so
+    // callers can still `downcast_ref` and branch on the variant. One case per
+    // variant guards against a future hand-written `From` impl that flattens one.
     #[test]
     fn test_every_variant_is_recoverable_from_anyhow() {
         let cases: Vec<RsdebstrapError> = vec![

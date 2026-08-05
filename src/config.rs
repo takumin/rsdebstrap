@@ -736,7 +736,7 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    /// Generates a yaml_serde::Error by attempting to parse invalid YAML.
+    // Generates a yaml_serde::Error by attempting to parse invalid YAML.
     fn make_yaml_error(yaml: &str) -> yaml_serde::Error {
         yaml_serde::from_str::<Profile>(yaml).unwrap_err()
     }
@@ -1486,8 +1486,8 @@ mod tests {
     // tests in tests/config_test.rs.
     // =========================================================================
 
-    /// Builds a minimal valid `Profile` YAML document; `extra` splices in more
-    /// top-level keys (e.g. `defaults:`, `prepare:`).
+    // Builds a minimal valid `Profile` YAML document; `extra` splices in more
+    // top-level keys (e.g. `defaults:`, `prepare:`).
     fn minimal_profile_yaml(extra: &str) -> String {
         let base = concat!(
             "dir: /tmp/rootfs\n",

@@ -6,12 +6,12 @@ use rsdebstrap::phase::{ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 use tempfile::tempdir;
 
-/// Runs a loaded provision task against a `MockContext` and returns the privilege
-/// it handed to the isolation layer.
-///
-/// A task's resolved privilege is private, so the only way to observe what
-/// `load_profile` resolved is to execute the task and record what reaches
-/// `IsolationContext::execute`.
+// Runs a loaded provision task against a `MockContext` and returns the privilege
+// it handed to the isolation layer.
+//
+// A task's resolved privilege is private, so the only way to observe what
+// `load_profile` resolved is to execute the task and record what reaches
+// `IsolationContext::execute`.
 fn executed_privilege(task: &ProvisionTask) -> Option<PrivilegeMethod> {
     let temp_dir = tempdir().expect("failed to create temp dir");
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
@@ -269,7 +269,7 @@ fn test_default_privilege_doas_inherited() {
     }
 }
 
-/// Helper to set up a valid rootfs with /tmp and /bin/sh
+// Helper to set up a valid rootfs with /tmp and /bin/sh
 fn setup_valid_rootfs(temp_dir: &tempfile::TempDir) {
     let rootfs = temp_dir.path();
     std::fs::create_dir(rootfs.join("tmp")).expect("failed to create tmp dir");

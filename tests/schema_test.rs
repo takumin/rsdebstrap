@@ -27,27 +27,27 @@ use jsonschema::Validator;
 use rsdebstrap::config::Profile;
 use serde_json::Value;
 
-/// Builds a validator from the crate's generated schema.
+// Builds a validator from the crate's generated schema.
 fn validator() -> Validator {
     let schema = rsdebstrap::profile_json_schema();
     jsonschema::validator_for(&schema).expect("generated schema must be a valid JSON Schema")
 }
 
-/// True if `yaml` satisfies the generated JSON Schema.
-///
-/// A document that cannot be converted into a JSON value at all (custom tags,
-/// non-string keys, ...) counts as schema-rejected: no JSON-Schema-based tooling can
-/// accept what it cannot even represent.
+// True if `yaml` satisfies the generated JSON Schema.
+//
+// A document that cannot be converted into a JSON value at all (custom tags,
+// non-string keys, ...) counts as schema-rejected: no JSON-Schema-based tooling can
+// accept what it cannot even represent.
 fn schema_accepts(v: &Validator, yaml: &str) -> bool {
     yaml_serde::from_str::<Value>(yaml).is_ok_and(|instance| v.is_valid(&instance))
 }
 
-/// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
+// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
 fn deser_accepts(yaml: &str) -> bool {
     yaml_serde::from_str::<Profile>(yaml).is_ok()
 }
 
-/// Minimal valid profile prefix; append a `provision:` block (or nothing) per case.
+// Minimal valid profile prefix; append a `provision:` block (or nothing) per case.
 const BASE: &str = "\
 dir: /out
 bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}

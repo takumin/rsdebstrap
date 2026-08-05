@@ -358,10 +358,10 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// `IsolationConfig` has a single variant, so `Inherit`, `UseDefault` and
-    /// `Config` all resolve to the same value and no assertion can tell those
-    /// three arms apart. Cover them as one case; `Disabled` below is the arm
-    /// that genuinely differs.
+    // `IsolationConfig` has a single variant, so `Inherit`, `UseDefault` and
+    // `Config` all resolve to the same value and no assertion can tell those
+    // three arms apart. Cover them as one case; `Disabled` below is the arm
+    // that genuinely differs.
     #[test]
     fn resolve_non_disabled_arms_yield_the_default_config() {
         let defaults = IsolationConfig::chroot();
@@ -419,8 +419,8 @@ mod tests {
         yaml_serde::from_str(&yaml).unwrap()
     }
 
-    /// `Serialize` is hand-written to mirror the visitor, so every variant must
-    /// survive a round trip — including `Inherit`, which serializes to null.
+    // `Serialize` is hand-written to mirror the visitor, so every variant must
+    // survive a round trip — including `Inherit`, which serializes to null.
     #[test]
     fn serialize_roundtrip_every_variant() {
         for original in [
