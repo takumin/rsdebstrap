@@ -296,3 +296,60 @@ fn test_shell_task_propagates_none_privilege_to_mock_context() {
     assert_eq!(privileges.len(), 1, "Expected exactly one execution");
     assert_eq!(privileges[0], None, "Expected no privilege escalation (None)");
 }
+
+// `isolation: false` runs the program the task names from inside the rootfs directly on the
+// host. Escalating that would hand root to whatever the half-built rootfs contains.
+#[test]
+fn test_direct_execution_may_not_be_escalated() {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml_typed(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        defaults:
+          privilege:
+            method: sudo
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs
+          format: directory
+        provision:
+          - type: shell
+            content: echo "hello"
+            isolation: false
+        "#
+    ));
+    // editorconfig-checker-enable
+
+    let err = profile.expect_err("escalated direct execution must be refused at load time");
+    assert!(matches!(err, RsdebstrapError::Validation(_)));
+    assert!(err.to_string().contains("isolation: false"), "unexpected error: {err}");
+}
+
+// The same task with privilege explicitly off is fine: that is the way to say it.
+#[test]
+fn test_direct_execution_is_allowed_without_privilege() {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        defaults:
+          privilege:
+            method: sudo
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs
+          format: directory
+        provision:
+          - type: shell
+            content: echo "hello"
+            isolation: false
+            privilege: false
+        "#
+    ))
+    .expect("profile should load");
+    // editorconfig-checker-enable
+
+    assert_eq!(task_privilege(&profile, 0), None);
+}

@@ -377,12 +377,17 @@ mod tests {
         let rootfs = dir.join("rootfs");
         fs::create_dir_all(rootfs.join("etc")).unwrap();
         fs::write(rootfs.join("etc/resolv.conf"), "# original\n").unwrap();
-        // For shell provision tasks (DirectProvider): a real /tmp for the
-        // staged script, and a /bin/sh resolving to the host shell so the
-        // recording executor can really run it.
+        // For shell provision tasks (DirectProvider): a real /tmp for the staged script,
+        // and a real /bin/sh so the recording executor can actually run it. A *copy* of
+        // the host shell rather than a symlink to it — `DirectContext` refuses to exec a
+        // program whose path leaves the rootfs, which is the shape a symlink here has.
         fs::create_dir_all(rootfs.join("tmp")).unwrap();
         fs::create_dir_all(rootfs.join("bin")).unwrap();
-        std::os::unix::fs::symlink("/bin/sh", rootfs.join("bin/sh")).unwrap();
+        fs::copy("/bin/sh", rootfs.join("bin/sh")).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(rootfs.join("bin/sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
         rootfs
     }
 

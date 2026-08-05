@@ -106,16 +106,37 @@ impl ProvisionTask {
     /// # Errors
     ///
     /// Returns `RsdebstrapError::Validation` if `privilege: true` is declared but no
-    /// `defaults.privilege.method` is configured in the profile.
+    /// `defaults.privilege.method` is configured, or if the task resolves to escalated
+    /// execution without isolation.
     pub fn resolve(
         &self,
         privilege_defaults: Option<&PrivilegeDefaults>,
         isolation_defaults: &IsolationConfig,
     ) -> Result<ResolvedProvisionTask<'_>, RsdebstrapError> {
+        let privilege = self.privilege().resolve(privilege_defaults)?;
+        let isolation = self.task_isolation().resolve(isolation_defaults);
+
+        // `isolation: false` runs the program the task names *from inside the rootfs*
+        // directly on the host. Escalating that hands root to whatever the rootfs happens
+        // to contain — a rootfs this run has not finished building and whose packages ran
+        // their own maintainer scripts. The two settings are individually reasonable and
+        // only their combination is not, so it is rejected here rather than by either.
+        if isolation.is_none()
+            && let Some(method) = privilege
+        {
+            return Err(RsdebstrapError::Validation(format!(
+                "task '{}' declares `isolation: false` but resolves to `privilege: {}`; \
+                running a program from inside the rootfs on the host as root is not \
+                allowed. Set `privilege: false` on the task, or drop `isolation: false`.",
+                self.name(),
+                method,
+            )));
+        }
+
         Ok(ResolvedProvisionTask {
             task: self,
-            privilege: self.privilege().resolve(privilege_defaults)?,
-            isolation: self.task_isolation().resolve(isolation_defaults),
+            privilege,
+            isolation,
         })
     }
 
