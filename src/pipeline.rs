@@ -221,7 +221,7 @@ fn run_provision_item(
     ops: &Arc<dyn RootfsOps>,
 ) -> Result<()> {
     let provider: Box<dyn IsolationProvider> = match task.resolved_isolation_config() {
-        Some(config) => config.as_provider(),
+        Some(config) => config.to_provider(),
         None => Box::new(DirectProvider),
     };
 
