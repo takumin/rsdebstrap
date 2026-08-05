@@ -386,11 +386,18 @@ fn test_execute_inline_script_verifies_file_written() {
 
     struct CapturingContext {
         rootfs: camino::Utf8PathBuf,
+        // These tests capture the script content the task hands to the shell,
+        // so no rootfs mutation is exercised.
+        ops: rsdebstrap::rootfs::DryRunRootfsOps,
         captured_content: Arc<Mutex<Option<String>>>,
         executed_commands: RefCell<Vec<Vec<String>>>,
     }
 
     impl IsolationContext for CapturingContext {
+        fn rootfs_ops(&self) -> &dyn rsdebstrap::rootfs::RootfsOps {
+            &self.ops
+        }
+
         fn name(&self) -> &'static str {
             "capturing-mock"
         }
@@ -437,6 +444,7 @@ fn test_execute_inline_script_verifies_file_written() {
 
     let context = CapturingContext {
         rootfs: rootfs.clone(),
+        ops: rsdebstrap::rootfs::DryRunRootfsOps::new(&rootfs),
         captured_content: captured_clone,
         executed_commands: RefCell::new(Vec::new()),
     };
@@ -478,11 +486,18 @@ fn test_execute_external_script_verifies_file_copied() {
 
     struct CapturingContext {
         rootfs: camino::Utf8PathBuf,
+        // These tests capture the script content the task hands to the shell,
+        // so no rootfs mutation is exercised.
+        ops: rsdebstrap::rootfs::DryRunRootfsOps,
         captured_content: Arc<Mutex<Option<String>>>,
         executed_commands: RefCell<Vec<Vec<String>>>,
     }
 
     impl IsolationContext for CapturingContext {
+        fn rootfs_ops(&self) -> &dyn rsdebstrap::rootfs::RootfsOps {
+            &self.ops
+        }
+
         fn name(&self) -> &'static str {
             "capturing-mock"
         }
@@ -521,6 +536,7 @@ fn test_execute_external_script_verifies_file_copied() {
 
     let context = CapturingContext {
         rootfs: rootfs.clone(),
+        ops: rsdebstrap::rootfs::DryRunRootfsOps::new(&rootfs),
         captured_content: captured_clone,
         executed_commands: RefCell::new(Vec::new()),
     };

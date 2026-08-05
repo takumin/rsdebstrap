@@ -7,6 +7,7 @@
 use super::{IsolationContext, IsolationProvider};
 use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
+use crate::rootfs::RootfsOps;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use std::sync::Arc;
@@ -27,11 +28,13 @@ impl IsolationProvider for DirectProvider {
         &self,
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
+        ops: Arc<dyn RootfsOps>,
         dry_run: bool,
     ) -> Result<Box<dyn IsolationContext>> {
         Ok(Box::new(DirectContext {
             rootfs: rootfs.to_owned(),
             executor,
+            ops,
             dry_run,
             torn_down: false,
         }))
@@ -45,6 +48,7 @@ impl IsolationProvider for DirectProvider {
 pub struct DirectContext {
     rootfs: Utf8PathBuf,
     executor: Arc<dyn CommandExecutor>,
+    ops: Arc<dyn RootfsOps>,
     dry_run: bool,
     torn_down: bool,
 }
@@ -64,6 +68,10 @@ impl IsolationContext for DirectContext {
 
     fn executor(&self) -> &dyn CommandExecutor {
         &*self.executor
+    }
+
+    fn rootfs_ops(&self) -> &dyn RootfsOps {
+        &*self.ops
     }
 
     /// Executes a command directly on the host filesystem.

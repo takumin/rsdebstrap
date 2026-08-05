@@ -10,6 +10,12 @@ use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use rsdebstrap::phase::{AssembleConfig, PrepareConfig, ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::pipeline::Pipeline;
 
+// These tests drive the pipeline in dry-run mode, where no filesystem operation
+// is meant to reach a real rootfs.
+fn dry_run_ops() -> std::sync::Arc<dyn rsdebstrap::rootfs::RootfsOps> {
+    std::sync::Arc::new(rsdebstrap::rootfs::DryRunRootfsOps::new(Utf8Path::new("/tmp/rootfs")))
+}
+
 // Empty prepare/assemble phases shared by the provision-focused pipeline tests.
 static EMPTY_PREPARE: PrepareConfig = PrepareConfig {
     mount: None,
@@ -150,7 +156,7 @@ fn test_pipeline_run_empty_returns_ok_without_setup() {
     let pipeline = provision_pipeline(&[]);
     let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops(), true);
     assert!(result.is_ok());
 }
 
@@ -166,7 +172,7 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops(), true);
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     assert_eq!(mock_executor.call_count(), 3);
@@ -205,7 +211,7 @@ fn test_pipeline_run_tasks_execute_in_order_within_phase() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops(), true);
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     let calls = mock_executor.calls();
@@ -231,7 +237,7 @@ fn test_pipeline_run_error_stops_remaining_tasks() {
     let mock_executor = Arc::new(MockExecutor::failing_on(1));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops(), true);
     assert!(result.is_err());
 
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -252,7 +258,7 @@ fn test_pipeline_run_task_isolation_disabled_uses_direct() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops(), true);
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     let calls = mock_executor.calls();
@@ -281,7 +287,7 @@ fn test_pipeline_run_task_isolation_enabled_uses_chroot() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops(), true);
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     let calls = mock_executor.calls();
@@ -321,7 +327,7 @@ fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops(), true);
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     let calls = mock_executor.calls();

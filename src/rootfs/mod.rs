@@ -15,13 +15,16 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
-use camino::Utf8Path;
+use std::sync::Arc;
+
+use camino::{Utf8Path, Utf8PathBuf};
 use rustix::fs::{self as rfs, AtFlags, CWD, FileType, Mode, OFlags};
 use serde::{Deserialize, Serialize};
 
 pub mod helper;
 
 use crate::error::RsdebstrapError;
+use crate::privilege::PrivilegeMethod;
 
 type Result<T> = std::result::Result<T, RsdebstrapError>;
 
@@ -397,6 +400,72 @@ impl RootfsOps for LocalRootfsOps {
             )
         })?;
         Ok(Some(entry))
+    }
+}
+
+/// [`RootfsOps`] that reports what it would do and changes nothing.
+pub struct DryRunRootfsOps {
+    rootfs: Utf8PathBuf,
+}
+
+impl DryRunRootfsOps {
+    pub fn new(rootfs: &Utf8Path) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+        }
+    }
+}
+
+impl RootfsOps for DryRunRootfsOps {
+    fn write_file(&self, path: &RelPath, content: &[u8], mode: u32) -> Result<()> {
+        tracing::info!(
+            "dry run: write {}{} ({} bytes, mode {:o})",
+            self.rootfs,
+            path,
+            content.len(),
+            mode
+        );
+        Ok(())
+    }
+
+    fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()> {
+        tracing::info!("dry run: symlink {}{} -> {}", self.rootfs, path, target);
+        Ok(())
+    }
+
+    fn import_file(&self, host_src: &Utf8Path, path: &RelPath, mode: u32) -> Result<()> {
+        tracing::info!("dry run: copy {} to {}{} (mode {:o})", host_src, self.rootfs, path, mode);
+        Ok(())
+    }
+
+    fn remove(&self, path: &RelPath) -> Result<()> {
+        tracing::info!("dry run: remove {}{}", self.rootfs, path);
+        Ok(())
+    }
+
+    fn take(&self, path: &RelPath) -> Result<Option<TakenEntry>> {
+        tracing::info!("dry run: detach {}{}", self.rootfs, path);
+        // Nothing was detached, so nothing is restored on teardown — which is
+        // what a dry run should leave behind.
+        Ok(None)
+    }
+}
+
+/// Opens the [`RootfsOps`] implementation matching the run's privilege setting.
+///
+/// Escalation happens here and only here: one helper per build, spawned before
+/// any phase runs, rather than one per filesystem operation.
+pub fn open(
+    rootfs: &Utf8Path,
+    privilege: Option<PrivilegeMethod>,
+    dry_run: bool,
+) -> Result<Arc<dyn RootfsOps>> {
+    if dry_run {
+        return Ok(Arc::new(DryRunRootfsOps::new(rootfs)));
+    }
+    match privilege {
+        Some(method) => Ok(Arc::new(helper::PrivilegedRootfsOps::spawn(rootfs, method)?)),
+        None => Ok(Arc::new(LocalRootfsOps::open(rootfs)?)),
     }
 }
 

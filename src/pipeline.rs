@@ -18,6 +18,7 @@ use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
 use crate::isolation::{DirectProvider, IsolationProvider};
 use crate::phase::{AssembleConfig, PhaseItem, PrepareConfig, ProvisionTask};
+use crate::rootfs::RootfsOps;
 
 const PHASE_PREPARE: &str = "prepare";
 const PHASE_PROVISION: &str = "provision";
@@ -78,10 +79,11 @@ impl<'a> Pipeline<'a> {
         &self,
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
+        ops: Arc<dyn RootfsOps>,
         dry_run: bool,
     ) -> Result<()> {
-        self.run_prepare_and_provision(rootfs, &executor, dry_run)?;
-        self.run_assemble(rootfs, &executor, dry_run)
+        self.run_prepare_and_provision(rootfs, &executor, &ops, dry_run)?;
+        self.run_assemble(rootfs, &executor, &ops, dry_run)
     }
 
     /// Executes the prepare and provision phases (the first pipeline stage)
@@ -96,6 +98,7 @@ impl<'a> Pipeline<'a> {
         &self,
         rootfs: &Utf8Path,
         executor: &Arc<dyn CommandExecutor>,
+        ops: &Arc<dyn RootfsOps>,
         dry_run: bool,
     ) -> Result<()> {
         if self.is_empty() {
@@ -103,12 +106,13 @@ impl<'a> Pipeline<'a> {
         }
 
         info!("starting pipeline with {} task(s)", self.total_tasks());
-        run_phase_items(PHASE_PREPARE, &self.prepare.items(), rootfs, executor, dry_run)?;
+        run_phase_items(PHASE_PREPARE, &self.prepare.items(), rootfs, executor, ops, dry_run)?;
         run_phase_items(
             PHASE_PROVISION,
             &provision_items(self.provision),
             rootfs,
             executor,
+            ops,
             dry_run,
         )
     }
@@ -122,13 +126,14 @@ impl<'a> Pipeline<'a> {
         &self,
         rootfs: &Utf8Path,
         executor: &Arc<dyn CommandExecutor>,
+        ops: &Arc<dyn RootfsOps>,
         dry_run: bool,
     ) -> Result<()> {
         if self.is_empty() {
             return Ok(());
         }
 
-        run_phase_items(PHASE_ASSEMBLE, &self.assemble.items(), rootfs, executor, dry_run)?;
+        run_phase_items(PHASE_ASSEMBLE, &self.assemble.items(), rootfs, executor, ops, dry_run)?;
         info!("pipeline completed successfully");
         Ok(())
     }
@@ -145,6 +150,7 @@ fn run_phase_items(
     tasks: &[&dyn PhaseItem],
     rootfs: &Utf8Path,
     executor: &Arc<dyn CommandExecutor>,
+    ops: &Arc<dyn RootfsOps>,
     dry_run: bool,
 ) -> Result<()> {
     if tasks.is_empty() {
@@ -156,7 +162,7 @@ fn run_phase_items(
 
     for (index, task) in tasks.iter().enumerate() {
         info!("running {} {}/{}: {}", phase_name, index + 1, tasks.len(), task.name());
-        run_task_item(*task, rootfs, executor, dry_run)
+        run_task_item(*task, rootfs, executor, ops, dry_run)
             .with_context(|| format!("failed to run {} {}", phase_name, index + 1))?;
     }
 
@@ -171,6 +177,7 @@ fn run_task_item(
     task: &dyn PhaseItem,
     rootfs: &Utf8Path,
     executor: &Arc<dyn CommandExecutor>,
+    ops: &Arc<dyn RootfsOps>,
     dry_run: bool,
 ) -> Result<()> {
     let provider: Box<dyn IsolationProvider> = match task.resolved_isolation_config() {
@@ -179,7 +186,7 @@ fn run_task_item(
     };
 
     let mut ctx = provider
-        .setup(rootfs, executor.clone(), dry_run)
+        .setup(rootfs, executor.clone(), ops.clone(), dry_run)
         .context("failed to setup isolation context")?;
 
     let run_result = task.execute(ctx.as_ref());

@@ -24,6 +24,7 @@ use std::sync::{Arc, LazyLock};
 use crate::config::IsolationConfig;
 use crate::executor::{CommandExecutor, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
+use crate::rootfs::RootfsOps;
 
 /// Fallback isolation config for unresolved states.
 /// Used by `resolved_config()` to fail-closed (use isolation) rather than
@@ -62,6 +63,7 @@ pub trait IsolationProvider: Send + Sync {
         &self,
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
+        ops: Arc<dyn RootfsOps>,
         dry_run: bool,
     ) -> Result<Box<dyn IsolationContext>>;
 }
@@ -109,6 +111,14 @@ pub trait IsolationContext: Send {
     /// (e.g., `cp`, `chmod`, `ln`) with privilege escalation support,
     /// without going through the isolation context's `execute()` method.
     fn executor(&self) -> &dyn CommandExecutor;
+
+    /// Returns the descriptor-anchored filesystem operations for this rootfs.
+    ///
+    /// Tasks that modify the rootfs use these rather than running `cp`/`mv`/`ln`
+    /// through [`executor`](Self::executor): the operations here cannot be
+    /// redirected by a symlink, and they escalate through one helper rather than
+    /// once per command.
+    fn rootfs_ops(&self) -> &dyn RootfsOps;
 
     /// Tears down the isolation environment and releases resources.
     ///

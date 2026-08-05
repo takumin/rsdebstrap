@@ -3,6 +3,7 @@
 use super::{IsolationContext, IsolationProvider};
 use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
+use crate::rootfs::RootfsOps;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use std::sync::Arc;
@@ -26,11 +27,13 @@ impl IsolationProvider for ChrootProvider {
         &self,
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
+        ops: Arc<dyn RootfsOps>,
         dry_run: bool,
     ) -> Result<Box<dyn IsolationContext>> {
         Ok(Box::new(ChrootContext {
             rootfs: rootfs.to_owned(),
             executor,
+            ops,
             dry_run,
             torn_down: false,
         }))
@@ -44,6 +47,7 @@ impl IsolationProvider for ChrootProvider {
 pub struct ChrootContext {
     rootfs: Utf8PathBuf,
     executor: Arc<dyn CommandExecutor>,
+    ops: Arc<dyn RootfsOps>,
     dry_run: bool,
     torn_down: bool,
 }
@@ -63,6 +67,10 @@ impl IsolationContext for ChrootContext {
 
     fn executor(&self) -> &dyn CommandExecutor {
         &*self.executor
+    }
+
+    fn rootfs_ops(&self) -> &dyn RootfsOps {
+        &*self.ops
     }
 
     fn execute(
