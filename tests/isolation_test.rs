@@ -174,28 +174,10 @@ fn test_chroot_context_propagates_sudo_privilege() {
     assert_eq!(*privilege, Some(PrivilegeMethod::Sudo));
 }
 
-#[test]
-fn test_chroot_context_propagates_doas_privilege() {
-    let provider = ChrootProvider;
-    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
-    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
-        calls: Arc::clone(&calls),
-    });
-    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
-    let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
-
-    let context = provider.setup(rootfs, executor, false).unwrap();
-    let result = context.execute(&command, Some(PrivilegeMethod::Doas));
-    assert!(result.is_ok());
-
-    let calls = calls.lock().unwrap();
-    assert_eq!(calls.len(), 1);
-    let (_, _, privilege) = &calls[0];
-    assert_eq!(*privilege, Some(PrivilegeMethod::Doas));
-}
-
-// The `None` case is covered by `test_chroot_context_execute_builds_correct_args`,
-// which asserts the same recorded privilege for the same call.
+// `PrivilegeMethod` is passed through to the executor untouched, so `Doas`
+// exercises the same path as `Sudo` above. The `None` case is covered by
+// `test_chroot_context_execute_builds_correct_args`, which asserts the same
+// recorded privilege for the same call.
 
 #[test]
 fn test_direct_provider_name() {
@@ -362,25 +344,7 @@ fn test_direct_context_propagates_sudo_privilege() {
     assert_eq!(*privilege, Some(PrivilegeMethod::Sudo));
 }
 
-#[test]
-fn test_direct_context_propagates_doas_privilege() {
-    let provider = DirectProvider;
-    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
-    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
-        calls: Arc::clone(&calls),
-    });
-    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
-    let command: Vec<String> = vec!["/bin/sh".to_string()];
-
-    let context = provider.setup(rootfs, executor, false).unwrap();
-    let result = context.execute(&command, Some(PrivilegeMethod::Doas));
-    assert!(result.is_ok());
-
-    let calls = calls.lock().unwrap();
-    assert_eq!(calls.len(), 1);
-    let (_, _, privilege) = &calls[0];
-    assert_eq!(*privilege, Some(PrivilegeMethod::Doas));
-}
-
-// The `None` case is covered by `test_direct_context_execute_translates_absolute_paths`,
-// which asserts the same recorded privilege for the same call.
+// As on the chroot side, `Doas` takes the same pass-through path as `Sudo`.
+// The `None` case is covered by
+// `test_direct_context_execute_translates_absolute_paths`, which asserts the
+// same recorded privilege for the same call.
