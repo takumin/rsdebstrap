@@ -10,6 +10,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use tracing::info;
 
 use crate::config::ResolvConfConfig;
+use crate::pipeline::Provisioned;
 use crate::rootfs::{RelPath, RootfsOps, TakenEntry};
 
 /// Generates resolv.conf content from explicit configuration.
@@ -23,6 +24,26 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
         lines.push(format!("nameserver {}", ns));
     }
     lines.join("\n") + "\n"
+}
+
+/// Evidence that the rootfs's own resolv.conf is back in place.
+///
+/// [`Pipeline::run_assemble`](crate::pipeline::Pipeline::run_assemble) requires
+/// one, and only this module can produce one. The restore has to land between
+/// provisioning and assembly — an assemble `resolv_conf` task installs the
+/// permanent `/etc/resolv.conf`, and a restore running afterwards would
+/// overwrite it — so the orchestration is not free to reorder the two.
+#[must_use]
+pub struct Restored(());
+
+impl Restored {
+    /// For a run with no prepare guard, where nothing was ever detached.
+    ///
+    /// The only way to obtain a `Restored` without restoring anything, and it
+    /// still requires having provisioned first.
+    pub(crate) fn nothing_was_detached(_provisioned: Provisioned) -> Self {
+        Self(())
+    }
 }
 
 /// The entry this guard replaces and restores.
@@ -118,6 +139,23 @@ impl RootfsResolvConf {
         self.original = original;
         self.active = true;
         Ok(())
+    }
+
+    /// Restores the entry setup detached, in exchange for the token
+    /// [`Pipeline::run_assemble`](crate::pipeline::Pipeline::run_assemble)
+    /// requires.
+    ///
+    /// Taking [`Provisioned`] and yielding [`Restored`] is what places this
+    /// between provisioning and assembly: assembly cannot be called without the
+    /// token, and the token cannot exist before this returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the original cannot be written back. `Drop` retries
+    /// the restore in that case.
+    pub fn restore(&mut self, _provisioned: Provisioned) -> Result<Restored> {
+        self.teardown()?;
+        Ok(Restored(()))
     }
 
     /// Restores the entry setup detached. Idempotent after a successful call.
