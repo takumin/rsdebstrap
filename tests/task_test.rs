@@ -54,6 +54,9 @@ fn test_validate_rejects_empty_inline_content() {
     );
 }
 
+/// The one place the `trim()` in `ScriptSource::validate` is pinned: every
+/// other empty-content test passes an actually empty string, which would
+/// still be rejected if the trim were dropped.
 #[test]
 fn test_validate_rejects_whitespace_only_inline_content() {
     let task = ShellTask::new(ScriptSource::Content("   \n\t  ".to_string()));
@@ -543,27 +546,6 @@ fn test_mitamae_validate_rejects_recipe_path_traversal() {
         err
     );
     assert!(err.to_string().contains("mitamae recipe path"));
-}
-
-#[test]
-fn test_mitamae_validate_rejects_whitespace_only_content() {
-    let temp_dir = tempdir().expect("failed to create temp dir");
-    let binary_path = temp_dir.path().join("mitamae");
-    std::fs::write(&binary_path, "fake binary").expect("failed to write binary");
-    let binary_utf8 =
-        camino::Utf8PathBuf::from_path_buf(binary_path).expect("path should be valid UTF-8");
-
-    let task = MitamaeTask::new(ScriptSource::Content("   \n\t  ".to_string()), binary_utf8);
-    let err = task.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected Validation error, got: {:?}",
-        err
-    );
-    assert!(
-        err.to_string()
-            .contains("inline mitamae recipe content must not be empty")
-    );
 }
 
 #[test]

@@ -537,24 +537,6 @@ fn test_execute_external_script_verifies_file_copied() {
 }
 
 #[test]
-fn test_validate_script_path_traversal_rejected() {
-    let task = ShellTask::new(ScriptSource::Script("../../../etc/passwd".into()));
-    let err = task.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected RsdebstrapError::Validation, got: {:?}",
-        err
-    );
-    let err_msg = err.to_string();
-    assert!(err_msg.contains(".."), "Expected '..' in error message, got: {}", err_msg);
-    assert!(
-        err_msg.contains("security"),
-        "Expected 'security' in error message, got: {}",
-        err_msg
-    );
-}
-
-#[test]
 fn test_execute_with_custom_shell() {
     let temp_dir = tempdir().expect("failed to create temp dir");
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
