@@ -175,10 +175,7 @@ impl PhaseItem for AssembleResolvConfTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::{CommandExecutor, ExecutionResult};
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::ExitStatus;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     #[test]
     fn name_link() {
@@ -373,66 +370,6 @@ mod tests {
         }
     }
 
-    // A recorded command with its arguments and privilege setting.
-    type RecordedCommand = (String, Vec<String>, Option<crate::privilege::PrivilegeMethod>);
-
-    // Records executed commands for assertion.
-    struct MockCommandExecutor {
-        commands: Mutex<Vec<RecordedCommand>>,
-        fail_on_command: Mutex<Option<String>>,
-    }
-
-    impl MockCommandExecutor {
-        fn new() -> Self {
-            Self {
-                commands: Mutex::new(Vec::new()),
-                fail_on_command: Mutex::new(None),
-            }
-        }
-    }
-
-    impl CommandExecutor for MockCommandExecutor {
-        fn execute(&self, spec: &crate::executor::CommandSpec) -> anyhow::Result<ExecutionResult> {
-            if self
-                .fail_on_command
-                .lock()
-                .unwrap()
-                .as_deref()
-                .is_some_and(|command| command == spec.command())
-            {
-                self.commands.lock().unwrap().push((
-                    spec.command().to_string(),
-                    spec.args().to_vec(),
-                    spec.privilege(),
-                ));
-                return Ok(ExecutionResult {
-                    status: Some(ExitStatus::from_raw(1 << 8)),
-                });
-            }
-
-            // Actually execute the command so tests can verify file effects
-            let mut cmd = std::process::Command::new(spec.command());
-            cmd.args(spec.args());
-            if let Some(cwd) = &spec.cwd() {
-                cmd.current_dir(cwd.as_std_path());
-            }
-            for (key, value) in spec.env() {
-                cmd.env(key, value);
-            }
-            let status = cmd.status()?;
-
-            self.commands.lock().unwrap().push((
-                spec.command().to_string(),
-                spec.args().to_vec(),
-                spec.privilege(),
-            ));
-
-            Ok(ExecutionResult {
-                status: Some(status),
-            })
-        }
-    }
-
     // These assert the entry the task leaves in the rootfs. The task no longer
     // has a command sequence to assert: staging and promotion happen inside
     // `RootfsOps`, which pins them with its own tests.
@@ -572,7 +509,6 @@ mod tests {
     struct MockAssembleContext {
         rootfs: camino::Utf8PathBuf,
         dry_run: bool,
-        executor: Arc<MockCommandExecutor>,
         ops: Arc<dyn crate::rootfs::RootfsOps>,
     }
 
@@ -588,7 +524,6 @@ mod tests {
             Self {
                 rootfs: rootfs.to_owned(),
                 dry_run,
-                executor: Arc::new(MockCommandExecutor::new()),
                 ops,
             }
         }
@@ -605,10 +540,6 @@ mod tests {
 
         fn dry_run(&self) -> bool {
             self.dry_run
-        }
-
-        fn executor(&self) -> &dyn CommandExecutor {
-            &*self.executor
         }
 
         fn rootfs_ops(&self) -> &dyn crate::rootfs::RootfsOps {

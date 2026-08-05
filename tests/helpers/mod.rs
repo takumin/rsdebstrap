@@ -618,10 +618,6 @@ impl IsolationContext for MockContext {
         self.dry_run
     }
 
-    fn executor(&self) -> &dyn rsdebstrap::executor::CommandExecutor {
-        unimplemented!("MockContext does not provide a real executor")
-    }
-
     fn execute(
         &self,
         command: &[String],

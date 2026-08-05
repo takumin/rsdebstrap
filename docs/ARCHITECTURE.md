@@ -160,6 +160,13 @@ no syscall equivalent in this crate). `CommandSpec::for_task_command` is the exc
 a provision task names its own program; `tests/privilege_boundary_test.rs` guards it, because
 Rust cannot restrict a constructor to a single module within a crate.
 
+`IsolationContext` no longer exposes the executor either — that accessor existed so the
+assemble task could issue `cp`/`ln`/`mv`, and nothing needed it once `RootfsOps` replaced
+them. A `CommandSpec` built inside a phase is therefore inert; what a task can do is bounded
+by the context trait. `ctx.execute(argv, privilege)` remains open by design, since running a
+declared program is what provision tasks are for; narrowing it to the phases that need it
+would mean per-phase context capabilities.
+
 Two things follow that per-command escalation could not give:
 
 - **Root's authority is bounded by an enum, not by what a command can be argued into.** Every
