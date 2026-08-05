@@ -78,19 +78,26 @@ Key invariants:
 - **Prepare tasks are declarative.** `MountTask` and (prepare) `ResolvConfTask` implement
   `PrepareItem`, which has no `execute` at all — there is nothing to run, rather than
   something that runs and does nothing. Their real effect comes from the RAII managers below,
-  set up in `run_pipeline_phase()`. The brackets differ: mounts wrap all three phases, but the
-  temporary resolv.conf wraps only prepare + provision — it is torn down (the original
-  restored) before assemble, so an assemble `resolv_conf` task's permanent file/symlink
-  survives.
+  set up in `run_pipeline_phase()`. Both brackets close before assemble: the temporary
+  resolv.conf is torn down (the original restored) so an assemble `resolv_conf` task's
+  permanent file/symlink survives, and the mounts are released so assemble sees the rootfs
+  the way the image will — without `/proc`, `/sys` and `/dev` bound over it. Assemble writes
+  the rootfs's *final* state, so anything still bound over it is not part of that state.
 
-  That ordering is carried by two token types rather than by comment and convention.
+  That ordering is carried by three token types rather than by comment and convention.
   `Pipeline::run_prepare_and_provision` yields a `Provisioned`; `RootfsResolvConf::restore`
-  consumes one and yields a `Restored`; `Pipeline::run_assemble` requires a `Restored`.
-  Assembling before the restore is therefore a compile error, not a review finding. `Restored`
-  is declared in the guard's own module so its constructor is private *there* — declared in
-  `pipeline` it would be `pub(crate)` and the orchestration could mint one, which is exactly the
-  mistake being prevented. `Pipeline::run` (no guard, so nothing was detached) is the one
-  exemption, via a named function that still demands a `Provisioned`.
+  consumes one and yields a `Restored`; `RootfsMounts::unmount_before_assembly` consumes that
+  and yields an `Unmounted`; `Pipeline::run_assemble` requires an `Unmounted`. Assembling
+  before either teardown is therefore a compile error, not a review finding. Each token is
+  declared in the module of the guard that produces it, so its constructor is private *there*
+  — declared in `pipeline` they would be `pub(crate)` and the orchestration could mint one,
+  which is exactly the mistake being prevented. `Pipeline::run` (no guards, so nothing was
+  detached and nothing was mounted) is the one exemption, via named functions that still
+  demand the preceding token.
+
+  A failed unmount consequently skips assemble, the same way a failed restore does: the
+  rootfs is not in the state assemble is defined against. Unmounting itself is still
+  attempted on every path, including after a provision failure.
 - **Assemble operates on the final rootfs directly, and cannot run a program.** An
   `AssembleItem` receives a `RootfsContext` — `rootfs()`, `dry_run()`, `rootfs_ops()` — so
   every write goes through the descriptor-anchored operations and there is no `execute` to
@@ -367,13 +374,14 @@ Mock-executor pattern (`tests/helpers/mod.rs`):
   (`mount`/`umount`/`chroot`/bootstrap) is still only asserted at the argv level. A full
   privileged `apply` has been run by hand; nothing runs it automatically.
 - **`run_pipeline_phase()` sequencing and gating** are covered by in-crate tests in
-  `src/lib.rs`, using a recording executor that really runs `mv`/`cp`/`rm`/`ln` and a
-  shell provision task against a temp rootfs: the temporary resolv.conf is restored
-  after provision (a real provision command sits between the setup and restore
-  sequences) and before assemble; assemble is gated on both the prepare/provision
-  result and the restore result (including a real restore-`mv` failure, which strands
-  the backup and skips assemble); an assemble failure propagates while the
-  atomically-staged replace leaves the restored original in place; and both link- and
-  generate-mode assemble tasks are exercised end-to-end. The remaining gap is the
-  interplay with real mount/unmount failures — `RootfsMounts` unit tests cover those
-  error paths independently via `MockMountExecutor`.
+  `src/lib.rs`, using a recording executor that really runs the provision command and
+  `RootfsOps` failure injection against a temp rootfs: the temporary resolv.conf is
+  restored after provision (a real provision command sits between setup and restore)
+  and before assemble; assemble is gated on both the prepare/provision result and the
+  restore result; assemble runs only after the mounts are released (an executor and an
+  ops wrapper sharing one timeline pin `mount` → `umount` → the assemble write); an
+  assemble failure propagates while the atomically-staged replace leaves the restored
+  original in place; and both link- and generate-mode assemble tasks are exercised
+  end-to-end. The remaining gap is the interplay with real mount/unmount failures —
+  `RootfsMounts` unit tests cover those error paths independently via
+  `MockMountExecutor`.
