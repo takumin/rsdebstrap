@@ -186,6 +186,15 @@ impl IsolationContext for DirectContext {
     }
 }
 
+impl std::fmt::Debug for DirectContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DirectContext")
+            .field("rootfs", &self.rootfs)
+            .field("torn_down", &self.torn_down)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for DirectContext {
     fn drop(&mut self) {
         if !self.torn_down

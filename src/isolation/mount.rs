@@ -338,6 +338,20 @@ impl Drop for RootfsMounts {
     }
 }
 
+// Reports the guard's own state. The executor behind it and the full mount table are
+// collaborators, not state a reader of this guard is asking about.
+impl std::fmt::Debug for RootfsMounts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RootfsMounts")
+            .field("rootfs", &self.rootfs)
+            .field("mounted", &self.mounted_count())
+            .field("of", &self.entries.len())
+            .field("dry_run", &self.dry_run)
+            .field("torn_down", &self.torn_down)
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -157,6 +157,15 @@ impl PlainRootfsContext {
     }
 }
 
+impl std::fmt::Debug for PlainRootfsContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlainRootfsContext")
+            .field("rootfs", &self.rootfs)
+            .field("dry_run", &self.dry_run)
+            .finish_non_exhaustive()
+    }
+}
+
 impl RootfsContext for PlainRootfsContext {
     fn rootfs(&self) -> &Utf8Path {
         &self.rootfs
