@@ -10,6 +10,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use tracing::info;
 
 use crate::config::ResolvConfConfig;
+use crate::error::RsdebstrapError;
 use crate::pipeline::Provisioned;
 use crate::rootfs::{RelPath, RootfsOps, TakenEntry};
 
@@ -114,8 +115,16 @@ impl RootfsResolvConf {
         let path = resolv_conf_path();
         let original = self.ops.take(&path)?;
 
+        // Read the host's copy here rather than in `RootfsOps`: the ops may be served by
+        // the privileged helper, and there is no reason for root to be the one resolving a
+        // host path. What crosses the boundary is bytes.
         let installed = if config.copy {
-            self.ops.import_file(&self.host_resolv_conf, &path, 0o644)
+            match std::fs::read(&self.host_resolv_conf) {
+                Ok(content) => self.ops.write_file(&path, &content, 0o644),
+                Err(e) => {
+                    Err(RsdebstrapError::io(format!("failed to read {}", self.host_resolv_conf), e))
+                }
+            }
         } else {
             self.ops
                 .write_file(&path, generate_resolv_conf(config).as_bytes(), 0o644)
@@ -265,15 +274,6 @@ mod tests {
             target: &str,
         ) -> std::result::Result<(), crate::error::RsdebstrapError> {
             self.inner.write_symlink(path, target)
-        }
-
-        fn import_file(
-            &self,
-            host_src: &Utf8Path,
-            path: &RelPath,
-            mode: u32,
-        ) -> std::result::Result<(), crate::error::RsdebstrapError> {
-            self.inner.import_file(host_src, path, mode)
         }
 
         fn remove(&self, path: &RelPath) -> std::result::Result<(), crate::error::RsdebstrapError> {

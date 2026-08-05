@@ -450,15 +450,6 @@ mod tests {
             self.inner.write_symlink(path, target)
         }
 
-        fn import_file(
-            &self,
-            host_src: &Utf8Path,
-            path: &rootfs::RelPath,
-            mode: u32,
-        ) -> std::result::Result<(), RsdebstrapError> {
-            self.inner.import_file(host_src, path, mode)
-        }
-
         fn remove(&self, path: &rootfs::RelPath) -> std::result::Result<(), RsdebstrapError> {
             if self.fail == Failure::Remove {
                 return Err(refused("remove"));
@@ -520,15 +511,6 @@ mod tests {
                 .unwrap()
                 .push("write_symlink".to_string());
             self.inner.write_symlink(path, target)
-        }
-
-        fn import_file(
-            &self,
-            host_src: &Utf8Path,
-            path: &rootfs::RelPath,
-            mode: u32,
-        ) -> std::result::Result<(), RsdebstrapError> {
-            self.inner.import_file(host_src, path, mode)
         }
 
         fn remove(&self, path: &rootfs::RelPath) -> std::result::Result<(), RsdebstrapError> {
