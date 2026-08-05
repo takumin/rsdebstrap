@@ -2306,24 +2306,24 @@ fn internally_tagged_isolation_variants_reject_typos_but_accept_the_tag() {
 // failure is the semantic one rather than a resolution error.
 #[test]
 fn test_pipeline_requires_the_validation_token() -> Result<()> {
-    // editorconfig-checker-disable
+    // Indented in fours, and the sequence entry written in flow style, so every line
+    // clears `.editorconfig`'s `indent_size = 4` for `*.rs` without the checker being
+    // switched off over the block.
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/rsdebstrap-nonexistent
 defaults:
-  privilege:
-    method: sudo
+    privilege:
+        method: sudo
 bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs
-  format: directory
+    type: mmdebstrap
+    suite: bookworm
+    target: rootfs
+    format: directory
 provision:
-  - type: shell
-    script: /nonexistent/script.sh
+    - {type: shell, script: /nonexistent/script.sh}
 "#
     ))?;
-    // editorconfig-checker-enable
 
     let err = profile
         .validate()
