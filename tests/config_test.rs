@@ -2299,3 +2299,33 @@ fn internally_tagged_isolation_variants_reject_typos_but_accept_the_tag() {
         "a typo'd key was accepted:\n{rejected}"
     );
 }
+
+// `Profile::pipeline` takes the evidence `validate` produces, so the sequence that used to
+// be a convention — validate, then build — is now the only one that compiles. This pins the
+// half of it a test can express: a profile that fails validation yields no token, and the
+// failure is the semantic one rather than a resolution error.
+#[test]
+fn test_pipeline_requires_the_validation_token() -> Result<()> {
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/rsdebstrap-nonexistent
+defaults:
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provision:
+  - type: shell
+    script: /nonexistent/script.sh
+"#
+    ))?;
+
+    let err = profile
+        .validate()
+        .expect_err("a missing script must fail validation");
+    assert!(err.to_string().contains("script"), "unexpected error: {err}");
+    Ok(())
+}

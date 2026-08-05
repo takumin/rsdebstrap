@@ -454,6 +454,16 @@ pub struct Profile {
     pub assemble: AssembleConfig,
 }
 
+/// Evidence that [`Profile::validate`] has run and passed.
+///
+/// [`Profile::pipeline`] requires one, and only `validate` produces one. Several checks it
+/// performs are not expressible in the config types — that mount targets exist as
+/// directories the run may create, that a declared script is a regular file, that the
+/// bootstrap backend's output is a directory when there are pipeline tasks — so "validated"
+/// has to be carried as a value rather than assumed.
+#[derive(Debug)]
+pub struct Validated(());
+
 impl Profile {
     /// Creates a `Pipeline` from this profile's task phases, resolving each provision
     /// task's settings against `defaults`.
@@ -461,8 +471,13 @@ impl Profile {
     /// # Errors
     ///
     /// Returns `RsdebstrapError::Validation` if a task declares `privilege: true` but
-    /// the profile configures no `defaults.privilege.method`.
-    pub fn pipeline(&self) -> Result<Pipeline<'_>, RsdebstrapError> {
+    /// the profile configures no `defaults.privilege.method`, or if it resolves to
+    /// escalated execution without isolation.
+    pub fn pipeline(&self, _validated: &Validated) -> Result<Pipeline<'_>, RsdebstrapError> {
+        self.build_pipeline()
+    }
+
+    fn build_pipeline(&self) -> Result<Pipeline<'_>, RsdebstrapError> {
         Pipeline::new(
             &self.prepare,
             &self.provision,
@@ -473,7 +488,7 @@ impl Profile {
     }
 
     /// Validate configuration semantics beyond basic deserialization.
-    pub fn validate(&self) -> Result<(), RsdebstrapError> {
+    pub fn validate(&self) -> Result<Validated, RsdebstrapError> {
         if self.dir.exists() && !self.dir.is_dir() {
             return Err(RsdebstrapError::Validation(format!(
                 "dir must be a directory: {}",
@@ -484,7 +499,7 @@ impl Profile {
         self.validate_mounts()?;
         self.validate_resolv_conf()?;
 
-        let pipeline = self.pipeline()?;
+        let pipeline = self.build_pipeline()?;
         pipeline.validate()?;
 
         // rootfs_output() returns anyhow::Result, so we attempt to downcast to
@@ -504,7 +519,7 @@ impl Profile {
             }
         }
 
-        Ok(())
+        Ok(Validated(()))
     }
 
     /// Validates mount-related configuration.

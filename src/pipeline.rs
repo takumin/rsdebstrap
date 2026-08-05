@@ -47,10 +47,18 @@ impl<'a> Pipeline<'a> {
     /// Creates a new pipeline with the given task phases, resolving each provision
     /// task's privilege and isolation settings against the profile defaults.
     ///
+    /// This is the unvalidated constructor: it resolves settings but performs none of the
+    /// semantic checks in [`Profile::validate`](crate::config::Profile::validate), so a
+    /// pipeline built here may still name a mount target that does not exist or a script
+    /// that is not a regular file. Production goes through
+    /// [`Profile::pipeline`](crate::config::Profile::pipeline), which takes the evidence
+    /// that validation ran.
+    ///
     /// # Errors
     ///
     /// Returns `RsdebstrapError::Validation` if a task declares `privilege: true` but
-    /// the profile configures no `defaults.privilege.method`.
+    /// the profile configures no `defaults.privilege.method`, or if it resolves to
+    /// escalated execution without isolation.
     pub fn new(
         prepare: &'a PrepareConfig,
         provision: &'a [ProvisionTask],
