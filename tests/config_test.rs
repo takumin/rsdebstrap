@@ -2231,3 +2231,58 @@ bootstrap:
         err_msg
     );
 }
+
+// =========================================================================
+// deny_unknown_fields on internally tagged variants
+//
+// The claim this pins: serde consumes the `type` tag when selecting a
+// variant and hands only the remaining keys to the payload struct, so
+// `deny_unknown_fields` on the payload rejects typos without also rejecting
+// the discriminator. It is documented in docs/ARCHITECTURE.md; asserting it
+// here means the docs do not have to be believed on their own.
+// =========================================================================
+
+#[test]
+fn internally_tagged_variants_reject_typos_but_accept_the_tag() {
+    let cases = [
+        (
+            "  type: mmdebstrap\n  suite: trixie\n  target: /tmp/rootfs\n",
+            "  suit: trixie\n",
+        ),
+        (
+            "  type: debootstrap\n  suite: trixie\n  target: /tmp/rootfs\n",
+            "  suit: trixie\n",
+        ),
+    ];
+
+    for (good, typo) in cases {
+        let accepted = format!("dir: /tmp/rootfs\nbootstrap:\n{good}");
+        let rejected = format!("dir: /tmp/rootfs\nbootstrap:\n{good}{typo}");
+
+        assert!(
+            yaml_serde::from_str::<rsdebstrap::config::Profile>(&accepted).is_ok(),
+            "the tag itself was treated as an unknown field:\n{accepted}"
+        );
+        assert!(
+            yaml_serde::from_str::<rsdebstrap::config::Profile>(&rejected).is_err(),
+            "a typo'd key was accepted:\n{rejected}"
+        );
+    }
+}
+
+#[test]
+fn internally_tagged_isolation_variants_reject_typos_but_accept_the_tag() {
+    let base = "dir: /tmp/rootfs\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: /tmp/rootfs\n";
+
+    let accepted = format!("{base}defaults:\n  isolation:\n    type: chroot\n");
+    let rejected = format!("{base}defaults:\n  isolation:\n    type: chroot\n    bogus: 1\n");
+
+    assert!(
+        yaml_serde::from_str::<rsdebstrap::config::Profile>(&accepted).is_ok(),
+        "the tag itself was treated as an unknown field:\n{accepted}"
+    );
+    assert!(
+        yaml_serde::from_str::<rsdebstrap::config::Profile>(&rejected).is_err(),
+        "a typo'd key was accepted:\n{rejected}"
+    );
+}

@@ -360,12 +360,10 @@ impl Bootstrap {
 /// currently the only backend. `type` is required whenever an `isolation` map is written
 /// out — the chroot default applies only when the surrounding `isolation` key (e.g.
 /// `defaults.isolation`) is omitted entirely.
-// Internally tagged like `Bootstrap` (rather than a plain struct) so each backend keeps its
-// own payload struct as an extension point for backend-specific options (bwrap, nspawn, …).
-// `deny_unknown_fields` would be a serde no-op on the enum itself, so strictness lives on
-// the per-variant payload structs: serde consumes the `type` tag when selecting the variant
-// and hands only the remaining keys to the payload, whose `deny_unknown_fields` then
-// rejects typo'd keys (see the `Bootstrap` note in ARCHITECTURE.md).
+// Internally tagged like `Bootstrap` so each backend keeps its own payload struct as an
+// extension point for backend-specific options (bwrap, nspawn, …).
+// `deny_unknown_fields` on the variant payload, not the enum: see the
+// `deny_unknown_fields` note in docs/ARCHITECTURE.md for why serde honors it here.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum IsolationConfig {
