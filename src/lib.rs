@@ -854,13 +854,9 @@ mod tests {
         );
     }
 
-    // Debian's default `/etc/resolv.conf` is a *symlink*, not a regular file,
-    // yet every other pipeline-level test seeds a regular file. The prepare
-    // guard must back the symlink up and restore it faithfully as a symlink
-    // (the backup `mv` moves the link itself; the restore `mv` moves it back),
-    // not flatten it into a regular file. Seed a *live* symlink whose relative
-    // target sits in the same `/etc` directory so it still resolves after the
-    // backup `mv`.
+    // Debian's default `/etc/resolv.conf` is a *symlink*, not a regular file, yet every
+    // other pipeline-level test seeds a regular file. The prepare guard must detach the
+    // symlink and restore it faithfully as a symlink, not flatten it into a regular file.
     #[test]
     fn prepare_only_restores_symlink_original() {
         let tmp = tempfile::tempdir().unwrap();
@@ -876,9 +872,8 @@ mod tests {
 
         run_pipeline_phase(&profile, executor.clone(), false).unwrap();
 
-        // Same command shape as prepare_only_restores_original — setup
-        // (mv backup, cp temp, chmod) → teardown (rm temp, mv restore) — but
-        // here the backed-up and restored entry is a symlink.
+        // Same shape as prepare_only_restores_original, but the detached and restored
+        // entry is a symlink.
         assert!(
             fs::symlink_metadata(&resolv)
                 .unwrap()
@@ -888,15 +883,10 @@ mod tests {
         assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new("upstream-resolv.conf"));
     }
 
-    // A fresh systemd rootfs commonly ships `/etc/resolv.conf` as a *dangling*
-    // symlink into `/run` (systemd-resolved not running yet) — exactly the
-    // prepare+assemble scenario this PR targets. The prepare guard must detect
-    // it with `symlink_metadata()` (which sees the link itself), not
-    // `metadata()` (which follows the link and errors on the missing target):
-    // detecting it as absent would skip the backup `mv` and then `cp` the
-    // temporary file *through* the dangling link, failing setup. With the
-    // guard correct, provisioning runs against a real temporary resolv.conf
-    // and the assemble task's permanent symlink still lands.
+    // A fresh systemd rootfs commonly ships `/etc/resolv.conf` as a *dangling* symlink into
+    // `/run` (systemd-resolved not running yet). Nothing in the prepare guard may stat
+    // through it: reading it as absent would skip the detach and then write the temporary
+    // file *through* the dangling link.
     #[test]
     fn both_configured_dangling_symlink_original_survives() {
         let tmp = tempfile::tempdir().unwrap();
@@ -912,11 +902,6 @@ mod tests {
 
         run_pipeline_phase(&profile, executor.clone(), false).unwrap();
 
-        // setup (mv backup, cp temp, chmod) → teardown (rm temp; the restore mv
-        // is *skipped* because try_exists() follows the dangling backup link and
-        // reports it absent, leaving the backup stranded — pre-existing
-        // behavior) → assemble stage-and-rename (ln, mv). The permanent assemble
-        // symlink is the final state.
         assert!(
             fs::symlink_metadata(&resolv)
                 .unwrap()
@@ -924,5 +909,12 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new(LINK_TARGET));
+        // The restore runs even though the original is a dangling link: it is held as a
+        // symlink value, never stat'd through. Nothing may be stranded in /etc.
+        let etc: Vec<String> = fs::read_dir(rootfs.join("etc"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(etc, ["resolv.conf"], "unexpected leftovers in /etc: {etc:?}");
     }
 }
