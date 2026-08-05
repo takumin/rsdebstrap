@@ -18,8 +18,8 @@ use rsdebstrap::privilege::Privilege;
 use tempfile::NamedTempFile;
 use tracing::warn;
 
-/// Global mutex to serialize tests that modify the current working directory.
-/// This prevents parallel tests from interfering with each other.
+// Global mutex to serialize tests that modify the current working directory.
+// This prevents parallel tests from interfering with each other.
 pub static CWD_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[macro_export]
@@ -66,10 +66,10 @@ pub fn dedent(input: &str) -> String {
     out
 }
 
-/// Builder for constructing `MmdebstrapConfig` in tests.
-///
-/// Provides a fluent API to set only the fields that differ from defaults,
-/// reducing boilerplate in test code.
+// Builder for constructing `MmdebstrapConfig` in tests.
+//
+// Provides a fluent API to set only the fields that differ from defaults,
+// reducing boilerplate in test code.
 pub struct MmdebstrapConfigBuilder {
     suite: String,
     target: String,
@@ -255,17 +255,17 @@ impl MmdebstrapConfigBuilder {
     }
 }
 
-/// Test helper to create a MmdebstrapConfig with minimal required fields.
-///
-/// All optional fields are initialized with their default values.
+// Test helper to create a MmdebstrapConfig with minimal required fields.
+//
+// All optional fields are initialized with their default values.
 pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) -> MmdebstrapConfig {
     MmdebstrapConfigBuilder::new(suite, target).build()
 }
 
-/// Builder for constructing `DebootstrapConfig` in tests.
-///
-/// Provides a fluent API to set only the fields that differ from defaults,
-/// reducing boilerplate in test code.
+// Builder for constructing `DebootstrapConfig` in tests.
+//
+// Provides a fluent API to set only the fields that differ from defaults,
+// reducing boilerplate in test code.
 pub struct DebootstrapConfigBuilder {
     suite: String,
     target: String,
@@ -395,9 +395,9 @@ impl DebootstrapConfigBuilder {
     }
 }
 
-/// Test helper to create a DebootstrapConfig with minimal required fields.
-///
-/// All optional fields are initialized with their default values.
+// Test helper to create a DebootstrapConfig with minimal required fields.
+//
+// All optional fields are initialized with their default values.
 pub fn create_debootstrap(
     suite: impl Into<String>,
     target: impl Into<String>,
@@ -405,7 +405,7 @@ pub fn create_debootstrap(
     DebootstrapConfigBuilder::new(suite, target).build()
 }
 
-/// Extracts MmdebstrapConfig from a Profile, returning `None` if it's not the mmdebstrap backend.
+// Extracts MmdebstrapConfig from a Profile, returning `None` if it's not the mmdebstrap backend.
 pub fn get_mmdebstrap_config(profile: &Profile) -> Option<&MmdebstrapConfig> {
     match &profile.bootstrap {
         Bootstrap::Mmdebstrap(cfg) => Some(cfg),
@@ -413,7 +413,7 @@ pub fn get_mmdebstrap_config(profile: &Profile) -> Option<&MmdebstrapConfig> {
     }
 }
 
-/// Extracts DebootstrapConfig from a Profile, returning `None` if it's not the debootstrap backend.
+// Extracts DebootstrapConfig from a Profile, returning `None` if it's not the debootstrap backend.
 pub fn get_debootstrap_config(profile: &Profile) -> Option<&DebootstrapConfig> {
     match &profile.bootstrap {
         Bootstrap::Debootstrap(cfg) => Some(cfg),
@@ -421,7 +421,7 @@ pub fn get_debootstrap_config(profile: &Profile) -> Option<&DebootstrapConfig> {
     }
 }
 
-/// Loads a Profile from YAML content in a temporary file.
+// Loads a Profile from YAML content in a temporary file.
 pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
     let yaml = yaml.as_ref();
     let mut file = NamedTempFile::new()?;
@@ -433,7 +433,7 @@ pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
     Ok(load_profile(path)?)
 }
 
-/// Loads a Profile from YAML content, returning typed `RsdebstrapError`.
+// Loads a Profile from YAML content, returning typed `RsdebstrapError`.
 pub fn load_profile_from_yaml_typed(
     yaml: impl AsRef<str>,
 ) -> std::result::Result<Profile, RsdebstrapError> {
@@ -448,19 +448,19 @@ pub fn load_profile_from_yaml_typed(
     load_profile(path)
 }
 
-/// RAII guard that restores the current working directory when dropped.
-///
-/// This guard saves the current directory on creation and automatically
-/// restores it when it goes out of scope, even if a panic occurs.
+// RAII guard that restores the current working directory when dropped.
+//
+// This guard saves the current directory on creation and automatically
+// restores it when it goes out of scope, even if a panic occurs.
 pub struct CwdGuard {
     original: Utf8PathBuf,
 }
 
 impl CwdGuard {
-    /// Creates a new CwdGuard, saving the current working directory.
-    ///
-    /// # Errors
-    /// Returns an error if the current directory cannot be determined.
+    // Creates a new CwdGuard, saving the current working directory.
+    //
+    // # Errors
+    // Returns an error if the current directory cannot be determined.
     pub fn new() -> Result<Self> {
         let original = std::env::current_dir()?;
         let original = Utf8PathBuf::from_path_buf(original).map_err(|path| {
@@ -469,10 +469,10 @@ impl CwdGuard {
         Ok(Self { original })
     }
 
-    /// Changes the current working directory to the specified path.
-    ///
-    /// # Errors
-    /// Returns an error if the directory change fails.
+    // Changes the current working directory to the specified path.
+    //
+    // # Errors
+    // Returns an error if the directory change fails.
     pub fn change_to(&self, path: &std::path::Path) -> Result<()> {
         std::env::set_current_dir(path)
             .with_context(|| format!("failed to change directory to {}", path.display()))
@@ -491,7 +491,7 @@ impl Drop for CwdGuard {
     }
 }
 
-/// Mock isolation context for testing task execution.
+// Mock isolation context for testing task execution.
 pub struct MockContext {
     rootfs: Utf8PathBuf,
     dry_run: bool,

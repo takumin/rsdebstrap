@@ -121,10 +121,10 @@ mod tests {
         assert_eq!(task.name(), "generate");
     }
 
-    /// `config()` is what the isolation layer consumes, so pin the mapping
-    /// once on the field-carrying case; the copy case is covered end to end
-    /// by `setup_copy_mode_issues_correct_commands` in
-    /// `src/isolation/resolv_conf.rs`.
+    // `config()` is what the isolation layer consumes, so pin the mapping
+    // once on the field-carrying case; the copy case is covered end to end
+    // by `setup_copy_mode_issues_correct_commands` in
+    // `src/isolation/resolv_conf.rs`.
     #[test]
     fn config_generate() {
         let task = ResolvConfTask {

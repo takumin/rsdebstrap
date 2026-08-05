@@ -257,12 +257,12 @@ pub fn run_schema() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    //! Sequencing tests for `run_pipeline_phase()`: the temporary prepare
-    //! resolv.conf must be restored after provision and before assemble, so an
-    //! assemble resolv_conf task's permanent file/symlink survives; the
-    //! assemble phase must be gated on prepare/provision and the restore both
-    //! succeeding; and an assemble failure must propagate while leaving the
-    //! restored original in place.
+    // Sequencing tests for `run_pipeline_phase()`: the temporary prepare
+    // resolv.conf must be restored after provision and before assemble, so an
+    // assemble resolv_conf task's permanent file/symlink survives; the
+    // assemble phase must be gated on prepare/provision and the restore both
+    // succeeding; and an assemble failure must propagate while leaving the
+    // restored original in place.
 
     use super::*;
     use crate::executor::{CommandSpec, ExecutionResult};
@@ -272,26 +272,26 @@ mod tests {
     use std::process::ExitStatus;
     use std::sync::Mutex;
 
-    /// How a configured `RecordingExecutor` failure matches a command's args.
+    // How a configured `RecordingExecutor` failure matches a command's args.
     enum ArgMatch {
-        /// Any invocation of the command fails.
+        // Any invocation of the command fails.
         Any,
-        /// Fails if any argument contains the fragment.
+        // Fails if any argument contains the fragment.
         Contains(String),
-        /// Fails only if the *first* argument contains the fragment. Targets one
-        /// of several same-named commands whose args differ by position — e.g.
-        /// the teardown restore `mv <backup> <resolv>` (backup first) vs the
-        /// setup backup `mv <resolv> <backup>` (backup second).
+        // Fails only if the *first* argument contains the fragment. Targets one
+        // of several same-named commands whose args differ by position — e.g.
+        // the teardown restore `mv <backup> <resolv>` (backup first) vs the
+        // setup backup `mv <resolv> <backup>` (backup second).
         FirstArgContains(String),
     }
 
-    /// Records commands and really executes them so tests can assert both the
-    /// command order and the actual filesystem effects on a temp rootfs.
-    /// `fail_on_command` short-circuits a matching command with exit 1 without
-    /// executing it; `fail_on_command_with_arg` / `fail_on_command_with_first_arg`
-    /// additionally require an argument to contain the given fragment (anywhere,
-    /// or in first position), so one occurrence of a repeated command can be
-    /// targeted.
+    // Records commands and really executes them so tests can assert both the
+    // command order and the actual filesystem effects on a temp rootfs.
+    // `fail_on_command` short-circuits a matching command with exit 1 without
+    // executing it; `fail_on_command_with_arg` / `fail_on_command_with_first_arg`
+    // additionally require an argument to contain the given fragment (anywhere,
+    // or in first position), so one occurrence of a repeated command can be
+    // targeted.
     struct RecordingExecutor {
         commands: Mutex<Vec<(String, Vec<String>)>>,
         fail_on: Mutex<Option<(String, ArgMatch)>>,
@@ -372,8 +372,8 @@ mod tests {
         "assemble:\n  resolv_conf:\n    link: ../run/systemd/resolve/stub-resolv.conf\n";
     const GENERATE_ASSEMBLE: &str = "assemble:\n  resolv_conf:\n    name_servers: [198.51.100.1]\n";
 
-    /// Minimal profile with a link-mode assemble task when `assemble` is set;
-    /// delegates to [`profile_yaml_with_assemble`].
+    // Minimal profile with a link-mode assemble task when `assemble` is set;
+    // delegates to [`profile_yaml_with_assemble`].
     fn profile_yaml(
         dir: &Utf8Path,
         prepare: bool,
@@ -383,12 +383,12 @@ mod tests {
         profile_yaml_with_assemble(dir, prepare, provision, assemble.then_some(LINK_ASSEMBLE))
     }
 
-    /// Minimal profile: directory bootstrap output, no mounts, no privilege
-    /// defaults (commands run unprivileged so the executor can really run
-    /// them). `provision` adds one shell task with the given inline content,
-    /// running directly on the host (`isolation: false`). `assemble`, if given,
-    /// is the raw YAML for the assemble section (e.g. [`LINK_ASSEMBLE`] or
-    /// [`GENERATE_ASSEMBLE`]).
+    // Minimal profile: directory bootstrap output, no mounts, no privilege
+    // defaults (commands run unprivileged so the executor can really run
+    // them). `provision` adds one shell task with the given inline content,
+    // running directly on the host (`isolation: false`). `assemble`, if given,
+    // is the raw YAML for the assemble section (e.g. [`LINK_ASSEMBLE`] or
+    // [`GENERATE_ASSEMBLE`]).
     fn profile_yaml_with_assemble(
         dir: &Utf8Path,
         prepare: bool,
@@ -755,13 +755,13 @@ mod tests {
         assert!(fs::symlink_metadata(rootfs.join("etc/resolv.conf.rsdebstrap-tmp")).is_err());
     }
 
-    /// Debian's default `/etc/resolv.conf` is a *symlink*, not a regular file,
-    /// yet every other pipeline-level test seeds a regular file. The prepare
-    /// guard must back the symlink up and restore it faithfully as a symlink
-    /// (the backup `mv` moves the link itself; the restore `mv` moves it back),
-    /// not flatten it into a regular file. Seed a *live* symlink whose relative
-    /// target sits in the same `/etc` directory so it still resolves after the
-    /// backup `mv`.
+    // Debian's default `/etc/resolv.conf` is a *symlink*, not a regular file,
+    // yet every other pipeline-level test seeds a regular file. The prepare
+    // guard must back the symlink up and restore it faithfully as a symlink
+    // (the backup `mv` moves the link itself; the restore `mv` moves it back),
+    // not flatten it into a regular file. Seed a *live* symlink whose relative
+    // target sits in the same `/etc` directory so it still resolves after the
+    // backup `mv`.
     #[test]
     fn prepare_only_restores_symlink_original() {
         let tmp = tempfile::tempdir().unwrap();
@@ -791,15 +791,15 @@ mod tests {
         assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
     }
 
-    /// A fresh systemd rootfs commonly ships `/etc/resolv.conf` as a *dangling*
-    /// symlink into `/run` (systemd-resolved not running yet) — exactly the
-    /// prepare+assemble scenario this PR targets. The prepare guard must detect
-    /// it with `symlink_metadata()` (which sees the link itself), not
-    /// `metadata()` (which follows the link and errors on the missing target):
-    /// detecting it as absent would skip the backup `mv` and then `cp` the
-    /// temporary file *through* the dangling link, failing setup. With the
-    /// guard correct, provisioning runs against a real temporary resolv.conf
-    /// and the assemble task's permanent symlink still lands.
+    // A fresh systemd rootfs commonly ships `/etc/resolv.conf` as a *dangling*
+    // symlink into `/run` (systemd-resolved not running yet) — exactly the
+    // prepare+assemble scenario this PR targets. The prepare guard must detect
+    // it with `symlink_metadata()` (which sees the link itself), not
+    // `metadata()` (which follows the link and errors on the missing target):
+    // detecting it as absent would skip the backup `mv` and then `cp` the
+    // temporary file *through* the dangling link, failing setup. With the
+    // guard correct, provisioning runs against a real temporary resolv.conf
+    // and the assemble task's permanent symlink still lands.
     #[test]
     fn both_configured_dangling_symlink_original_survives() {
         let tmp = tempfile::tempdir().unwrap();

@@ -1,20 +1,20 @@
-//! Regression tests for the generated JSON Schema (`rsdebstrap schema`).
-//!
-//! The schema is derived from the Rust config types via `schemars`. Its whole value is that it
-//! keeps matching what `apply`/`validate` accept. These tests guard that contract so schema
-//! drift cannot slip through unnoticed:
-//!
-//! 1. The schema generates without panicking and has the expected top-level shape.
-//! 2. The shipped example profile validates against it.
-//! 3. Differential check: for a table of YAML documents, the schema's verdict is compared with
-//!    the *structural* deserializer's verdict (`yaml_serde::from_str::<Profile>`). The critical
-//!    safety invariant is that the schema must never reject a document the deserializer accepts
-//!    (a false rejection would make editor tooling flag valid configs). Semantic-only checks
-//!    (e.g. mitamae binary resolution, mount/privilege cross-checks) live in `Profile::validate`
-//!    and are intentionally out of scope here — JSON Schema cannot express them.
-//! 4. The known divergences (schema accepts, deserializer rejects) are pinned with per-side
-//!    expectations in `schema_divergences_are_pinned`. The invariant is one-directional, so a
-//!    new false-accept is not a test failure — add a row there when one is discovered.
+// Regression tests for the generated JSON Schema (`rsdebstrap schema`).
+//
+// The schema is derived from the Rust config types via `schemars`. Its whole value is that it
+// keeps matching what `apply`/`validate` accept. These tests guard that contract so schema
+// drift cannot slip through unnoticed:
+//
+// 1. The schema generates without panicking and has the expected top-level shape.
+// 2. The shipped example profile validates against it.
+// 3. Differential check: for a table of YAML documents, the schema's verdict is compared with
+//    the *structural* deserializer's verdict (`yaml_serde::from_str::<Profile>`). The critical
+//    safety invariant is that the schema must never reject a document the deserializer accepts
+//    (a false rejection would make editor tooling flag valid configs). Semantic-only checks
+//    (e.g. mitamae binary resolution, mount/privilege cross-checks) live in `Profile::validate`
+//    and are intentionally out of scope here — JSON Schema cannot express them.
+// 4. The known divergences (schema accepts, deserializer rejects) are pinned with per-side
+//    expectations in `schema_divergences_are_pinned`. The invariant is one-directional, so a
+//    new false-accept is not a test failure — add a row there when one is discovered.
 
 // The whole crate is compiled out without the default-on `schema` feature: it exercises the
 // generated schema, which does not exist in a schema-less build. Gated in-file rather than
@@ -27,27 +27,27 @@ use jsonschema::Validator;
 use rsdebstrap::config::Profile;
 use serde_json::Value;
 
-/// Builds a validator from the crate's generated schema.
+// Builds a validator from the crate's generated schema.
 fn validator() -> Validator {
     let schema = rsdebstrap::profile_json_schema();
     jsonschema::validator_for(&schema).expect("generated schema must be a valid JSON Schema")
 }
 
-/// True if `yaml` satisfies the generated JSON Schema.
-///
-/// A document that cannot be converted into a JSON value at all (custom tags,
-/// non-string keys, ...) counts as schema-rejected: no JSON-Schema-based tooling can
-/// accept what it cannot even represent.
+// True if `yaml` satisfies the generated JSON Schema.
+//
+// A document that cannot be converted into a JSON value at all (custom tags,
+// non-string keys, ...) counts as schema-rejected: no JSON-Schema-based tooling can
+// accept what it cannot even represent.
 fn schema_accepts(v: &Validator, yaml: &str) -> bool {
     yaml_serde::from_str::<Value>(yaml).is_ok_and(|instance| v.is_valid(&instance))
 }
 
-/// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
+// True if `yaml` deserializes structurally into a `Profile` (no semantic validation).
 fn deser_accepts(yaml: &str) -> bool {
     yaml_serde::from_str::<Profile>(yaml).is_ok()
 }
 
-/// Minimal valid profile prefix; append a `provision:` block (or nothing) per case.
+// Minimal valid profile prefix; append a `provision:` block (or nothing) per case.
 const BASE: &str = "\
 dir: /out
 bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}

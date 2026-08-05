@@ -477,10 +477,10 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Pins that `privilege` reaches `Privilege`'s visitor rather than being
-    /// defaulted; the visitor's own acceptance set is covered in
-    /// `src/privilege.rs`. Absence resolving to `Inherit` is asserted by
-    /// `deserialize_link_relative`.
+    // Pins that `privilege` reaches `Privilege`'s visitor rather than being
+    // defaulted; the visitor's own acceptance set is covered in
+    // `src/privilege.rs`. Absence resolving to `Inherit` is asserted by
+    // `deserialize_link_relative`.
     #[test]
     fn deserialize_privilege_true() {
         let yaml = "name_servers:\n  - 8.8.8.8\nprivilege: true\n";
@@ -943,10 +943,10 @@ mod tests {
         }
     }
 
-    /// A recorded command with its arguments and privilege setting.
+    // A recorded command with its arguments and privilege setting.
     type RecordedCommand = (String, Vec<String>, Option<PrivilegeMethod>);
 
-    /// Records executed commands for assertion.
+    // Records executed commands for assertion.
     struct MockCommandExecutor {
         commands: Mutex<Vec<RecordedCommand>>,
         fail_on_command: Mutex<Option<String>>,

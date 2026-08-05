@@ -54,9 +54,9 @@ fn test_validate_rejects_empty_inline_content() {
     );
 }
 
-/// The one place the `trim()` in `ScriptSource::validate` is pinned: every
-/// other empty-content test passes an actually empty string, which would
-/// still be rejected if the trim were dropped.
+// The one place the `trim()` in `ScriptSource::validate` is pinned: every
+// other empty-content test passes an actually empty string, which would
+// still be rejected if the trim were dropped.
 #[test]
 fn test_validate_rejects_whitespace_only_inline_content() {
     let task = ShellTask::new(ScriptSource::Content("   \n\t  ".to_string()));
@@ -698,10 +698,10 @@ fn test_task_definition_binary_path_mitamae_none_when_unset() {
     assert_eq!(task.binary_path(), None);
 }
 
-/// `false` is the only shorthand whose resolved outcome differs: `true`,
-/// the map form and an absent field all yield the single `IsolationConfig`
-/// variant. The forms themselves are pinned by `TaskIsolation`'s
-/// deserialize tests in `src/isolation/mod.rs`.
+// `false` is the only shorthand whose resolved outcome differs: `true`,
+// the map form and an absent field all yield the single `IsolationConfig`
+// variant. The forms themselves are pinned by `TaskIsolation`'s
+// deserialize tests in `src/isolation/mod.rs`.
 #[test]
 fn test_shell_task_deserialize_isolation_false() {
     let yaml = r#"content: echo hello

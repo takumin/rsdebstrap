@@ -1,4 +1,4 @@
-//! Tests for the Pipeline orchestrator.
+// Tests for the Pipeline orchestrator.
 
 use std::sync::{Arc, Mutex};
 
@@ -10,22 +10,22 @@ use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use rsdebstrap::phase::{AssembleConfig, PrepareConfig, ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::pipeline::Pipeline;
 
-/// Empty prepare/assemble phases shared by the provision-focused pipeline tests.
+// Empty prepare/assemble phases shared by the provision-focused pipeline tests.
 static EMPTY_PREPARE: PrepareConfig = PrepareConfig {
     mount: None,
     resolv_conf: None,
 };
 static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig { resolv_conf: None };
 
-/// Builds a pipeline with only provision tasks (empty prepare/assemble phases).
+// Builds a pipeline with only provision tasks (empty prepare/assemble phases).
 fn provision_pipeline(tasks: &[ProvisionTask]) -> Pipeline<'_> {
     Pipeline::new(&EMPTY_PREPARE, tasks, &EMPTY_ASSEMBLE)
 }
 
-/// Records executed commands in order, optionally failing on specific calls.
+// Records executed commands in order, optionally failing on specific calls.
 struct MockExecutor {
     calls: Mutex<Vec<Vec<String>>>,
-    /// If set, the Nth call (0-indexed) will return an error.
+    // If set, the Nth call (0-indexed) will return an error.
     fail_on_call: Option<usize>,
 }
 
@@ -69,7 +69,7 @@ impl CommandExecutor for MockExecutor {
     }
 }
 
-/// Helper to create a simple inline shell task with privilege and isolation resolved.
+// Helper to create a simple inline shell task with privilege and isolation resolved.
 fn inline_task(content: &str) -> ProvisionTask {
     let mut task = ShellTask::new(ScriptSource::Content(content.to_string()));
     task.resolve_privilege(None).unwrap();
@@ -77,7 +77,7 @@ fn inline_task(content: &str) -> ProvisionTask {
     ProvisionTask::Shell(task)
 }
 
-/// Helper to create an inline shell task with isolation disabled (direct execution).
+// Helper to create an inline shell task with isolation disabled (direct execution).
 fn inline_task_direct(content: &str) -> ProvisionTask {
     let yaml = format!("content: \"{}\"\nisolation: false\n", content);
     let mut task: ShellTask = yaml_serde::from_str(&yaml).unwrap();

@@ -27,7 +27,7 @@ impl CommandExecutor for RecordingExecutor {
     }
 }
 
-/// Write YAML content to a temporary file and return it (kept alive by caller).
+// Write YAML content to a temporary file and return it (kept alive by caller).
 fn write_yaml_tempfile(yaml: &str) -> NamedTempFile {
     let mut file = NamedTempFile::new().expect("failed to create temp file");
     file.write_all(yaml.as_bytes())
@@ -38,7 +38,7 @@ fn write_yaml_tempfile(yaml: &str) -> NamedTempFile {
     file
 }
 
-/// Minimal bootstrap-only YAML (no provisioners).
+// Minimal bootstrap-only YAML (no provisioners).
 fn bootstrap_only_yaml() -> &'static str {
     // editorconfig-checker-disable
     r#"---
@@ -58,7 +58,7 @@ bootstrap:
     // editorconfig-checker-enable
 }
 
-/// Minimal YAML with a provisioner (requires directory target for pipeline).
+// Minimal YAML with a provisioner (requires directory target for pipeline).
 fn provisioner_yaml() -> &'static str {
     // editorconfig-checker-disable
     r#"---
@@ -89,7 +89,7 @@ provision:
     // editorconfig-checker-enable
 }
 
-/// Minimal bootstrap-only YAML using the debootstrap backend.
+// Minimal bootstrap-only YAML using the debootstrap backend.
 fn bootstrap_only_debootstrap_yaml() -> &'static str {
     // editorconfig-checker-disable
     r#"---
@@ -206,8 +206,8 @@ fn run_apply_with_pipeline_tasks_uses_isolation() {
     assert_eq!(args[1], "/bin/sh");
 }
 
-/// An executor that fails on the Nth call (1-indexed).
-/// Used to simulate failures at specific points in the execution flow.
+// An executor that fails on the Nth call (1-indexed).
+// Used to simulate failures at specific points in the execution flow.
 struct FailingExecutor {
     fail_on_call: usize,
     call_count: AtomicUsize,
@@ -239,9 +239,9 @@ impl CommandExecutor for FailingExecutor {
     }
 }
 
-/// In dry-run mode there is no separate teardown command, so this covers the
-/// pipeline task error alone; the teardown error paths live in
-/// `src/lib.rs`'s `run_pipeline_phase` tests and `src/isolation/mount.rs`.
+// In dry-run mode there is no separate teardown command, so this covers the
+// pipeline task error alone; the teardown error paths live in
+// `src/lib.rs`'s `run_pipeline_phase` tests and `src/isolation/mount.rs`.
 #[test]
 fn run_apply_propagates_provision_failure() {
     let file = write_yaml_tempfile(provisioner_yaml());

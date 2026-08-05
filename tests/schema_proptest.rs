@@ -1,22 +1,22 @@
-//! Property-based drift guard for the generated JSON Schema.
-//!
-//! `tests/schema_test.rs` spot-checks the schema against a curated table. This file stresses
-//! the same contract with randomly generated documents so drift cannot hide in a shape nobody
-//! thought to enumerate.
-//!
-//! The property asserted is the *critical safety invariant*: whenever the structural
-//! deserializer accepts a document, the generated schema must also accept it. A violation means
-//! editor/CI tooling would flag a config that `apply`/`validate` happily parse — the exact
-//! failure mode the schema exists to avoid.
-//!
-//! Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
-//! `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
-//! `Privilege`/`TaskIsolation`/`ShellTask`/`MitamaeTask` dispatch, but not the semantic
-//! `Profile::validate`), and the schema verdict comes from the compiled validator. Then through
-//! a YAML round-trip (`yaml_serde::to_string` -> `from_str`), because production parses YAML
-//! text and yaml_serde's acceptance surface is not identical to the JSON value model — the
-//! round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
-//! through `de::null_to_default`).
+// Property-based drift guard for the generated JSON Schema.
+//
+// `tests/schema_test.rs` spot-checks the schema against a curated table. This file stresses
+// the same contract with randomly generated documents so drift cannot hide in a shape nobody
+// thought to enumerate.
+//
+// The property asserted is the *critical safety invariant*: whenever the structural
+// deserializer accepts a document, the generated schema must also accept it. A violation means
+// editor/CI tooling would flag a config that `apply`/`validate` happily parse — the exact
+// failure mode the schema exists to avoid.
+//
+// Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
+// `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
+// `Privilege`/`TaskIsolation`/`ShellTask`/`MitamaeTask` dispatch, but not the semantic
+// `Profile::validate`), and the schema verdict comes from the compiled validator. Then through
+// a YAML round-trip (`yaml_serde::to_string` -> `from_str`), because production parses YAML
+// text and yaml_serde's acceptance surface is not identical to the JSON value model — the
+// round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
+// through `de::null_to_default`).
 
 // The whole crate is compiled out without the default-on `schema` feature: it exercises the
 // generated schema, which does not exist in a schema-less build. Gated in-file rather than
@@ -38,7 +38,7 @@ static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
     jsonschema::validator_for(&schema).expect("generated schema must be a valid JSON Schema")
 });
 
-/// Asserts the safety invariant for a single document.
+// Asserts the safety invariant for a single document.
 fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
     let deser_ok = serde_json::from_value::<Profile>(doc.clone()).is_ok();
     let schema_ok = VALIDATOR.is_valid(doc);
@@ -62,8 +62,8 @@ fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
     Ok(())
 }
 
-/// An optional field: `None` omits the key entirely; `Some(v)` sets it to `v` (possibly null or
-/// a deliberately wrong type). Covers absent / explicit-null / string / non-string.
+// An optional field: `None` omits the key entirely; `Some(v)` sets it to `v` (possibly null or
+// a deliberately wrong type). Covers absent / explicit-null / string / non-string.
 fn opt_string_field() -> impl Strategy<Value = Option<Value>> {
     prop_oneof![
         Just(None),
@@ -73,7 +73,7 @@ fn opt_string_field() -> impl Strategy<Value = Option<Value>> {
     ]
 }
 
-/// Random `privilege` field spanning every accepted and near-miss shape.
+// Random `privilege` field spanning every accepted and near-miss shape.
 fn privilege_field() -> impl Strategy<Value = Option<Value>> {
     prop_oneof![
         Just(None),
@@ -90,7 +90,7 @@ fn privilege_field() -> impl Strategy<Value = Option<Value>> {
     ]
 }
 
-/// Random `isolation` field spanning every accepted and near-miss shape.
+// Random `isolation` field spanning every accepted and near-miss shape.
 fn isolation_field() -> impl Strategy<Value = Option<Value>> {
     prop_oneof![
         Just(None),
@@ -106,7 +106,7 @@ fn isolation_field() -> impl Strategy<Value = Option<Value>> {
     ]
 }
 
-/// A single provision task with randomized (and frequently invalid) fields.
+// A single provision task with randomized (and frequently invalid) fields.
 fn task_strategy() -> impl Strategy<Value = Value> {
     (
         prop_oneof![Just("shell"), Just("mitamae"), Just("bogus")],
@@ -138,7 +138,7 @@ fn task_strategy() -> impl Strategy<Value = Value> {
         })
 }
 
-/// Random `bootstrap` block: valid backend base plus optional known/unknown keys.
+// Random `bootstrap` block: valid backend base plus optional known/unknown keys.
 fn bootstrap_strategy() -> impl Strategy<Value = Value> {
     (
         prop_oneof![Just("mmdebstrap"), Just("debootstrap")],
@@ -163,9 +163,9 @@ fn bootstrap_strategy() -> impl Strategy<Value = Value> {
         })
 }
 
-/// A field value spanning absent / null / string / bool / int / empty-array / string-array.
-/// Wider than `opt_string_field` so it also probes the list-typed fields in the prepare/assemble
-/// surface (`options`, `name_servers`, `search`) and deliberately wrong scalar/array shapes.
+// A field value spanning absent / null / string / bool / int / empty-array / string-array.
+// Wider than `opt_string_field` so it also probes the list-typed fields in the prepare/assemble
+// surface (`options`, `name_servers`, `search`) and deliberately wrong scalar/array shapes.
 fn opt_any_field() -> impl Strategy<Value = Option<Value>> {
     prop_oneof![
         Just(None),
@@ -178,8 +178,8 @@ fn opt_any_field() -> impl Strategy<Value = Option<Value>> {
     ]
 }
 
-/// Random mount entry: known keys with arbitrary (often wrong-typed) values, plus an optional
-/// unknown key to exercise `MountEntry`'s `deny_unknown_fields` / `additionalProperties: false`.
+// Random mount entry: known keys with arbitrary (often wrong-typed) values, plus an optional
+// unknown key to exercise `MountEntry`'s `deny_unknown_fields` / `additionalProperties: false`.
 fn mount_entry_strategy() -> impl Strategy<Value = Value> {
     (opt_any_field(), opt_any_field(), opt_any_field(), any::<bool>()).prop_map(
         |(source, target, options, unknown)| {
@@ -201,10 +201,10 @@ fn mount_entry_strategy() -> impl Strategy<Value = Value> {
     )
 }
 
-/// Random `resolv_conf` map. Emits the union of the prepare (`copy`) and assemble
-/// (`link`/`privilege`) field sets, so each phase's `deny_unknown_fields` is exercised (a key
-/// unknown to one phase is rejected by both the deserializer and the schema there). `None` on the
-/// whole strategy omits the key entirely.
+// Random `resolv_conf` map. Emits the union of the prepare (`copy`) and assemble
+// (`link`/`privilege`) field sets, so each phase's `deny_unknown_fields` is exercised (a key
+// unknown to one phase is rejected by both the deserializer and the schema there). `None` on the
+// whole strategy omits the key entirely.
 fn resolv_conf_strategy() -> impl Strategy<Value = Option<Value>> {
     let map = (
         opt_any_field(),   // copy      (prepare only)
@@ -242,7 +242,7 @@ fn resolv_conf_strategy() -> impl Strategy<Value = Option<Value>> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
-    /// Randomized provision tasks must never be false-rejected by the schema.
+    // Randomized provision tasks must never be false-rejected by the schema.
     #[test]
     fn provision_tasks_never_false_rejected(tasks in prop::collection::vec(task_strategy(), 0..4)) {
         let doc = json!({
@@ -254,7 +254,7 @@ proptest! {
         assert_no_false_reject(&doc)?;
     }
 
-    /// Randomized bootstrap + defaults blocks must never be false-rejected by the schema.
+    // Randomized bootstrap + defaults blocks must never be false-rejected by the schema.
     #[test]
     fn bootstrap_and_defaults_never_false_rejected(
         bootstrap in bootstrap_strategy(),
@@ -276,10 +276,10 @@ proptest! {
         assert_no_false_reject(&doc)?;
     }
 
-    /// Randomized `prepare` (mount / resolv_conf) and `assemble` (resolv_conf) blocks must never
-    /// be false-rejected by the schema. These named-field structs are `deny_unknown_fields` with
-    /// nested path/list fields, so they are exactly the kind of surface where schema generation
-    /// could silently diverge from serde — yet the curated table only spot-checks one mount case.
+    // Randomized `prepare` (mount / resolv_conf) and `assemble` (resolv_conf) blocks must never
+    // be false-rejected by the schema. These named-field structs are `deny_unknown_fields` with
+    // nested path/list fields, so they are exactly the kind of surface where schema generation
+    // could silently diverge from serde — yet the curated table only spot-checks one mount case.
     #[test]
     fn prepare_and_assemble_never_false_rejected(
         preset in proptest::option::of(prop_oneof![Just("recommends"), Just("bogus")]),

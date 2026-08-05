@@ -47,6 +47,9 @@ filesystem-safety code — it captures decisions that are not obvious from the s
   `description` fields in the generated JSON Schema, and in `src/cli.rs` they become
   `--help` text. Keep maintainer-only notes in plain `//` comments so they do not leak
   into schema or help output.
+- Test code uses `//` only — never `///` or `//!`, and no exception for test modules
+  being invisible to schema and `--help`. Enforced by `tests/comment_style_test.rs`,
+  which explains the reasoning when it fires.
 
 ## Profile Structure (YAML)
 

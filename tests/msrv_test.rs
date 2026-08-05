@@ -1,7 +1,7 @@
-//! Guards the declared MSRV (`rust-version`) against drift from the pinned `rust-toolchain.toml`.
-//! Rationale: `docs/ARCHITECTURE.md` (MSRV policy).
+// Guards the declared MSRV (`rust-version`) against drift from the pinned `rust-toolchain.toml`.
+// Rationale: `docs/ARCHITECTURE.md` (MSRV policy).
 
-/// The pinned `channel` value from `rust-toolchain.toml` (e.g. `"1.97.1"`).
+// The pinned `channel` value from `rust-toolchain.toml` (e.g. `"1.97.1"`).
 fn pinned_channel() -> &'static str {
     let toolchain = include_str!("../rust-toolchain.toml");
     toolchain
@@ -14,7 +14,7 @@ fn pinned_channel() -> &'static str {
         .expect("rust-toolchain.toml must declare channel = \"...\"")
 }
 
-/// Numeric dotted-version components, e.g. `"1.97.1"` -> `[1, 97, 1]`.
+// Numeric dotted-version components, e.g. `"1.97.1"` -> `[1, 97, 1]`.
 fn version_parts(version: &str) -> Vec<u64> {
     version
         .split('.')
