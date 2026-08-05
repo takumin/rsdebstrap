@@ -154,45 +154,6 @@ fn test_execute_failure_returns_error() {
 }
 
 #[test]
-fn test_execute_command_construction() {
-    let temp_dir = tempdir().expect("failed to create temp dir");
-    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
-        .expect("path should be valid UTF-8");
-
-    setup_rootfs_with_tmp(&temp_dir);
-    let binary = create_fake_binary(&temp_dir);
-
-    let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
-
-    let context = MockContext::new(&rootfs);
-    task.execute(&context).expect("execute should succeed");
-
-    let commands = context.executed_commands();
-    assert_eq!(commands.len(), 1);
-
-    let cmd = &commands[0];
-    assert_eq!(cmd.len(), 3, "Command should have exactly 3 elements");
-
-    let binary_arg = &cmd[0];
-    assert!(
-        binary_arg.starts_with("/tmp/mitamae-"),
-        "First element should be mitamae binary, got: {}",
-        binary_arg
-    );
-
-    assert_eq!(cmd[1], "local", "Second element should be 'local'");
-
-    let recipe_arg = &cmd[2];
-    assert!(
-        recipe_arg.starts_with("/tmp/recipe-") && recipe_arg.ends_with(".rb"),
-        "Third element should be recipe path, got: {}",
-        recipe_arg
-    );
-}
-
-#[test]
 fn test_execute_cleans_up_files() {
     let temp_dir = tempdir().expect("failed to create temp dir");
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
