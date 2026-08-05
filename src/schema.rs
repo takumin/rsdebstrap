@@ -72,3 +72,23 @@ impl JsonSchema for IpAddrSchema {
         })
     }
 }
+
+/// The `oneOf` mirroring the `script` / `content` mutual exclusion.
+///
+/// Both provisioners accept a script either as a path (`script`) or inline
+/// (`content`), exactly one of the two. At runtime that is enforced by
+/// [`resolve_script_source`](crate::phase::resolve_script_source); this is the
+/// schema's copy of the same rule, shared so the two provisioners cannot drift
+/// apart.
+///
+/// Each branch constrains the field to a *string* rather than only requiring it
+/// to be present. serde reads an explicit `null` on an `Option` field as absent,
+/// so a bare `required` would accept `{ script: null, content: hi }` on the
+/// schema side while the deserializer treats it as content-only — a divergence
+/// in the direction the schema is not allowed to have.
+pub(crate) fn script_or_content() -> serde_json::Value {
+    serde_json::json!([
+        { "required": ["script"], "properties": { "script": { "type": "string" } } },
+        { "required": ["content"], "properties": { "content": { "type": "string" } } },
+    ])
+}

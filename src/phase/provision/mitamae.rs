@@ -47,23 +47,13 @@ pub struct MitamaeTask {
     isolation: TaskIsolation,
 }
 
-// Wire shape of a mitamae task.
+// Wire shape of a mitamae task: one type drives both deserialization and schema
+// generation, so the two cannot describe different shapes.
 //
-// Single source of truth for the YAML shape, shared by both deserialization (via
-// `MitamaeTask`'s `Deserialize`) and schema generation (via `MitamaeTask`'s `JsonSchema`).
-// `deny_unknown_fields` keeps typo'd keys rejected. The `script`/`content` mutual-exclusion is
-// enforced at runtime by `resolve_script_source`, and mirrored in the schema by the `oneOf`
-// below (exactly one of `script`/`content` must be set). Each branch also constrains the field
-// to a string, not just presence: serde treats an explicit `null` on an `Option` field as
-// absent (`None`), so a bare `required` would diverge from deserialization for e.g.
-// `{ script: null, content: hi }`. Plain `//` (not `///`) so the note does not leak into the
-// schema's `description`.
+// Plain `//` (not `///`) so this note does not leak into the schema's `description`.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(extend("oneOf" = serde_json::json!([
-    { "required": ["script"], "properties": { "script": { "type": "string" } } },
-    { "required": ["content"], "properties": { "content": { "type": "string" } } },
-])))]
+#[schemars(extend("oneOf" = crate::schema::script_or_content()))]
 struct RawMitamaeTask {
     #[schemars(with = "Option<crate::schema::Utf8PathSchema>")]
     script: Option<Utf8PathBuf>,
