@@ -12,7 +12,6 @@ use camino::{Utf8Path, Utf8PathBuf};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
 use std::borrow::Cow;
-use std::fs;
 use tracing::{debug, info};
 
 use crate::error::RsdebstrapError;
@@ -234,8 +233,7 @@ impl MitamaeTask {
 
         if !dry_run {
             info!("copying mitamae binary from {} to rootfs", binary);
-            let bytes = fs::read(binary)
-                .with_context(|| format!("failed to read mitamae binary {}", binary))?;
+            let bytes = crate::phase::read_host_file(binary, "mitamae binary")?;
             ops.write_file(&staged_binary, &bytes, 0o700)
                 .with_context(|| format!("failed to stage mitamae binary at {}", staged_binary))?;
             crate::phase::stage_source_file(ops, &self.source, &staged_recipe, 0o600, "recipe")?;

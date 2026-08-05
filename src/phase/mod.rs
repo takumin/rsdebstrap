@@ -24,6 +24,7 @@ pub mod provision;
 
 use std::borrow::Cow;
 use std::fs;
+use std::io::Read;
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -183,6 +184,47 @@ pub(crate) fn validate_host_file_exists(
     Ok(())
 }
 
+/// Reads a host file, refusing a symlink or a non-regular file at the same descriptor.
+///
+/// [`validate_host_file_exists`] performs the same check earlier, for a readable error
+/// before anything runs. It cannot stand in for this one: it resolves a path string, and by
+/// the time the file is read the name may have been repointed. Opening with `O_NOFOLLOW` and
+/// checking the *opened* descriptor makes the check and the use the same inode.
+pub(crate) fn read_host_file(path: &Utf8Path, label: &str) -> Result<Vec<u8>> {
+    use rustix::fs::{self as rfs, CWD, FileType, Mode, OFlags};
+
+    let fd = rfs::openat(
+        CWD,
+        path.as_str(),
+        OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|e| match e {
+        rustix::io::Errno::LOOP => RsdebstrapError::Validation(format!(
+            "{} path '{}' is a symlink, which is not allowed for security reasons",
+            label, path
+        )),
+        other => RsdebstrapError::io(
+            format!("failed to open {} {}", label, path),
+            std::io::Error::from(other),
+        ),
+    })?;
+
+    let stat = rfs::fstat(&fd)
+        .map_err(|e| RsdebstrapError::io(format!("failed to stat {}", path), e.into()))?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return Err(
+            RsdebstrapError::Validation(format!("{} is not a file: {}", label, path)).into()
+        );
+    }
+
+    let mut content = Vec::new();
+    std::fs::File::from(fd)
+        .read_to_end(&mut content)
+        .with_context(|| format!("failed to read {} {}", label, path))?;
+    Ok(content)
+}
+
 /// Resolves `script`/`content` mutual exclusivity and builds a [`ScriptSource`].
 ///
 /// Used by task `Deserialize` impls to share the common validation logic:
@@ -244,7 +286,7 @@ pub(crate) fn stage_source_file(
     let content = match source {
         ScriptSource::Script(src_path) => {
             info!("copying {} from {} to rootfs", label, src_path);
-            fs::read(src_path).with_context(|| format!("failed to read {} {}", label, src_path))?
+            read_host_file(src_path, label)?
         }
         ScriptSource::Content(content) => {
             info!("writing inline {} to rootfs", label);
