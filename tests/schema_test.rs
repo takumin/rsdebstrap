@@ -1,20 +1,20 @@
-//! Regression tests for the generated JSON Schema (`rsdebstrap schema`).
-//!
-//! The schema is derived from the Rust config types via `schemars`. Its whole value is that it
-//! keeps matching what `apply`/`validate` accept. These tests guard that contract so schema
-//! drift cannot slip through unnoticed:
-//!
-//! 1. The schema generates without panicking and has the expected top-level shape.
-//! 2. The shipped example profile validates against it.
-//! 3. Differential check: for a table of YAML documents, the schema's verdict is compared with
-//!    the *structural* deserializer's verdict (`yaml_serde::from_str::<Profile>`). The critical
-//!    safety invariant is that the schema must never reject a document the deserializer accepts
-//!    (a false rejection would make editor tooling flag valid configs). Semantic-only checks
-//!    (e.g. mitamae binary resolution, mount/privilege cross-checks) live in `Profile::validate`
-//!    and are intentionally out of scope here — JSON Schema cannot express them.
-//! 4. The known divergences (schema accepts, deserializer rejects) are pinned with per-side
-//!    expectations in `schema_divergences_are_pinned`. The invariant is one-directional, so a
-//!    new false-accept is not a test failure — add a row there when one is discovered.
+// Regression tests for the generated JSON Schema (`rsdebstrap schema`).
+//
+// The schema is derived from the Rust config types via `schemars`. Its whole value is that it
+// keeps matching what `apply`/`validate` accept. These tests guard that contract so schema
+// drift cannot slip through unnoticed:
+//
+// 1. The schema generates without panicking and has the expected top-level shape.
+// 2. The shipped example profile validates against it.
+// 3. Differential check: for a table of YAML documents, the schema's verdict is compared with
+//    the *structural* deserializer's verdict (`yaml_serde::from_str::<Profile>`). The critical
+//    safety invariant is that the schema must never reject a document the deserializer accepts
+//    (a false rejection would make editor tooling flag valid configs). Semantic-only checks
+//    (e.g. mitamae binary resolution, mount/privilege cross-checks) live in `Profile::validate`
+//    and are intentionally out of scope here — JSON Schema cannot express them.
+// 4. The known divergences (schema accepts, deserializer rejects) are pinned with per-side
+//    expectations in `schema_divergences_are_pinned`. The invariant is one-directional, so a
+//    new false-accept is not a test failure — add a row there when one is discovered.
 
 // The whole crate is compiled out without the default-on `schema` feature: it exercises the
 // generated schema, which does not exist in a schema-less build. Gated in-file rather than

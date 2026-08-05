@@ -257,12 +257,12 @@ pub fn run_schema() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    //! Sequencing tests for `run_pipeline_phase()`: the temporary prepare
-    //! resolv.conf must be restored after provision and before assemble, so an
-    //! assemble resolv_conf task's permanent file/symlink survives; the
-    //! assemble phase must be gated on prepare/provision and the restore both
-    //! succeeding; and an assemble failure must propagate while leaving the
-    //! restored original in place.
+    // Sequencing tests for `run_pipeline_phase()`: the temporary prepare
+    // resolv.conf must be restored after provision and before assemble, so an
+    // assemble resolv_conf task's permanent file/symlink survives; the
+    // assemble phase must be gated on prepare/provision and the restore both
+    // succeeding; and an assemble failure must propagate while leaving the
+    // restored original in place.
 
     use super::*;
     use crate::executor::{CommandSpec, ExecutionResult};

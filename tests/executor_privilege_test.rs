@@ -1,10 +1,10 @@
-//! Real-execution test for `RealCommandExecutor` privilege wrapping.
-//!
-//! This test mutates the process-global `PATH` so `which::which` resolves a fake
-//! `sudo`. Under edition 2024 `std::env::set_var` is `unsafe` and races with any
-//! concurrent env access; keeping this as the *only* test in its own binary
-//! guarantees no other test runs in-process, which makes the mutation sound
-//! without pulling in a serialization crate.
+// Real-execution test for `RealCommandExecutor` privilege wrapping.
+//
+// This test mutates the process-global `PATH` so `which::which` resolves a fake
+// `sudo`. Under edition 2024 `std::env::set_var` is `unsafe` and races with any
+// concurrent env access; keeping this as the *only* test in its own binary
+// guarantees no other test runs in-process, which makes the mutation sound
+// without pulling in a serialization crate.
 #![cfg(unix)]
 
 use std::os::unix::fs::PermissionsExt;

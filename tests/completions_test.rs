@@ -1,8 +1,8 @@
-//! Tests for shell completion generation.
-//!
-//! Scope: the completions this crate emits for its own command tree. Parsing the
-//! `completions <shell>` argument and rendering `--help` are clap's behavior, not
-//! ours, so they are not retested here.
+// Tests for shell completion generation.
+//
+// Scope: the completions this crate emits for its own command tree. Parsing the
+// `completions <shell>` argument and rendering `--help` are clap's behavior, not
+// ours, so they are not retested here.
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser};

@@ -1,4 +1,4 @@
-//! Security validation tests for ShellTask.
+// Security validation tests for ShellTask.
 
 mod helpers;
 

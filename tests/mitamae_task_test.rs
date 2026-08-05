@@ -1,4 +1,4 @@
-//! Execution tests for MitamaeTask.
+// Execution tests for MitamaeTask.
 
 mod helpers;
 

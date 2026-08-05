@@ -1,22 +1,22 @@
-//! Property-based drift guard for the generated JSON Schema.
-//!
-//! `tests/schema_test.rs` spot-checks the schema against a curated table. This file stresses
-//! the same contract with randomly generated documents so drift cannot hide in a shape nobody
-//! thought to enumerate.
-//!
-//! The property asserted is the *critical safety invariant*: whenever the structural
-//! deserializer accepts a document, the generated schema must also accept it. A violation means
-//! editor/CI tooling would flag a config that `apply`/`validate` happily parse — the exact
-//! failure mode the schema exists to avoid.
-//!
-//! Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
-//! `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
-//! `Privilege`/`TaskIsolation`/`ShellTask`/`MitamaeTask` dispatch, but not the semantic
-//! `Profile::validate`), and the schema verdict comes from the compiled validator. Then through
-//! a YAML round-trip (`yaml_serde::to_string` -> `from_str`), because production parses YAML
-//! text and yaml_serde's acceptance surface is not identical to the JSON value model — the
-//! round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
-//! through `de::null_to_default`).
+// Property-based drift guard for the generated JSON Schema.
+//
+// `tests/schema_test.rs` spot-checks the schema against a curated table. This file stresses
+// the same contract with randomly generated documents so drift cannot hide in a shape nobody
+// thought to enumerate.
+//
+// The property asserted is the *critical safety invariant*: whenever the structural
+// deserializer accepts a document, the generated schema must also accept it. A violation means
+// editor/CI tooling would flag a config that `apply`/`validate` happily parse — the exact
+// failure mode the schema exists to avoid.
+//
+// Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
+// `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
+// `Privilege`/`TaskIsolation`/`ShellTask`/`MitamaeTask` dispatch, but not the semantic
+// `Profile::validate`), and the schema verdict comes from the compiled validator. Then through
+// a YAML round-trip (`yaml_serde::to_string` -> `from_str`), because production parses YAML
+// text and yaml_serde's acceptance surface is not identical to the JSON value model — the
+// round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
+// through `de::null_to_default`).
 
 // The whole crate is compiled out without the default-on `schema` feature: it exercises the
 // generated schema, which does not exist in a schema-less build. Gated in-file rather than

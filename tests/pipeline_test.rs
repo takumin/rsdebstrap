@@ -1,4 +1,4 @@
-//! Tests for the Pipeline orchestrator.
+// Tests for the Pipeline orchestrator.
 
 use std::sync::{Arc, Mutex};
 

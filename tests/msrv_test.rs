@@ -1,5 +1,5 @@
-//! Guards the declared MSRV (`rust-version`) against drift from the pinned `rust-toolchain.toml`.
-//! Rationale: `docs/ARCHITECTURE.md` (MSRV policy).
+// Guards the declared MSRV (`rust-version`) against drift from the pinned `rust-toolchain.toml`.
+// Rationale: `docs/ARCHITECTURE.md` (MSRV policy).
 
 // The pinned `channel` value from `rust-toolchain.toml` (e.g. `"1.97.1"`).
 fn pinned_channel() -> &'static str {
