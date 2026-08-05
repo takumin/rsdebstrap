@@ -61,10 +61,8 @@ pub trait IsolationProvider: Send + Sync {
 
     /// Sets up the isolation environment and returns an active context.
     ///
-    /// # Arguments
-    /// * `rootfs` - The path to the rootfs directory
-    /// * `executor` - The command executor for running commands
-    /// * `dry_run` - If true, skip actual setup operations
+    /// Whether the run is a dry run comes from `executor`, so the context cannot disagree
+    /// with the layer that would actually run the commands.
     ///
     /// # Returns
     /// Result containing the active isolation context or an error.
@@ -73,7 +71,6 @@ pub trait IsolationProvider: Send + Sync {
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
         ops: Arc<dyn RootfsOps>,
-        dry_run: bool,
     ) -> Result<Box<dyn IsolationContext>>;
 }
 

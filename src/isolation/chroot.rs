@@ -28,13 +28,11 @@ impl IsolationProvider for ChrootProvider {
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
         ops: Arc<dyn RootfsOps>,
-        dry_run: bool,
     ) -> Result<Box<dyn IsolationContext>> {
         Ok(Box::new(ChrootContext {
             rootfs: rootfs.to_owned(),
             executor,
             ops,
-            dry_run,
             torn_down: false,
         }))
     }
@@ -48,7 +46,6 @@ pub struct ChrootContext {
     rootfs: Utf8PathBuf,
     executor: Arc<dyn CommandExecutor>,
     ops: Arc<dyn RootfsOps>,
-    dry_run: bool,
     torn_down: bool,
 }
 
@@ -58,7 +55,7 @@ impl RootfsContext for ChrootContext {
     }
 
     fn dry_run(&self) -> bool {
-        self.dry_run
+        self.executor.dry_run()
     }
 
     fn rootfs_ops(&self) -> &dyn RootfsOps {
