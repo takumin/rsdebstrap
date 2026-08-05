@@ -50,13 +50,19 @@ way to set the field directly, so the old shape does not compile.
 
 A phase task cannot run a spec either: `IsolationContext` does not hand out a
 `CommandExecutor`, so a `CommandSpec` built inside a phase is inert. What a task can do
-is bounded by that trait — run its own declared command, or use `rootfs_ops()`.
+is bounded by the context trait it is handed, and that differs per phase:
 
-Two things stay expressible. `CommandSpec::for_task_command` takes a program name from
+- `PrepareItem` has no `execute` — mounts and the temporary resolv.conf are driven by the
+  pipeline's RAII guards, not by the task.
+- `AssembleItem::execute` takes a `RootfsContext` (`rootfs`/`dry_run`/`rootfs_ops`), which
+  has no `execute` method. Assemble writes the rootfs's final state and **cannot run a
+  program at all**; that is permanent by design, not an oversight to fix.
+- `ProvisionItem::execute` takes the full `IsolationContext`. Running a program a profile
+  declared is what provision is for.
+
+One thing stays expressible: `CommandSpec::for_task_command` takes a program name from
 the profile and so cannot be an enum; `tests/privilege_boundary_test.rs` guards it,
-because Rust cannot restrict a constructor to one module. And `ctx.execute(argv,
-privilege)` can still run anything — closing that means giving each phase a different
-context capability, which is a `PhaseItem` redesign rather than a visibility change.
+because Rust cannot restrict a constructor to one module.
 
 Corollary: privilege for rootfs mutation is a property of the *run*, not of a task, so
 resist adding a per-task `privilege` key to anything that only writes files — it cannot

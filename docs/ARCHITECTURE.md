@@ -52,21 +52,32 @@ backend (bwrap, nspawn, …) means adding a variant with its own payload struct.
 ## Phases & the pipeline
 
 `Pipeline` (`src/pipeline.rs`) borrows `prepare: &PrepareConfig`, `provision: &[ProvisionTask]`,
-and `assemble: &AssembleConfig`, and drives them uniformly through the `PhaseItem` trait
-(`src/phase/mod.rs`, `pub(crate)`) — `name`/`validate`/`execute`/`resolved_isolation_config`.
-Each phase is flattened to a `&[&dyn PhaseItem]` before running: `PrepareConfig::items()` and
+and `assemble: &AssembleConfig`. `PhaseItem` (`src/phase/mod.rs`, `pub(crate)`) carries only
+what all three share — `name` and `validate`. What an item can *do* differs per phase, and
+three sub-traits say so:
+
+| trait           | adds                                            |
+| --------------- | ----------------------------------------------- |
+| `PrepareItem`   | nothing                                         |
+| `ProvisionItem` | `resolved_isolation_config`, `execute(&dyn IsolationContext)` |
+| `AssembleItem`  | `execute(&dyn RootfsContext)`                   |
+
+Each phase is flattened to a `&[&dyn <phase>Item]` before running: `PrepareConfig::items()` and
 `AssembleConfig::items()` emit their present `Option` fields in a **fixed execution order**
-(`mount → resolv_conf`), and provision maps its `Vec` to trait objects. Generic
-`run_phase_items`/`validate_phase_items` avoid per-phase duplication.
+(`mount → resolv_conf`), and provision maps its `Vec` to trait objects. `run_phase_items` and
+`validate_phase_items` are generic over `T: PhaseItem + ?Sized`, so the shared logging and
+error-context wrapping are written once; only the per-item action differs.
 
 Key invariants:
 
-- **Per-task isolation lifecycle.** Each task independently runs
+- **Per-task isolation lifecycle.** Each *provision* task independently runs
   provider → setup → execute → teardown. Teardown is guaranteed even when execute
   errors. Failure-injection for teardown paths is currently impractical (see
-  [Known test gaps](#known-test-gaps)).
+  [Known test gaps](#known-test-gaps)). Provision is the only phase that does this;
+  the other two have no isolation to set up.
 - **Prepare tasks are declarative.** `MountTask` and (prepare) `ResolvConfTask` implement
-  `PhaseItem` with a no-op `execute()`; their real effect comes from the RAII managers below,
+  `PrepareItem`, which has no `execute` at all — there is nothing to run, rather than
+  something that runs and does nothing. Their real effect comes from the RAII managers below,
   set up in `run_pipeline_phase()`. The brackets differ: mounts wrap all three phases, but the
   temporary resolv.conf wraps only prepare + provision — it is torn down (the original
   restored) before assemble, so an assemble `resolv_conf` task's permanent file/symlink
@@ -80,9 +91,13 @@ Key invariants:
   `pipeline` it would be `pub(crate)` and the orchestration could mint one, which is exactly the
   mistake being prevented. `Pipeline::run` (no guard, so nothing was detached) is the one
   exemption, via a named function that still demands a `Provisioned`.
-- **Assemble operates on the final rootfs directly.** `AssembleResolvConfTask::resolved_isolation_config()`
-  returns `None`, so it runs via `DirectProvider` on the rootfs filesystem rather than
-  inside an isolation context.
+- **Assemble operates on the final rootfs directly, and cannot run a program.** An
+  `AssembleItem` receives a `RootfsContext` — `rootfs()`, `dry_run()`, `rootfs_ops()` — so
+  every write goes through the descriptor-anchored operations and there is no `execute` to
+  reach for. The phase takes no isolation provider either: it used to go through one, which
+  always resolved to `DirectProvider` and whose only used capability was `rootfs_ops`, so
+  `PlainRootfsContext` (built from the `rootfs`/`ops`/`dry_run` the pipeline already holds)
+  replaced that setup/teardown round trip.
 
 `prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, resolv_conf }`,
 `AssembleConfig { resolv_conf }`), not lists. This makes the singleton invariants structural:
@@ -141,10 +156,13 @@ patterns run throughout `src/isolation/`:
   `ChrootProvider` runs inside a chroot; `DirectProvider` (`src/isolation/direct.rs`)
   executes on the host, translating absolute paths to rootfs-prefixed paths
   (`/bin/sh` → `<rootfs>/bin/sh`) and guarding against empty or post-teardown commands.
-- Privilege is threaded through *command* execution as `Option<PrivilegeMethod>` — both
-  `IsolationContext::execute()` and the `CommandExecutor` obtained via `ctx.executor()`
-  take it, so escalation is uniform across the commands that genuinely are external
-  programs (`mount`, `umount`, `chroot`, the bootstrap backend, provision scripts).
+- `IsolationContext` is split so that the two capabilities can be handed out separately.
+  `RootfsContext` is the rootfs view — `rootfs()`, `dry_run()`, `rootfs_ops()` — and
+  `IsolationContext: RootfsContext` adds `name()`, `execute()` and `teardown()`. Only
+  provision tasks are given the latter.
+- Privilege is threaded through *command* execution as `Option<PrivilegeMethod>`, so
+  escalation is uniform across the commands that genuinely are external programs
+  (`mount`, `umount`, `chroot`, the bootstrap backend, provision scripts).
 
 ### Privilege boundary
 
@@ -163,9 +181,18 @@ Rust cannot restrict a constructor to a single module within a crate.
 `IsolationContext` no longer exposes the executor either — that accessor existed so the
 assemble task could issue `cp`/`ln`/`mv`, and nothing needed it once `RootfsOps` replaced
 them. A `CommandSpec` built inside a phase is therefore inert; what a task can do is bounded
-by the context trait. `ctx.execute(argv, privilege)` remains open by design, since running a
-declared program is what provision tasks are for; narrowing it to the phases that need it
-would mean per-phase context capabilities.
+by the context trait it is handed.
+
+Which context that is now depends on the phase. An `AssembleItem` gets a `RootfsContext`,
+which has no `execute`, so `ctx.execute(["cp", "/etc/shadow", …], Some(Sudo))` from an
+assemble task is a compile error rather than a reviewer's job to catch. Only `ProvisionItem`
+gets the full `IsolationContext`, where running a declared program is the point.
+
+This makes "assemble cannot run a program" a permanent property, deliberately: assemble
+writes the rootfs's final state, and anything that wants to run a program is provision's
+work. A future assemble task that genuinely needed one would also have to answer *under what
+isolation* — `AssembleConfig` has no `isolation` key — so it would be a profile-format change,
+not just a widening of this trait.
 
 Two things follow that per-command escalation could not give:
 
