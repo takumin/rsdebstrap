@@ -13,11 +13,23 @@ use std::process::{Command, Stdio};
 
 use camino::Utf8PathBuf;
 
+// `std::fs::write` derives the mode from the process umask, so a seeded file has a
+// different mode on a developer machine (umask 002) than on CI (umask 022). The mode
+// the helper reports is asserted below, so the seed sets one explicitly.
+#[cfg(unix)]
+const SEEDED_MODE: u32 = 0o640;
+
 fn seeded_rootfs() -> (tempfile::TempDir, Utf8PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
     std::fs::create_dir_all(root.join("etc")).unwrap();
     std::fs::write(root.join("etc/resolv.conf"), b"nameserver 8.8.8.8\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::Permissions::from_mode(SEEDED_MODE);
+        std::fs::set_permissions(root.join("etc/resolv.conf"), mode).unwrap();
+    }
     (tmp, root)
 }
 
@@ -56,7 +68,12 @@ fn take_detaches_the_entry_and_returns_its_contents() {
     let (_tmp, root) = seeded_rootfs();
     let responses = run_session(&root, &[r#"{"Take":{"path":"/etc/resolv.conf"}}"#]);
 
-    assert!(responses[0].contains("\"mode\":436"), "got {}", responses[0]);
+    #[cfg(unix)]
+    assert!(
+        responses[0].contains(&format!("\"mode\":{SEEDED_MODE}")),
+        "got {}",
+        responses[0]
+    );
     assert!(!root.join("etc/resolv.conf").exists(), "entry was not detached");
 }
 
