@@ -70,14 +70,16 @@ Key invariants:
   set up in `run_pipeline_phase()`. The brackets differ: mounts wrap all three phases, but the
   temporary resolv.conf wraps only prepare + provision — it is torn down (the original
   restored) before assemble, so an assemble `resolv_conf` task's permanent file/symlink
-  survives. Assemble is additionally gated on that restore succeeding: after a failed teardown
-  the guard's `Drop` backstop retries the restore at scope end, which would otherwise clobber
-  assemble's output. The assemble task itself replaces `/etc/resolv.conf` atomically — it
-  stages the new file/symlink at `/etc/resolv.conf.rsdebstrap-tmp` (clearing any stale staging
-  entry first, so `cp`/`ln` cannot follow a leftover symlink) and promotes it with a plain
-  same-directory `mv` rename (no GNU-only `-T`, so it stays portable to busybox/musl hosts) — so
-  a mid-assemble failure leaves the just-restored original in place even though the guard is
-  already disarmed and could no longer recover it.
+  survives.
+
+  That ordering is carried by two token types rather than by comment and convention.
+  `Pipeline::run_prepare_and_provision` yields a `Provisioned`; `RootfsResolvConf::restore`
+  consumes one and yields a `Restored`; `Pipeline::run_assemble` requires a `Restored`.
+  Assembling before the restore is therefore a compile error, not a review finding. `Restored`
+  is declared in the guard's own module so its constructor is private *there* — declared in
+  `pipeline` it would be `pub(crate)` and the orchestration could mint one, which is exactly the
+  mistake being prevented. `Pipeline::run` (no guard, so nothing was detached) is the one
+  exemption, via a named function that still demands a `Provisioned`.
 - **Assemble operates on the final rootfs directly.** `AssembleResolvConfTask::resolved_isolation_config()`
   returns `None`, so it runs via `DirectProvider` on the rootfs filesystem rather than
   inside an isolation context.
@@ -106,18 +108,32 @@ patterns run throughout `src/isolation/`:
   path string: it opens the rootfs with `O_NOFOLLOW`, then walks each component with
   `openat(O_NOFOLLOW)` / `mkdirat`, treating `ELOOP`/`ENOTDIR` as a symlink attack
   (`RsdebstrapError::Isolation`). Verified absolute paths are cached and reused for the
-  matching `umount` to avoid re-traversal. The assemble `resolv_conf` `/etc` handling
-  applies a narrower fd-based check — a single `openat(O_NOFOLLOW)` on `<rootfs>/etc` to
-  reject a symlinked `/etc` — but a TOCTOU window remains before the subsequent
-  `mv`/`cp`/`ln` path-string commands, inherent to privilege escalation via external
-  commands. Implemented with the `rustix` crate for memory-safe syscall wrappers.
+  matching `umount` to avoid re-traversal. Implemented with the `rustix` crate for
+  memory-safe syscall wrappers.
+- **All rootfs mutation goes through `RootfsOps`** (`src/rootfs/`), which applies the same
+  traversal to every write. Paths are `RelPath` values — absolute forms are accepted and
+  normalized, `..` is rejected at construction — so no combination of them names anything
+  outside the rootfs. Only the *final* component may be a symlink, and it is replaced rather
+  than followed, which is what Debian's symlinked `/etc/resolv.conf` requires.
+
+  This replaced `sudo mv` / `sudo cp` / `sudo chmod` per operation. Those took path *strings*,
+  so an `openat(O_NOFOLLOW)` check could only prove a path was safe at one instant and the
+  command then resolved the name again — the window was real and previously documented here as
+  unavoidable. It is not: see *Privilege boundary* below.
 - **RAII lifecycle managers.** `RootfsMounts` and `RootfsResolvConf` (plus
   `TempFileGuard` in `src/phase/mod.rs`, which cleans up scripts and binaries staged
   into the rootfs) all guarantee cleanup via `Drop`, including on error paths. Mounts
   unmount in reverse order and `unmount()` is idempotent, collecting errors across entries.
-  `RootfsResolvConf` backs up the existing file and rolls back via rename on write
-  failure to avoid destroying the host/rootfs resolv.conf. Atomic writes go through a
-  temp file + `cp`.
+  `RootfsResolvConf` detaches the rootfs's own resolv.conf with `RootfsOps::take`, which
+  returns it as a value (file content + mode, or symlink target) rather than moving it to a
+  backup path, and puts it back on teardown or `Drop`.
+
+  Holding it in memory removes two failure modes a backup file had. A crash left the backup
+  as an orphan the operator had to move back by hand, and an attacker who could pre-create the
+  backup path as a *dangling* symlink defeated both the leftover check and the restore —
+  `exists()` and `try_exists()` both follow links, so a dangling backup read as absent and the
+  original was silently lost. The trade is that the original only survives as long as the
+  process does.
 
 ## Isolation & command execution
 
@@ -125,10 +141,36 @@ patterns run throughout `src/isolation/`:
   `ChrootProvider` runs inside a chroot; `DirectProvider` (`src/isolation/direct.rs`)
   executes on the host, translating absolute paths to rootfs-prefixed paths
   (`/bin/sh` → `<rootfs>/bin/sh`) and guarding against empty or post-teardown commands.
-- Privilege is threaded through execution as `Option<PrivilegeMethod>` — both
+- Privilege is threaded through *command* execution as `Option<PrivilegeMethod>` — both
   `IsolationContext::execute()` and the `CommandExecutor` obtained via `ctx.executor()`
-  take it, so escalation is uniform whether a task runs a script or issues raw
-  `cp`/`chmod`/`ln`/`mv` commands (as assemble `resolv_conf` does).
+  take it, so escalation is uniform across the commands that genuinely are external
+  programs (`mount`, `umount`, `chroot`, the bootstrap backend, provision scripts).
+
+### Privilege boundary
+
+Rootfs *mutation* does not use that path. `rootfs::open()` is called once per run in
+`run_pipeline_phase`, and when `defaults.privilege` is set it spawns one helper —
+`sudo <self> __rootfs-helper --rootfs <path>`, a hidden subcommand of this same binary — which
+opens the rootfs descriptor and serves typed `Request`s over a pipe (`src/rootfs/helper.rs`).
+
+Two things follow that per-command escalation could not give:
+
+- **Root's authority is bounded by an enum, not by what a command can be argued into.** Every
+  request carries a `RelPath`, which cannot express a path outside the rootfs, so the escape is
+  refused while *decoding* — before any operation runs, and regardless of what root could
+  otherwise reach.
+- **No coreutils binary runs as root.** `which`-resolved `cp`/`mv` no longer execute with
+  elevated privilege at all.
+
+Because the boundary is crossed once for the whole run, privilege for rootfs mutation is a
+property of the run rather than of a task. `assemble.resolv_conf` therefore has no `privilege`
+key; it was removed rather than left as a silent no-op (`deny_unknown_fields` makes setting it
+a parse error).
+
+`tests/privileged_helper_test.rs` exercises this against a root-owned rootfs under real `sudo`,
+including that the helper exits when its parent drops the channel — otherwise a root process
+would outlive the build holding a descriptor into the rootfs. It is `#[ignore]`d and skips
+itself when passwordless sudo is unavailable.
 - `CommandSpec` (`src/executor/mod.rs`) is the command value object (command/args/cwd/
   env/privilege) with a builder API. `RealCommandExecutor` supports dry-run; tests use
   mock executors to assert on constructed commands without running anything.
@@ -177,18 +219,21 @@ The non-obvious parts are all about keeping the schema faithful to the *deserial
   impl, so path fields point at the `Utf8PathSchema` proxy (`src/schema.rs`) via
   `#[schemars(with = "...")]`. Forgetting it on a new path field is a **compile error** (the
   derive requires `Utf8PathBuf: JsonSchema`, which does not hold), so this cannot drift silently.
-- **Custom-`Deserialize` types forward their schema to the real wire shape.** `Privilege` /
-  `TaskIsolation` hand-write `Deserialize` for the `true`/`false`/map/null shorthand, so their
-  `JsonSchema` forwards to a `#[serde(untagged)]` wire enum (`PrivilegeWire` / `TaskIsolationWire`)
-  that carries the same map type plus a null unit variant — the schema's `anyOf[bool, map, null]`
-  then mirrors deserialization. The map branch genuinely shares one definition with the visitor
-  (`PrivilegeMethodMap` / `IsolationConfig`), but the *outer* acceptance set (bool/map/null) exists
-  twice — as the wire enum's variants and as the visitor's `visit_*` methods — with no compile-time
-  tie; the in-file `wire_parity` tests pin the two sets together by asserting acceptance
-  equivalence over a battery of shapes. `ShellTask` / `MitamaeTask` have no such split: they
-  forward to their hoisted `Raw*` DTOs, which *are* the actual deserialize path.
+- **Custom-`Deserialize` types deserialize *through* their wire shape.** `Privilege` /
+  `TaskIsolation` accept a `true`/`false`/map/null shorthand via a `#[serde(untagged)]` wire enum
+  (`PrivilegeWire` / `TaskIsolationWire`) that drives both `Deserialize` and `JsonSchema`, so the
+  schema's `anyOf[bool, map, null]` cannot describe a different acceptance set from the parser.
+
+  These once had a hand-written visitor for production and the wire enum for schemars only. The
+  outer acceptance set then existed twice with no compile-time tie, held together by
+  `wire_parity` tests. Collapsing them cost the visitor's `expecting` message ("a boolean or a
+  map with a 'method' field") in favor of untagged's "did not match any variant"; `load_profile`
+  wraps deserialization in `serde_path_to_error`, so errors carry the field path
+  (`provision[2].privilege`) instead. `ShellTask` / `MitamaeTask` never had the split: they
+  forward to their hoisted `Raw*` DTOs, which *are* the deserialize path.
 - **`script` xor `content`** is enforced at runtime by `resolve_script_source`; the schema mirrors
-  it as a `oneOf` on the `Raw*` DTO. Each branch constrains the source to a *string*, not mere key
+  it as a `oneOf` on the `Raw*` DTO, shared by both provisioners via
+  `schema::script_or_content()`. Each branch constrains the source to a *string*, not mere key
   presence, because `serde` treats an explicit `null` on an `Option` field as absent — so
   `{ script: null, content: hi }` is accepted and `{ script: null }` rejected, matching serde.
   This is the *only* mutual exclusion mirrored in the schema, because it is the only one enforced
@@ -276,6 +321,10 @@ Mock-executor pattern (`tests/helpers/mod.rs`):
   `ChrootProvider` and `DirectProvider` have infallible teardown — these paths are
   unreachable with current backends. Add tests when a backend with fallible teardown
   (bwrap, systemd-nspawn) lands.
+- **Escalation is only exercised for filesystem operations.** `tests/privileged_helper_test.rs`
+  runs the helper under real `sudo`, but the per-command escalation path
+  (`mount`/`umount`/`chroot`/bootstrap) is still only asserted at the argv level. A full
+  privileged `apply` has been run by hand; nothing runs it automatically.
 - **`run_pipeline_phase()` sequencing and gating** are covered by in-crate tests in
   `src/lib.rs`, using a recording executor that really runs `mv`/`cp`/`rm`/`ln` and a
   shell provision task against a temp rootfs: the temporary resolv.conf is restored
