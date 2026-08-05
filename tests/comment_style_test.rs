@@ -37,8 +37,9 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
 // Every `#[cfg(test)]` in `src/` is a trailing test module at column 0; a nested or
 // mid-file one would silently widen this range, so reject that shape outright.
 fn test_region_start(path: &Path, contents: &str) -> Option<usize> {
-    let mut markers = contents
-        .lines()
+    let lines: Vec<&str> = contents.lines().collect();
+    let mut markers = lines
+        .iter()
         .enumerate()
         .filter(|(_, line)| line.trim_start().starts_with("#[cfg(test)]"));
     let (first, _) = markers.next()?;
@@ -51,7 +52,24 @@ fn test_region_start(path: &Path, contents: &str) -> Option<usize> {
         ),
         path.display(),
     );
-    Some(first)
+
+    // An outer doc comment above the attribute documents the test module itself, so the
+    // region has to start there or the convention check misses it. Blank lines between
+    // the comment and the item do not break that attachment, so walk past them too --
+    // but only commit to an earlier start once a doc line is actually found, otherwise a
+    // blank line alone would drag production code into the scanned region.
+    let mut start = first;
+    let mut cursor = first;
+    while cursor > 0 {
+        cursor -= 1;
+        let trimmed = lines[cursor].trim_start();
+        if trimmed.starts_with(OUTER_DOC) {
+            start = cursor;
+        } else if !trimmed.is_empty() {
+            break;
+        }
+    }
+    Some(start)
 }
 
 fn doc_comments_in(path: &Path, contents: &str, from_line: usize) -> Vec<String> {
