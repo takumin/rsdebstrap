@@ -239,12 +239,11 @@ impl CommandExecutor for FailingExecutor {
     }
 }
 
+/// In dry-run mode there is no separate teardown command, so this covers the
+/// pipeline task error alone; the teardown error paths live in
+/// `src/lib.rs`'s `run_pipeline_phase` tests and `src/isolation/mount.rs`.
 #[test]
-fn test_run_apply_pipeline_and_teardown_both_fail() {
-    // Note: In dry_run mode, there is no separate teardown command, so only the
-    // pipeline task error is verified here. The teardown error handling path is
-    // tested in pipeline_test.rs with mock contexts.
-
+fn run_apply_propagates_provision_failure() {
     let file = write_yaml_tempfile(provisioner_yaml());
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let opts = cli::ApplyArgs {
