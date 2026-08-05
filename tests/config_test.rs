@@ -2033,6 +2033,18 @@ prepare:
 }
 
 // =========================================================================
+// YAML strictness / leniency
+//
+// These cases overlap `tests/schema_test.rs`, whose differential table also
+// asserts the deserializer's verdict for most of the same documents. They are
+// deliberately kept rather than folded into it: that file is gated behind
+// `#![cfg(feature = "schema")]` and exists to pin schema/deserializer
+// *agreement*, so with the feature off there is nothing left asserting the
+// parser's own strict-scalar and null-leniency contract. Do not delete these
+// as duplicates.
+// =========================================================================
+
+// =========================================================================
 // YAML strictness: string-typed fields must be genuine strings
 // =========================================================================
 
