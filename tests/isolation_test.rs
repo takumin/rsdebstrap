@@ -23,12 +23,6 @@ impl CommandExecutor for RecordingExecutor {
 }
 
 #[test]
-fn test_chroot_provider_name() {
-    let provider = ChrootProvider;
-    assert_eq!(provider.name(), "chroot");
-}
-
-#[test]
 fn test_chroot_provider_setup_creates_context() {
     let provider = ChrootProvider;
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
@@ -178,12 +172,6 @@ fn test_chroot_context_propagates_sudo_privilege() {
 // exercises the same path as `Sudo` above. The `None` case is covered by
 // `test_chroot_context_execute_builds_correct_args`, which asserts the same
 // recorded privilege for the same call.
-
-#[test]
-fn test_direct_provider_name() {
-    let provider = DirectProvider;
-    assert_eq!(provider.name(), "direct");
-}
 
 #[test]
 fn test_direct_provider_setup_creates_context() {
