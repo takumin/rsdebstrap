@@ -19,6 +19,11 @@ fn main() -> Result<()> {
             return Ok(());
         }
         cli::Commands::Schema => return run_schema(),
+        // Speaks a line protocol on stdout to its parent, so it must not share
+        // the stream with the logger either.
+        cli::Commands::RootfsHelper(opts) => {
+            return rsdebstrap::rootfs::helper::serve(&opts.rootfs).map_err(Into::into);
+        }
         _ => {}
     }
 
@@ -27,6 +32,7 @@ fn main() -> Result<()> {
         cli::Commands::Validate(opts) => opts.common.log_level,
         cli::Commands::Completions(_) => unreachable!("stdout-only subcommands handled above"),
         cli::Commands::Schema => unreachable!("stdout-only subcommands handled above"),
+        cli::Commands::RootfsHelper(_) => unreachable!("stdout-only subcommands handled above"),
     };
 
     init_logging(log_level)?;
@@ -42,6 +48,9 @@ fn main() -> Result<()> {
         cli::Commands::Validate(opts) => run_validate(opts)?,
         cli::Commands::Completions(_) => unreachable!("stdout-only subcommands handled earlier"),
         cli::Commands::Schema => unreachable!("stdout-only subcommands handled earlier"),
+        cli::Commands::RootfsHelper(_) => {
+            unreachable!("stdout-only subcommands handled earlier")
+        }
     }
 
     Ok(())

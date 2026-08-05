@@ -19,6 +19,8 @@ use camino::Utf8Path;
 use rustix::fs::{self as rfs, AtFlags, CWD, FileType, Mode, OFlags};
 use serde::{Deserialize, Serialize};
 
+pub mod helper;
+
 use crate::error::RsdebstrapError;
 
 type Result<T> = std::result::Result<T, RsdebstrapError>;
