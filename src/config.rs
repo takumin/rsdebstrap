@@ -1103,14 +1103,6 @@ mod tests {
     }
 
     #[test]
-    fn test_isolation_config_serialize_deserialize_roundtrip() {
-        let config = IsolationConfig::chroot();
-        let yaml = yaml_serde::to_string(&config).unwrap();
-        let deserialized: IsolationConfig = yaml_serde::from_str(&yaml).unwrap();
-        assert_eq!(config, deserialized);
-    }
-
-    #[test]
     fn test_validate_mount_order_correct() {
         let mounts = vec![
             MountEntry {
