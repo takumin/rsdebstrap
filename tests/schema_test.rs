@@ -449,11 +449,12 @@ fn schema_divergences_are_pinned() {
     // editor tooling flag a config that builds; a false *accept* only means tooling is
     // quieter than the parser.
     //
-    // So divergence is allowed in one direction, and the rows below are the known cases —
-    // the schema staying annotational where JSON Schema cannot express a check, or where the
-    // YAML text carries what the JSON data model cannot (duplicate keys, non-finite floats).
-    // Pinning both verdicts documents each exactly. Because the invariant is one-directional,
-    // a *new* false-accept fails no test; add a row when one is found.
+    // The rows below are the known false-accepts — the schema staying annotational where
+    // JSON Schema cannot express a check, or where the YAML text carries what the JSON data
+    // model cannot (duplicate keys, non-finite floats). Pinning both verdicts documents each
+    // exactly. An *unlisted* false-accept is a finding, not a free pass:
+    // `assert_no_false_reject` in `tests/schema_proptest.rs` asserts the reverse direction
+    // too, allowing only the annotational-format class.
     let cases: &[(&str, String, bool, bool)] = &[
         // `format: ipv4/ipv6` is annotational (non-asserting) by design — see IpAddrSchema:
         // a hard pattern that is slightly wrong would false-reject valid configs. The
