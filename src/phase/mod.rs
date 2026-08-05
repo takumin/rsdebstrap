@@ -44,6 +44,7 @@ use crate::error::RsdebstrapError;
 use crate::executor::ExecutionResult;
 use crate::isolation::{IsolationContext, RootfsContext};
 use crate::privilege::PrivilegeMethod;
+use crate::rootfs::{RelPath, RootfsOps};
 
 /// Script source for task execution.
 ///
@@ -198,83 +199,68 @@ pub(crate) fn resolve_script_source<E: serde::de::Error>(
     }
 }
 
-/// RAII guard to ensure temporary file cleanup even on error.
-pub(crate) struct TempFileGuard {
-    path: Utf8PathBuf,
+/// RAII guard removing a staged file from the rootfs, on every path out.
+///
+/// Removal goes through [`RootfsOps`], so the entry it deletes is resolved the same
+/// descriptor-anchored way it was written. A host path plus `fs::remove_file` would resolve
+/// the name a second time, and a symlink planted at `/tmp` in between would send the removal
+/// somewhere else.
+pub(crate) struct StagedFileGuard<'a> {
+    ops: &'a dyn RootfsOps,
+    path: RelPath,
     dry_run: bool,
 }
 
-impl TempFileGuard {
-    pub(crate) fn new(path: Utf8PathBuf, dry_run: bool) -> Self {
-        Self { path, dry_run }
+impl<'a> StagedFileGuard<'a> {
+    pub(crate) fn new(ops: &'a dyn RootfsOps, path: RelPath, dry_run: bool) -> Self {
+        Self { ops, path, dry_run }
     }
 }
 
-impl Drop for TempFileGuard {
+impl Drop for StagedFileGuard<'_> {
     fn drop(&mut self) {
-        if !self.dry_run {
-            match fs::remove_file(&self.path) {
-                Ok(()) => tracing::debug!("cleaned up temp file: {}", self.path),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    tracing::debug!("temp file already removed: {}", self.path);
-                }
-                Err(e) => {
-                    tracing::error!(
-                        path = %self.path,
-                        error_kind = ?e.kind(),
-                        "failed to cleanup temp file: {}",
-                        e,
-                    );
-                }
-            }
+        if self.dry_run {
+            return;
+        }
+        match self.ops.remove(&self.path) {
+            Ok(()) => tracing::debug!("cleaned up staged file: {}", self.path),
+            Err(e) => tracing::error!(path = %self.path, "failed to clean up staged file: {}", e),
         }
     }
 }
 
-/// Sets Unix file permissions on the given path.
-#[cfg(unix)]
-pub(crate) fn set_file_mode(path: &Utf8Path, mode: u32) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)
-        .with_context(|| format!("failed to read metadata for {}", path))?
-        .permissions();
-    perms.set_mode(mode);
-    fs::set_permissions(path, perms)
-        .with_context(|| format!("failed to set permissions on {}", path))?;
-    Ok(())
-}
-
-/// Copies or writes a script source to the target path and sets permissions.
+/// Stages a script source inside the rootfs at `path` with `mode`.
 ///
-/// On Unix systems, sets the file mode to the specified `mode`.
-/// On other platforms, the permission step is skipped.
-pub(crate) fn prepare_source_file(
+/// The host side of the copy happens here, unprivileged; what reaches [`RootfsOps`] is the
+/// bytes and a [`RelPath`]. The write is atomic and carries its mode from creation, so the
+/// file never exists in the rootfs with permissions other than the ones asked for.
+pub(crate) fn stage_source_file(
+    ops: &dyn RootfsOps,
     source: &ScriptSource,
-    target: &Utf8Path,
+    path: &RelPath,
     mode: u32,
     label: &str,
 ) -> Result<()> {
-    match source {
+    let content = match source {
         ScriptSource::Script(src_path) => {
             info!("copying {} from {} to rootfs", label, src_path);
-            fs::copy(src_path, target)
-                .with_context(|| format!("failed to copy {} {} to {}", label, src_path, target))?;
+            fs::read(src_path).with_context(|| format!("failed to read {} {}", label, src_path))?
         }
         ScriptSource::Content(content) => {
             info!("writing inline {} to rootfs", label);
-            fs::write(target, content)
-                .with_context(|| format!("failed to write inline {} to {}", label, target))?;
+            content.clone().into_bytes()
         }
-    }
-    #[cfg(unix)]
-    set_file_mode(target, mode)?;
+    };
+    ops.write_file(path, &content, mode)
+        .with_context(|| format!("failed to stage {} at {}", label, path))?;
     Ok(())
 }
 
 /// Validates that /tmp exists as a real directory (not a symlink).
 ///
-/// This is a security-critical check to prevent attackers from using symlinks
-/// to write files outside the chroot.
+/// A pre-flight check for a readable error, not a security control: staging resolves `/tmp`
+/// itself with `O_NOFOLLOW` against the rootfs descriptor, so a symlink there fails the
+/// write no matter what this reported earlier.
 pub(crate) fn validate_tmp_directory(rootfs: &Utf8Path) -> Result<()> {
     let tmp_dir = rootfs.join("tmp");
     let metadata = match std::fs::symlink_metadata(&tmp_dir) {
@@ -371,22 +357,6 @@ pub(crate) fn check_execution_result(
     }
 }
 
-/// Re-validates `/tmp` (TOCTOU mitigation) and runs the file preparation closure.
-///
-/// In dry-run mode, skips both validation and file preparation entirely.
-pub(crate) fn prepare_files_with_toctou_check(
-    rootfs: &Utf8Path,
-    dry_run: bool,
-    prepare_fn: impl FnOnce() -> Result<()>,
-) -> Result<()> {
-    if !dry_run {
-        validate_tmp_directory(rootfs)
-            .context("TOCTOU check: /tmp validation failed before writing files")?;
-        prepare_fn()?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,50 +415,43 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_temp_file_guard_removes_file_on_drop() {
+    fn staged_rootfs() -> (tempfile::TempDir, crate::rootfs::LocalRootfsOps) {
         let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-        let file_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("test_file.tmp"))
-            .expect("path should be valid UTF-8");
-
-        fs::write(&file_path, "test content").expect("failed to write file");
-        assert!(file_path.exists(), "file should exist before drop");
-
-        {
-            let _guard = TempFileGuard::new(file_path.clone(), false);
-        }
-
-        assert!(!file_path.exists(), "file should be removed after drop");
+        let root = Utf8Path::from_path(temp_dir.path()).expect("path should be valid UTF-8");
+        fs::create_dir(root.join("tmp")).expect("failed to create tmp");
+        let ops = crate::rootfs::LocalRootfsOps::open(root).expect("failed to open rootfs");
+        (temp_dir, ops)
     }
 
     #[test]
-    fn test_temp_file_guard_handles_already_removed_file() {
-        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-        let file_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("nonexistent.tmp"))
-            .expect("path should be valid UTF-8");
+    fn staged_file_guard_removes_the_entry_on_drop() {
+        let (temp_dir, ops) = staged_rootfs();
+        let path = RelPath::parse("/tmp/staged").unwrap();
+        ops.write_file(&path, b"content", 0o600).unwrap();
+        let host = temp_dir.path().join("tmp/staged");
+        assert!(host.exists(), "entry should exist before drop");
 
-        // Drop must not panic when the file is already gone — a task that removed its
+        drop(StagedFileGuard::new(&ops, path, false));
+
+        assert!(!host.exists(), "entry should be removed after drop");
+    }
+
+    #[test]
+    fn staged_file_guard_tolerates_an_already_removed_entry() {
+        let (_temp_dir, ops) = staged_rootfs();
+        // Drop must not panic when the entry is already gone — a task that removed its
         // own script would otherwise abort the process while unwinding.
-        {
-            let _guard = TempFileGuard::new(file_path.clone(), false);
-        }
-
-        assert!(!file_path.exists(), "guard must not resurrect the file");
+        drop(StagedFileGuard::new(&ops, RelPath::parse("/tmp/absent").unwrap(), false));
     }
 
     #[test]
-    fn test_temp_file_guard_skips_removal_in_dry_run() {
-        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-        let file_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("dry_run_file.tmp"))
-            .expect("path should be valid UTF-8");
+    fn staged_file_guard_skips_removal_in_dry_run() {
+        let (temp_dir, ops) = staged_rootfs();
+        let path = RelPath::parse("/tmp/staged").unwrap();
+        ops.write_file(&path, b"content", 0o600).unwrap();
 
-        fs::write(&file_path, "test content").expect("failed to write file");
-        assert!(file_path.exists(), "file should exist before drop");
+        drop(StagedFileGuard::new(&ops, path, true));
 
-        {
-            let _guard = TempFileGuard::new(file_path.clone(), true);
-        }
-
-        assert!(file_path.exists(), "file should still exist after dry_run drop");
+        assert!(temp_dir.path().join("tmp/staged").exists(), "dry run must not remove it");
     }
 }

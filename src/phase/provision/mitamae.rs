@@ -17,7 +17,7 @@ use tracing::{debug, info};
 
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
-use crate::phase::{ScriptSource, TempFileGuard};
+use crate::phase::{ScriptSource, StagedFileGuard};
 use crate::privilege::{Privilege, PrivilegeMethod};
 
 /// Mitamae task data and execution logic.
@@ -197,11 +197,9 @@ impl MitamaeTask {
     /// This method:
     /// 1. Validates /tmp in rootfs (unless dry_run)
     /// 2. Sets up RAII guards for cleanup of temp files
-    /// 3. Re-validates /tmp to mitigate TOCTOU race conditions (unless dry_run)
-    /// 4. Copies mitamae binary to rootfs /tmp with 0o700 permissions
-    /// 5. Copies or writes the recipe to rootfs /tmp with 0o600 permissions
-    /// 6. Executes `mitamae local <recipe>` via the isolation context
-    /// 7. Returns an error if the process fails or exits without status
+    /// 3. Stages the mitamae binary (0o700) and recipe (0o600) through `RootfsOps`
+    /// 4. Executes `mitamae local <recipe>` via the isolation context
+    /// 5. Returns an error if the process fails or exits without status
     pub fn execute(
         &self,
         context: &dyn IsolationContext,
@@ -225,24 +223,23 @@ impl MitamaeTask {
         let uuid = uuid::Uuid::new_v4();
         let binary_name = format!("mitamae-{}", uuid);
         let recipe_name = format!("recipe-{}.rb", uuid);
-        let target_binary = rootfs.join("tmp").join(&binary_name);
-        let target_recipe = rootfs.join("tmp").join(&recipe_name);
-
-        let _binary_guard = TempFileGuard::new(target_binary.clone(), dry_run);
-        let _recipe_guard = TempFileGuard::new(target_recipe.clone(), dry_run);
-
-        crate::phase::prepare_files_with_toctou_check(rootfs, dry_run, || {
-            info!("copying mitamae binary from {} to rootfs", binary);
-            fs::copy(binary, &target_binary).with_context(|| {
-                format!("failed to copy mitamae binary {} to {}", binary, target_binary)
-            })?;
-            #[cfg(unix)]
-            crate::phase::set_file_mode(&target_binary, 0o700)?;
-            crate::phase::prepare_source_file(&self.source, &target_recipe, 0o600, "recipe")
-        })?;
-
         let binary_path_in_isolation = format!("/tmp/{}", binary_name);
         let recipe_path_in_isolation = format!("/tmp/{}", recipe_name);
+        let staged_binary = crate::rootfs::RelPath::parse(&binary_path_in_isolation)?;
+        let staged_recipe = crate::rootfs::RelPath::parse(&recipe_path_in_isolation)?;
+
+        let ops = context.rootfs_ops();
+        let _binary_guard = StagedFileGuard::new(ops, staged_binary.clone(), dry_run);
+        let _recipe_guard = StagedFileGuard::new(ops, staged_recipe.clone(), dry_run);
+
+        if !dry_run {
+            info!("copying mitamae binary from {} to rootfs", binary);
+            let bytes = fs::read(binary)
+                .with_context(|| format!("failed to read mitamae binary {}", binary))?;
+            ops.write_file(&staged_binary, &bytes, 0o700)
+                .with_context(|| format!("failed to stage mitamae binary at {}", staged_binary))?;
+            crate::phase::stage_source_file(ops, &self.source, &staged_recipe, 0o600, "recipe")?;
+        }
         let command: Vec<String> = vec![
             binary_path_in_isolation,
             "local".to_string(),
