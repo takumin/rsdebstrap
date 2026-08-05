@@ -2272,7 +2272,10 @@ fn internally_tagged_variants_reject_typos_but_accept_the_tag() {
 
 #[test]
 fn internally_tagged_isolation_variants_reject_typos_but_accept_the_tag() {
-    let base = "dir: /tmp/rootfs\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: /tmp/rootfs\n";
+    let base = concat!(
+        "dir: /tmp/rootfs\n",
+        "bootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: /tmp/rootfs\n",
+    );
 
     let accepted = format!("{base}defaults:\n  isolation:\n    type: chroot\n");
     let rejected = format!("{base}defaults:\n  isolation:\n    type: chroot\n    bogus: 1\n");
