@@ -14,7 +14,11 @@ cargo install cargo-llvm-cov --version 0.8.7 --locked  # once; matches the aqua 
 cargo llvm-cov --workspace
 
 # Check for errors without building
-cargo check --all-targets --all-features --quiet
+cargo check --all-targets --quiet
+
+# Tests requiring passwordless sudo are #[ignore]d and skip themselves without it.
+# They cover real privilege escalation (see Privilege boundary below).
+cargo test --workspace -- --ignored
 
 # Generate the profile JSON Schema (derived from the Rust config types).
 # Regenerate the committed copy after any config-type change, or `cargo test` fails.
@@ -28,6 +32,24 @@ task schema  # equivalent to: cargo run -- schema > schema/rsdebstrap.schema.jso
 see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).** Read it before changing the
 resolution model, the phase pipeline, isolation/privilege plumbing, or the
 filesystem-safety code — it captures decisions that are not obvious from the source.
+
+## Privilege boundary
+
+**Never mutate the rootfs by running a command.** `cp`/`mv`/`rm`/`ln`/`chmod` under
+`sudo` take path *strings*, so a name checked once and resolved again can name two
+different inodes — a symlink planted in between redirects a privileged write. Use
+[`RootfsOps`](src/rootfs/) instead: it resolves each path component with `O_NOFOLLOW`
+against a directory descriptor, and its `RelPath` cannot express a path outside the
+rootfs. Escalation happens once per run, in the helper process `rootfs::open()` spawns.
+
+`tests/privilege_boundary_test.rs` fails on the obvious way back. External programs with
+no syscall equivalent (`mount`, `umount`, `chroot`, the bootstrap backends) legitimately
+escalate per command and are exempt.
+
+Corollary: privilege for rootfs mutation is a property of the *run*, not of a task, so
+resist adding a per-task `privilege` key to anything that only writes files — it cannot
+be honored. See the Privilege boundary section of
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Code Comments
 
@@ -46,6 +68,9 @@ filesystem-safety code — it captures decisions that are not obvious from the s
 - Test code uses `//` only — never `///` or `//!`, and no exception for test modules
   being invisible to schema and `--help`. Enforced by `tests/comment_style_test.rs`,
   which explains the reasoning when it fires.
+- Prefer moving a claim into a test over arguing it in a comment. Several long notes here
+  were replaced that way: the serde `deny_unknown_fields` behaviour, the phase ordering
+  (now carried by the `Provisioned`/`Restored` tokens), and the rule above.
 
 ## Profile Structure (YAML)
 
