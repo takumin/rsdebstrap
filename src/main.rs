@@ -39,9 +39,7 @@ fn main() -> Result<()> {
 
     match &args.command {
         cli::Commands::Apply(opts) => {
-            let executor = Arc::new(executor::RealCommandExecutor {
-                dry_run: opts.dry_run,
-            });
+            let executor = Arc::new(executor::RealCommandExecutor::new(opts.dry_run));
 
             run_apply(opts, executor)?;
         }

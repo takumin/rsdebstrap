@@ -87,8 +87,19 @@ fn spawn_reader_threads(
 ///
 /// When `dry_run` is true, commands are logged but not executed,
 /// and `execute()` returns `Ok(ExecutionResult { status: None })`.
+// The field is private because whether a run is a dry run is fixed when the executor
+// is built: `CommandExecutor::dry_run()` is the single answer every layer derives from,
+// and a `pub` field would let a holder flip it between two commands of the same run.
 pub struct RealCommandExecutor {
-    pub dry_run: bool,
+    dry_run: bool,
+}
+
+impl RealCommandExecutor {
+    /// Creates an executor that runs commands, or only logs them when `dry_run` is set.
+    #[must_use]
+    pub fn new(dry_run: bool) -> Self {
+        Self { dry_run }
+    }
 }
 
 impl CommandExecutor for RealCommandExecutor {

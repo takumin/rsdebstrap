@@ -397,9 +397,9 @@ fn context_dry_run_comes_from_the_executor() {
     let ops = mock_ops(&rootfs);
 
     let live: Arc<dyn CommandExecutor> =
-        Arc::new(rsdebstrap::executor::RealCommandExecutor { dry_run: false });
+        Arc::new(rsdebstrap::executor::RealCommandExecutor::new(false));
     let dry: Arc<dyn CommandExecutor> =
-        Arc::new(rsdebstrap::executor::RealCommandExecutor { dry_run: true });
+        Arc::new(rsdebstrap::executor::RealCommandExecutor::new(true));
 
     let live_ctx = DirectProvider.setup(&rootfs, live, ops.clone()).unwrap();
     let dry_ctx = DirectProvider.setup(&rootfs, dry, ops).unwrap();

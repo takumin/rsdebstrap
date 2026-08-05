@@ -52,7 +52,7 @@ fn privilege_wrapping_prepends_escalation_command() {
     let context = DirectProvider
         .setup(
             rootfs,
-            Arc::new(RealCommandExecutor { dry_run: false }),
+            Arc::new(RealCommandExecutor::new(false)),
             Arc::new(DryRunRootfsOps::new(rootfs)),
         )
         .expect("direct setup should succeed");
