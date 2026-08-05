@@ -199,29 +199,32 @@ impl TaskIsolation {
     }
 }
 
-// Schema-only mirror of the accepted YAML shapes: `true`/`false`, `{ type: ... }`, or an
-// explicit null (which — like field absence — resolves to `Inherit`).
-// Not on the production parse path — `TaskIsolation`'s `Deserialize` performs the strict
-// dispatch. The map form reuses `IsolationConfig`, whose per-variant payload structs are
+// The accepted YAML shapes: `true`/`false`, `{ type: ... }`, or an explicit null (which —
+// like field absence — resolves to `Inherit`). This one type drives both deserialization
+// and schema generation, so the two cannot describe different acceptance sets. The map
+// form reuses `IsolationConfig`, whose per-variant payload structs are
 // `deny_unknown_fields` (the `type` tag is consumed before the payload sees the map).
-// `Deserialize` is derived here solely so the `wire_parity` tests can prove this enum
-// accepts exactly what `TaskIsolationVisitor` accepts: the variants below and the
-// visitor's `visit_*` methods must change in lockstep, and those tests fail on any drift.
-// Exists so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
+//
 // Plain `//` (not `///`) so this note does not leak into the schema's `description`.
-#[cfg(feature = "schema")]
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(untagged)]
 enum TaskIsolationWire {
-    // The payloads are written by the derived `Deserialize` and read only as *types* by
-    // schema generation, never as values — hence the field-level allows. Unlike the
-    // previous enum-level allow, these keep "variant is never constructed" armed, so
-    // dropping the `Deserialize` derive that ties this enum to the tests is a warning.
-    Toggle(#[allow(dead_code)] bool),
-    Config(#[allow(dead_code)] IsolationConfig),
-    // Unit variant → `{ "type": "null" }` in the generated `anyOf`, mirroring that an
-    // explicit null deserializes to `Inherit` (see `visit_unit`).
+    Toggle(bool),
+    Config(IsolationConfig),
+    // Unit variant → `{ "type": "null" }` in the generated `anyOf`.
     Inherit,
+}
+
+impl From<TaskIsolationWire> for TaskIsolation {
+    fn from(wire: TaskIsolationWire) -> Self {
+        match wire {
+            TaskIsolationWire::Toggle(true) => Self::UseDefault,
+            TaskIsolationWire::Toggle(false) => Self::Disabled,
+            TaskIsolationWire::Config(c) => Self::Config(c),
+            TaskIsolationWire::Inherit => Self::Inherit,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for TaskIsolation {
@@ -229,54 +232,7 @@ impl<'de> Deserialize<'de> for TaskIsolation {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de;
-
-        // The set of `visit_*` methods below must stay in lockstep with
-        // `TaskIsolationWire`'s variants (the schema mirror); the `wire_parity` tests
-        // enforce the equivalence.
-        struct TaskIsolationVisitor;
-
-        impl<'de> de::Visitor<'de> for TaskIsolationVisitor {
-            type Value = TaskIsolation;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a boolean or a map with a 'type' field")
-            }
-
-            fn visit_unit<E>(self) -> std::result::Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(TaskIsolation::Inherit)
-            }
-
-            fn visit_bool<E>(self, v: bool) -> std::result::Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if v {
-                    Ok(TaskIsolation::UseDefault)
-                } else {
-                    Ok(TaskIsolation::Disabled)
-                }
-            }
-
-            fn visit_map<A>(self, map: A) -> std::result::Result<Self::Value, A::Error>
-            where
-                A: de::MapAccess<'de>,
-            {
-                // IsolationConfig's per-variant payloads are `deny_unknown_fields`, so
-                // typo'd keys stay rejected after the `type` tag selects the variant.
-                let config =
-                    IsolationConfig::deserialize(de::value::MapAccessDeserializer::new(map))?;
-                Ok(TaskIsolation::Config(config))
-            }
-        }
-
-        // Field absence is handled by `#[serde(default)]` (→ Inherit); an explicit null
-        // also maps to Inherit (via `visit_unit`). Any other present value must be a boolean
-        // or a `{ type }` map — anything else is a parse error.
-        deserializer.deserialize_any(TaskIsolationVisitor)
+        TaskIsolationWire::deserialize(deserializer).map(Into::into)
     }
 }
 
@@ -433,43 +389,26 @@ mod tests {
         }
     }
 
-    // `TaskIsolationWire` is the schema-side mirror of the hand-written visitor. These
-    // tests pin the two acceptance sets together: adding or removing a `visit_*`
-    // method without the matching wire-variant change (or vice versa) makes a
-    // battery value below diverge and fail.
-    #[cfg(feature = "schema")]
-    mod wire_parity {
-        use super::super::{TaskIsolation, TaskIsolationWire};
-        use serde_json::{Value, json};
-
-        fn battery() -> Vec<Value> {
-            vec![
-                json!(null),
-                json!(true),
-                json!(false),
-                json!({"type": "chroot"}),
-                json!({"type": "bogus"}),
-                json!({"typ": "chroot"}),
-                json!({"type": "chroot", "extra": 1}),
-                json!({}),
-                json!("chroot"),
-                json!([]),
-                json!(42),
-                json!(42.5),
-            ]
-        }
-
-        #[test]
-        fn wire_accepts_exactly_what_the_visitor_accepts() {
-            for value in battery() {
-                let wire = serde_json::from_value::<TaskIsolationWire>(value.clone()).is_ok();
-                let visitor = serde_json::from_value::<TaskIsolation>(value.clone()).is_ok();
-                assert_eq!(
-                    wire, visitor,
-                    "TaskIsolationWire and TaskIsolation's visitor disagree on {value}: \
-                    wire accepts = {wire}, visitor accepts = {visitor}"
-                );
-            }
+    // The acceptance set is now a property of one type, so this pins the boundary itself
+    // rather than the agreement between two definitions.
+    #[test]
+    fn task_isolation_acceptance_set() {
+        for (yaml, accepted) in [
+            ("~", true),
+            ("true", true),
+            ("false", true),
+            ("type: chroot", true),
+            ("type: bogus", false),
+            ("typ: chroot", false),
+            ("{type: chroot, extra: 1}", false),
+            ("{}", false),
+            ("chroot", false),
+            ("[]", false),
+            ("42", false),
+            ("42.5", false),
+        ] {
+            let got = yaml_serde::from_str::<TaskIsolation>(yaml).is_ok();
+            assert_eq!(got, accepted, "{yaml:?}: accepted = {got}, expected {accepted}");
         }
     }
 }

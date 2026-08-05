@@ -593,11 +593,9 @@ pub(crate) fn validate_mount_order(mounts: &[MountEntry]) -> Result<(), Rsdebstr
 fn format_yaml_parse_error(err: yaml_serde::Error, file_path: &Utf8Path) -> RsdebstrapError {
     // yaml_serde sometimes embeds the location in its Display output
     // ("... at line X column Y") and sometimes exposes it only via location()
-    // (e.g. "missing field `dir`"). We render the message as-is and append the
-    // location from location() only when the message does not already mention
-    // that line. The check keys off the numeric line value (stable data), not
-    // yaml_serde's exact wording, so a future change to its phrasing degrades to
-    // a harmless duplicate location rather than silently dropping it.
+    // (e.g. "missing field `dir`"). The check keys off the numeric line value (stable
+    // data), not yaml_serde's exact wording, so a future change to its phrasing degrades
+    // to a harmless duplicate location rather than silently dropping it.
     let msg = err.to_string();
     let suffix = match err.location() {
         Some(loc) if !msg.contains(&format!("line {}", loc.line())) => {
@@ -606,6 +604,24 @@ fn format_yaml_parse_error(err: yaml_serde::Error, file_path: &Utf8Path) -> Rsde
         _ => String::new(),
     };
     RsdebstrapError::Config(format!("{}: YAML parse error: {}{}", file_path, msg, suffix))
+}
+
+// Renders the field path (`provision[2].privilege`) alongside the parse error. The
+// untagged enums (`Privilege`, `TaskIsolation`) report only "did not match any variant",
+// so without the path the user cannot tell which field is malformed.
+fn format_pathed_parse_error(
+    err: serde_path_to_error::Error<yaml_serde::Error>,
+    file_path: &Utf8Path,
+) -> RsdebstrapError {
+    let path = err.path().to_string();
+    let base = format_yaml_parse_error(err.into_inner(), file_path);
+    if path.is_empty() || path == "." {
+        return base;
+    }
+    match base {
+        RsdebstrapError::Config(msg) => RsdebstrapError::Config(format!("{msg} at `{path}`")),
+        other => other,
+    }
 }
 
 fn read_profile_file(path: &Utf8Path) -> Result<(BufReader<File>, Utf8PathBuf), RsdebstrapError> {
@@ -631,7 +647,8 @@ fn parse_profile_yaml(
     reader: BufReader<File>,
     file_path: &Utf8Path,
 ) -> Result<Profile, RsdebstrapError> {
-    yaml_serde::from_reader(reader).map_err(|e| format_yaml_parse_error(e, file_path))
+    let de = yaml_serde::Deserializer::from_reader(reader);
+    serde_path_to_error::deserialize(de).map_err(|e| format_pathed_parse_error(e, file_path))
 }
 
 fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError> {
