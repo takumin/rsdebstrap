@@ -60,9 +60,10 @@ is bounded by the context trait it is handed, and that differs per phase:
 - `ProvisionItem::execute` takes the full `IsolationContext`. Running a program a profile
   declared is what provision is for.
 
-One thing stays expressible: `CommandSpec::for_task_command` takes a program name from
-the profile and so cannot be an enum; `tests/privilege_boundary_test.rs` guards it,
-because Rust cannot restrict a constructor to one module.
+`CommandSpec::for_task_command` takes a program name from the profile and so cannot be an
+enum. It is restricted instead by a capability token — `TaskCommandToken`, whose field is
+private to `isolation` — so only the layer that runs a task's command can call it. What the
+token cannot bound is *which argv* is passed; `tests/privilege_boundary_test.rs` guards that.
 
 Corollary: privilege for rootfs mutation is a property of the *run*, not of a task, so
 resist adding a per-task `privilege` key to anything that only writes files — it cannot
