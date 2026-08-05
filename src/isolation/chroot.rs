@@ -94,6 +94,15 @@ impl IsolationContext for ChrootContext {
     }
 }
 
+impl std::fmt::Debug for ChrootContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChrootContext")
+            .field("rootfs", &self.rootfs)
+            .field("torn_down", &self.torn_down)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for ChrootContext {
     fn drop(&mut self) {
         if !self.torn_down

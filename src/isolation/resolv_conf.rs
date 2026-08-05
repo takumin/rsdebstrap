@@ -210,6 +210,21 @@ impl Drop for RootfsResolvConf {
     }
 }
 
+// Deliberately omits `original`: a `TakenEntry::File` holds the detached file's bytes,
+// and dumping them says nothing about the guard. What a reader wants is whether setup
+// ran and whether the restore is still owed.
+impl std::fmt::Debug for RootfsResolvConf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RootfsResolvConf")
+            .field("rootfs", &self.rootfs)
+            .field("active", &self.active)
+            .field("detached", &self.original.is_some())
+            .field("dry_run", &self.dry_run)
+            .field("torn_down", &self.torn_down)
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +253,30 @@ mod tests {
 
     fn resolv_conf(rootfs: &Utf8Path) -> Utf8PathBuf {
         rootfs.join("etc/resolv.conf")
+    }
+
+    // The `Debug` impl reports the guard's state, and the detached entry is not part of
+    // it: `TakenEntry::File` carries the bytes of whatever was replaced, and a reader
+    // asking about the guard is asking whether the restore is still owed, not what the
+    // old file said. `detached` answers that in one bool.
+    #[test]
+    fn debug_reports_state_without_the_detached_content() {
+        let (_tmp, rootfs) = rootfs_with_etc();
+        let secret = "nameserver 198.51.100.99\n";
+        fs::write(resolv_conf(&rootfs), secret).unwrap();
+
+        let mut g = guard(&rootfs, Some(generated(&["192.0.2.1"])));
+        g.setup().unwrap();
+        let rendered = format!("{g:?}");
+
+        assert!(rendered.contains("detached: true"), "state is missing: {rendered}");
+        assert!(rendered.contains("active: true"), "state is missing: {rendered}");
+        assert!(rendered.contains("torn_down: false"), "state is missing: {rendered}");
+        // The bytes render as a decimal array, so look for the first few of them.
+        let as_bytes = format!("{:?}", secret.as_bytes());
+        let head = &as_bytes[..as_bytes.len() / 2];
+        assert!(!rendered.contains(head), "the detached content leaked into Debug: {rendered}");
+        assert!(rendered.ends_with(".. }"), "omitted fields are not marked: {rendered}");
     }
 
     // Fails the *first* write only, so setup's install fails while the rollback
