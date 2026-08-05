@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 pub use resolv_conf::AssembleResolvConfTask;
 
-use crate::phase::PhaseItem;
+use crate::phase::AssembleItem;
 
 /// Assemble phase configuration (named-field, schema-first).
 ///
@@ -30,8 +30,8 @@ pub struct AssembleConfig {
 
 impl AssembleConfig {
     /// Returns the present phase items in execution order.
-    pub(crate) fn items(&self) -> Vec<&dyn PhaseItem> {
-        let mut items: Vec<&dyn PhaseItem> = Vec::new();
+    pub(crate) fn items(&self) -> Vec<&dyn AssembleItem> {
+        let mut items: Vec<&dyn AssembleItem> = Vec::new();
         if let Some(resolv_conf) = &self.resolv_conf {
             items.push(resolv_conf);
         }

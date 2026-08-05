@@ -70,8 +70,11 @@ pub trait IsolationProvider: Send + Sync {
 
 /// Read-only view of the rootfs plus the operations that may mutate it.
 ///
-/// Split out of [`IsolationContext`] so that the rootfs view can be handed to a
-/// caller without also handing it the ability to run a program.
+/// This is the whole capability an assemble task gets. It deliberately has no
+/// way to run a program: assemble writes the final state of the rootfs, and
+/// every such write goes through [`rootfs_ops`](Self::rootfs_ops), which cannot
+/// be redirected by a planted symlink. Anything that needs to run a program is
+/// a provision task and gets an [`IsolationContext`] instead.
 pub trait RootfsContext {
     /// Returns the path to the rootfs directory.
     fn rootfs(&self) -> &Utf8Path;
@@ -129,6 +132,41 @@ pub trait IsolationContext: RootfsContext + Send {
     /// cannot propagate errors, so implementations should log failures as
     /// warnings in their `Drop` impl.
     fn teardown(&mut self) -> Result<()>;
+}
+
+/// A [`RootfsContext`] built from the values the pipeline already holds.
+///
+/// The assemble phase used to go through an [`IsolationProvider`], which always
+/// resolved to [`DirectProvider`] and whose only used capability was
+/// `rootfs_ops`. This replaces that setup/teardown round trip.
+pub struct PlainRootfsContext {
+    rootfs: camino::Utf8PathBuf,
+    ops: Arc<dyn RootfsOps>,
+    dry_run: bool,
+}
+
+impl PlainRootfsContext {
+    pub fn new(rootfs: &Utf8Path, ops: Arc<dyn RootfsOps>, dry_run: bool) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            ops,
+            dry_run,
+        }
+    }
+}
+
+impl RootfsContext for PlainRootfsContext {
+    fn rootfs(&self) -> &Utf8Path {
+        &self.rootfs
+    }
+
+    fn dry_run(&self) -> bool {
+        self.dry_run
+    }
+
+    fn rootfs_ops(&self) -> &dyn RootfsOps {
+        &*self.ops
+    }
 }
 
 /// Task-level isolation setting.

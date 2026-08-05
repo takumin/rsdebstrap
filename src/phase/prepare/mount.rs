@@ -12,10 +12,9 @@ use camino::Utf8Path;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{IsolationConfig, MountEntry, MountPreset};
+use crate::config::{MountEntry, MountPreset};
 use crate::error::RsdebstrapError;
-use crate::isolation::IsolationContext;
-use crate::phase::PhaseItem;
+use crate::phase::{PhaseItem, PrepareItem};
 
 /// Mount task for declaring filesystem mounts in the prepare phase.
 ///
@@ -144,16 +143,9 @@ impl PhaseItem for MountTask {
     fn validate(&self) -> Result<(), RsdebstrapError> {
         MountTask::validate(self)
     }
-
-    fn execute(&self, _ctx: &dyn IsolationContext) -> anyhow::Result<()> {
-        // Mount lifecycle is managed at the pipeline level, not per-task.
-        Ok(())
-    }
-
-    fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        None
-    }
 }
+
+impl PrepareItem for MountTask {}
 
 #[cfg(test)]
 mod tests {

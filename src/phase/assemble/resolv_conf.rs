@@ -12,11 +12,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::config::{IsolationConfig, ResolvConfConfig};
+use crate::config::ResolvConfConfig;
 use crate::error::RsdebstrapError;
-use crate::isolation::IsolationContext;
+use crate::isolation::RootfsContext;
 use crate::isolation::resolv_conf::generate_resolv_conf;
-use crate::phase::PhaseItem;
+use crate::phase::{AssembleItem, PhaseItem};
 use crate::rootfs::RelPath;
 
 /// Assemble phase resolv_conf task for writing a permanent `/etc/resolv.conf`.
@@ -116,7 +116,7 @@ impl AssembleResolvConfTask {
     /// Installs the permanent `/etc/resolv.conf` — a generated file, or a
     /// symlink when `link` is set. The write is atomic, so a failure leaves the
     /// previous entry in place rather than a half-written one.
-    pub fn execute(&self, ctx: &dyn IsolationContext) -> anyhow::Result<()> {
+    pub fn execute(&self, ctx: &dyn RootfsContext) -> anyhow::Result<()> {
         let rootfs = ctx.rootfs();
         let path = RelPath::parse("/etc/resolv.conf").expect("literal path is valid");
 
@@ -161,14 +161,11 @@ impl PhaseItem for AssembleResolvConfTask {
     fn validate(&self) -> Result<(), RsdebstrapError> {
         AssembleResolvConfTask::validate(self)
     }
+}
 
-    fn execute(&self, ctx: &dyn IsolationContext) -> anyhow::Result<()> {
-        // Assemble resolv_conf operates directly on the final rootfs filesystem.
+impl AssembleItem for AssembleResolvConfTask {
+    fn execute(&self, ctx: &dyn RootfsContext) -> anyhow::Result<()> {
         AssembleResolvConfTask::execute(self, ctx)
-    }
-
-    fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        None
     }
 }
 
@@ -506,6 +503,10 @@ mod tests {
         assert!(!outside.join("resolv.conf").exists(), "wrote through the symlink");
     }
 
+    // Implements `RootfsContext` and nothing else, which is the assertion: if
+    // `execute` ever asked for an `IsolationContext` again, these tests would
+    // stop compiling rather than quietly grant the assemble phase a way to run
+    // programs.
     struct MockAssembleContext {
         rootfs: camino::Utf8PathBuf,
         dry_run: bool,
@@ -529,7 +530,7 @@ mod tests {
         }
     }
 
-    impl crate::isolation::RootfsContext for MockAssembleContext {
+    impl RootfsContext for MockAssembleContext {
         fn rootfs(&self) -> &camino::Utf8Path {
             &self.rootfs
         }
@@ -540,24 +541,6 @@ mod tests {
 
         fn rootfs_ops(&self) -> &dyn crate::rootfs::RootfsOps {
             &*self.ops
-        }
-    }
-
-    impl IsolationContext for MockAssembleContext {
-        fn name(&self) -> &'static str {
-            "mock"
-        }
-
-        fn execute(
-            &self,
-            _command: &[String],
-            _privilege: Option<crate::privilege::PrivilegeMethod>,
-        ) -> anyhow::Result<crate::executor::ExecutionResult> {
-            unimplemented!("not used by assemble resolv_conf tests")
-        }
-
-        fn teardown(&mut self) -> anyhow::Result<()> {
-            Ok(())
         }
     }
 }

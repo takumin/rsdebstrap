@@ -12,10 +12,9 @@ use std::net::IpAddr;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{IsolationConfig, ResolvConfConfig};
+use crate::config::ResolvConfConfig;
 use crate::error::RsdebstrapError;
-use crate::isolation::IsolationContext;
-use crate::phase::PhaseItem;
+use crate::phase::{PhaseItem, PrepareItem};
 
 /// resolv_conf task for declaring DNS configuration in the prepare phase.
 ///
@@ -81,16 +80,9 @@ impl PhaseItem for ResolvConfTask {
     fn validate(&self) -> Result<(), RsdebstrapError> {
         ResolvConfTask::validate(self)
     }
-
-    fn execute(&self, _ctx: &dyn IsolationContext) -> anyhow::Result<()> {
-        // resolv_conf lifecycle is managed at the pipeline level, not per-task.
-        Ok(())
-    }
-
-    fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        None
-    }
 }
+
+impl PrepareItem for ResolvConfTask {}
 
 #[cfg(test)]
 mod tests {
