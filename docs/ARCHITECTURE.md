@@ -145,20 +145,17 @@ profile defaults like any other task.
 `rsdebstrap schema` prints a JSON Schema for the YAML profile, generated **directly from the
 Rust config types** via `schemars` (`profile_json_schema()` / `profile_json_schema_pretty()` in
 `src/lib.rs`). There is no hand-written schema JSON: the Rust types are the single source of
-truth, so the schema cannot describe a shape that `apply`/`validate` would not accept. All of it
-is compiled behind the **default-on `schema` cargo feature**: `schemars`/`serde_json` are
-optional dependencies enabled by it, every `JsonSchema` derive and `#[schemars(...)]` attribute
-is `cfg_attr`-gated, and the `schema` subcommand plus `profile_json_schema*()` do not exist
-under `--no-default-features` (for size-constrained `apply`/`validate`-only builds). The schema
-test suites carry a crate-level `#![cfg(feature = "schema")]`, so a default `cargo test` — which
-is exactly what CI's test job runs — still exercises every drift guard, while
-`--no-default-features` compiles them to empty crates instead of failing. (In-file gating, not a
-Cargo `[[test]]` stanza with `required-features`: an explicit test target makes manifest parsing
-require the file, which breaks CI's sparse checkouts that fetch/build without `tests/`.) A missed
-`cfg_attr` on a new field only surfaces in the schema-less build, which is why
-`cargo check --all-targets --no-default-features` is part of the routine command set in AGENTS.md
-**and runs in CI's test task** — the gate design is only real if that feature graph actually
-compiles somewhere.
+truth, so the schema cannot describe a shape that `apply`/`validate` would not accept. Schema
+generation is unconditional: `schemars`/`serde_json` are ordinary dependencies and every
+`JsonSchema` derive is a plain derive.
+
+This was once behind a default-on `schema` cargo feature, so `apply`/`validate`-only builds
+could drop schemars. The feature cost 82 `cfg`/`cfg_attr` sites, a second feature graph CI had
+to compile, and a crate-level gate on the schema test suites that took the drift guards with
+it — all to save 460 KB of binary (measured: 3.42 MB vs 3.89 MB, release).
+Removing it made the whole `Deserialize`/`JsonSchema` alignment problem smaller: with one
+feature graph, a type either carries both derives or neither, and there is no build in which
+the drift guards silently do not run.
 
 The non-obvious parts are all about keeping the schema faithful to the *deserializer*:
 

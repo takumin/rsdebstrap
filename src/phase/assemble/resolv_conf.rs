@@ -10,7 +10,6 @@ use std::net::IpAddr;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use rustix::fs::{self as rfs, CWD, Mode, OFlags};
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -51,8 +50,7 @@ fn staging_path(resolv_conf_path: &Utf8Path) -> Utf8PathBuf {
 /// - **link**: creates a symlink to the specified target path
 ///
 /// At most one `AssembleResolvConfTask` may appear in the assemble phase.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssembleResolvConfTask {
     /// Privilege escalation setting (resolved during defaults application).
@@ -71,10 +69,7 @@ pub struct AssembleResolvConfTask {
         deserialize_with = "crate::de::null_to_default",
         skip_serializing_if = "Vec::is_empty"
     )]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(with = "Option<Vec<crate::schema::IpAddrSchema>>")
-    )]
+    #[schemars(with = "Option<Vec<crate::schema::IpAddrSchema>>")]
     pub name_servers: Vec<IpAddr>,
     /// Search domains to write to resolv.conf.
     #[serde(
@@ -82,7 +77,7 @@ pub struct AssembleResolvConfTask {
         deserialize_with = "crate::de::string_list",
         skip_serializing_if = "Vec::is_empty"
     )]
-    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<String>>"))]
+    #[schemars(with = "Option<Vec<String>>")]
     pub search: Vec<String>,
 }
 
