@@ -15,6 +15,7 @@ use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::RsdebstrapError;
+use crate::isolation::TaskCommandToken;
 use crate::privilege::PrivilegeMethod;
 
 pub use real::RealCommandExecutor;
@@ -153,16 +154,17 @@ impl CommandSpec {
 
     /// Creates a spec for the program a provision task declared, optionally escalated.
     ///
-    /// Takes the task's whole argv, because that is what a task carries — a shell and
-    /// its arguments, or a mitamae binary and a recipe. The program name comes from the
-    /// profile, so unlike [`privileged`](Self::privileged) it cannot be an enum; what
-    /// keeps it honest is that it is only meaningful for a task's own command, and any
-    /// other use reads as one.
+    /// Takes the task's whole argv, because that is what a task carries — a shell and its
+    /// arguments, or a mitamae binary and a recipe. The program name comes from the profile,
+    /// so unlike [`privileged`](Self::privileged) it cannot be an enum; the
+    /// [`TaskCommandToken`] is what bounds it instead — only `isolation` can produce one, so
+    /// this is unreachable from anywhere but the layer that runs a task's command.
     ///
     /// # Errors
     ///
     /// Returns `RsdebstrapError::Isolation` if `argv` is empty.
-    pub fn for_task_command(
+    pub(crate) fn for_task_command(
+        _token: &TaskCommandToken,
         argv: &[String],
         privilege: Option<PrivilegeMethod>,
     ) -> Result<Self, RsdebstrapError> {
