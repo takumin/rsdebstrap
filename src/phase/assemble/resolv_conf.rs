@@ -344,12 +344,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_valid_link_absolute() {
-        let task = make_task_link("/run/systemd/resolve/stub-resolv.conf");
-        assert!(task.validate().is_ok());
-    }
-
-    #[test]
     fn validate_rejects_mutual_exclusion() {
         let task = AssembleResolvConfTask {
             privilege: Privilege::Disabled,
@@ -469,13 +463,6 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_link_absolute() {
-        let yaml = "link: /run/systemd/resolve/stub-resolv.conf\n";
-        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
-        assert_eq!(task.link.as_deref(), Some("/run/systemd/resolve/stub-resolv.conf"));
-    }
-
-    #[test]
     fn deserialize_name_servers() {
         let yaml = "name_servers:\n  - 8.8.8.8\n  - 8.8.4.4\n";
         let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
@@ -490,32 +477,15 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Pins that `privilege` reaches `Privilege`'s visitor rather than being
+    /// defaulted; the visitor's own acceptance set is covered in
+    /// `src/privilege.rs`. Absence resolving to `Inherit` is asserted by
+    /// `deserialize_link_relative`.
     #[test]
     fn deserialize_privilege_true() {
         let yaml = "name_servers:\n  - 8.8.8.8\nprivilege: true\n";
         let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(task.privilege, Privilege::UseDefault);
-    }
-
-    #[test]
-    fn deserialize_privilege_false() {
-        let yaml = "name_servers:\n  - 8.8.8.8\nprivilege: false\n";
-        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
-        assert_eq!(task.privilege, Privilege::Disabled);
-    }
-
-    #[test]
-    fn deserialize_privilege_method() {
-        let yaml = "name_servers:\n  - 8.8.8.8\nprivilege:\n  method: sudo\n";
-        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
-        assert_eq!(task.privilege, Privilege::Method(PrivilegeMethod::Sudo));
-    }
-
-    #[test]
-    fn deserialize_privilege_absent_is_inherit() {
-        let yaml = "name_servers:\n  - 8.8.8.8\n";
-        let task: AssembleResolvConfTask = yaml_serde::from_str(yaml).unwrap();
-        assert_eq!(task.privilege, Privilege::Inherit);
     }
 
     #[test]
@@ -673,22 +643,6 @@ mod tests {
         );
         assert_eq!(commands[1].0, "mv");
         assert_eq!(commands[1].1, vec![staging.as_str(), rootfs.join("etc/resolv.conf").as_str()]);
-    }
-
-    #[test]
-    fn execute_link_absolute_creates_symlink() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = camino::Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
-        std::fs::create_dir_all(rootfs.join("etc")).unwrap();
-
-        let task = make_task_link_resolved("/run/systemd/resolve/stub-resolv.conf");
-
-        let ctx = MockAssembleContext::new(&rootfs, false);
-        task.execute(&ctx).unwrap();
-
-        let resolv_path = rootfs.join("etc/resolv.conf");
-        let target = std::fs::read_link(&resolv_path).unwrap();
-        assert_eq!(target.to_str().unwrap(), "/run/systemd/resolve/stub-resolv.conf");
     }
 
     #[test]

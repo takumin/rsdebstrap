@@ -320,12 +320,6 @@ mod tests {
     }
 
     #[test]
-    fn privilege_deserialize_method_doas() {
-        let p: Privilege = yaml_serde::from_str("method: doas").unwrap();
-        assert_eq!(p, Privilege::Method(PrivilegeMethod::Doas));
-    }
-
-    #[test]
     fn privilege_deserialize_unknown_field_rejected() {
         let result: Result<Privilege, _> = yaml_serde::from_str("method: sudo\nextra: bad");
         assert!(result.is_err());
@@ -482,36 +476,19 @@ mod tests {
         yaml_serde::from_str(&yaml).unwrap()
     }
 
+    /// `Serialize` is hand-written to mirror the visitor, so every variant must
+    /// survive a round trip — including `Inherit`, which serializes to null.
     #[test]
-    fn serialize_roundtrip_inherit() {
-        // Inherit serializes to null and an explicit null deserializes back to Inherit.
-        assert_eq!(roundtrip(&Privilege::Inherit), Privilege::Inherit);
-    }
-
-    #[test]
-    fn serialize_roundtrip_use_default() {
-        assert_eq!(roundtrip(&Privilege::UseDefault), Privilege::UseDefault);
-    }
-
-    #[test]
-    fn serialize_roundtrip_disabled() {
-        assert_eq!(roundtrip(&Privilege::Disabled), Privilege::Disabled);
-    }
-
-    #[test]
-    fn serialize_roundtrip_method_sudo() {
-        assert_eq!(
-            roundtrip(&Privilege::Method(PrivilegeMethod::Sudo)),
-            Privilege::Method(PrivilegeMethod::Sudo)
-        );
-    }
-
-    #[test]
-    fn serialize_roundtrip_method_doas() {
-        assert_eq!(
-            roundtrip(&Privilege::Method(PrivilegeMethod::Doas)),
-            Privilege::Method(PrivilegeMethod::Doas)
-        );
+    fn serialize_roundtrip_every_variant() {
+        for original in [
+            Privilege::Inherit,
+            Privilege::UseDefault,
+            Privilege::Disabled,
+            Privilege::Method(PrivilegeMethod::Sudo),
+            Privilege::Method(PrivilegeMethod::Doas),
+        ] {
+            assert_eq!(roundtrip(&original), original, "roundtrip changed {original:?}");
+        }
     }
 
     // `PrivilegeWire` is the schema-side mirror of the hand-written visitor. These

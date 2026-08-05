@@ -54,6 +54,9 @@ fn test_validate_rejects_empty_inline_content() {
     );
 }
 
+/// The one place the `trim()` in `ScriptSource::validate` is pinned: every
+/// other empty-content test passes an actually empty string, which would
+/// still be rejected if the trim were dropped.
 #[test]
 fn test_validate_rejects_whitespace_only_inline_content() {
     let task = ShellTask::new(ScriptSource::Content("   \n\t  ".to_string()));
@@ -546,27 +549,6 @@ fn test_mitamae_validate_rejects_recipe_path_traversal() {
 }
 
 #[test]
-fn test_mitamae_validate_rejects_whitespace_only_content() {
-    let temp_dir = tempdir().expect("failed to create temp dir");
-    let binary_path = temp_dir.path().join("mitamae");
-    std::fs::write(&binary_path, "fake binary").expect("failed to write binary");
-    let binary_utf8 =
-        camino::Utf8PathBuf::from_path_buf(binary_path).expect("path should be valid UTF-8");
-
-    let task = MitamaeTask::new(ScriptSource::Content("   \n\t  ".to_string()), binary_utf8);
-    let err = task.validate().unwrap_err();
-    assert!(
-        matches!(err, RsdebstrapError::Validation(_)),
-        "Expected Validation error, got: {:?}",
-        err
-    );
-    assert!(
-        err.to_string()
-            .contains("inline mitamae recipe content must not be empty")
-    );
-}
-
-#[test]
 fn test_mitamae_resolve_paths_resolves_binary_and_recipe() {
     let mut task =
         MitamaeTask::new(ScriptSource::Script("recipes/default.rb".into()), "bin/mitamae".into());
@@ -584,24 +566,6 @@ fn test_mitamae_resolve_paths_preserves_absolute() {
     task.resolve_paths(Utf8Path::new("/home/user/project"));
     assert_eq!(task.binary().unwrap().as_str(), "/usr/local/bin/mitamae");
     assert_eq!(task.script_path().unwrap().as_str(), "/abs/recipe.rb");
-}
-
-#[test]
-fn test_mitamae_name_inline() {
-    let task = MitamaeTask::new(
-        ScriptSource::Content("package 'vim'".to_string()),
-        "/usr/local/bin/mitamae".into(),
-    );
-    assert_eq!(task.name(), "<inline>");
-}
-
-#[test]
-fn test_mitamae_name_script() {
-    let task = MitamaeTask::new(
-        ScriptSource::Script("/path/to/recipe.rb".into()),
-        "/usr/local/bin/mitamae".into(),
-    );
-    assert_eq!(task.name(), "/path/to/recipe.rb");
 }
 
 #[test]
@@ -632,30 +596,6 @@ fn test_task_definition_binary_path_mitamae_some() {
         "/usr/local/bin/mitamae".into(),
     ));
     assert_eq!(task.binary_path(), Some(Utf8Path::new("/usr/local/bin/mitamae")));
-}
-
-#[test]
-fn test_script_source_name_returns_path_for_script() {
-    let source = ScriptSource::Script("/path/to/script.sh".into());
-    assert_eq!(source.name(), "/path/to/script.sh");
-}
-
-#[test]
-fn test_script_source_name_returns_inline_for_content() {
-    let source = ScriptSource::Content("echo test".to_string());
-    assert_eq!(source.name(), "<inline>");
-}
-
-#[test]
-fn test_script_source_script_path_returns_some_for_script() {
-    let source = ScriptSource::Script("/path/to/script.sh".into());
-    assert_eq!(source.script_path(), Some(Utf8Path::new("/path/to/script.sh")));
-}
-
-#[test]
-fn test_script_source_script_path_returns_none_for_content() {
-    let source = ScriptSource::Content("echo test".to_string());
-    assert_eq!(source.script_path(), None);
 }
 
 #[test]
@@ -758,23 +698,10 @@ fn test_task_definition_binary_path_mitamae_none_when_unset() {
     assert_eq!(task.binary_path(), None);
 }
 
-#[test]
-fn test_shell_task_deserialize_isolation_true() {
-    let yaml = r#"content: echo hello
-isolation: true
-"#;
-    let task: ShellTask =
-        yaml_serde::from_str(yaml).expect("should parse ShellTask with isolation: true");
-    use rsdebstrap::config::IsolationConfig;
-    let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::chroot());
-    assert_eq!(
-        task_mut.resolved_isolation_config(),
-        Some(&IsolationConfig::chroot()),
-        "isolation: true should resolve to Chroot"
-    );
-}
-
+/// `false` is the only shorthand whose resolved outcome differs: `true`,
+/// the map form and an absent field all yield the single `IsolationConfig`
+/// variant. The forms themselves are pinned by `TaskIsolation`'s
+/// deserialize tests in `src/isolation/mod.rs`.
 #[test]
 fn test_shell_task_deserialize_isolation_false() {
     let yaml = r#"content: echo hello
@@ -789,42 +716,6 @@ isolation: false
         task_mut.resolved_isolation_config(),
         None,
         "isolation: false should resolve to None (Disabled)"
-    );
-}
-
-#[test]
-fn test_shell_task_deserialize_isolation_explicit_chroot() {
-    // editorconfig-checker-disable
-    let yaml = r#"content: echo hello
-isolation:
-  type: chroot
-"#;
-    // editorconfig-checker-enable
-    let task: ShellTask =
-        yaml_serde::from_str(yaml).expect("should parse ShellTask with explicit isolation");
-    use rsdebstrap::config::IsolationConfig;
-    let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::chroot());
-    assert_eq!(
-        task_mut.resolved_isolation_config(),
-        Some(&IsolationConfig::chroot()),
-        "explicit chroot isolation should resolve to Chroot"
-    );
-}
-
-#[test]
-fn test_shell_task_deserialize_isolation_absent_defaults_to_inherit() {
-    let yaml = r#"content: echo hello
-"#;
-    let task: ShellTask =
-        yaml_serde::from_str(yaml).expect("should parse ShellTask without isolation");
-    use rsdebstrap::config::IsolationConfig;
-    let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::chroot());
-    assert_eq!(
-        task_mut.resolved_isolation_config(),
-        Some(&IsolationConfig::chroot()),
-        "absent isolation (Inherit) should resolve to Chroot from defaults"
     );
 }
 

@@ -358,18 +358,20 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// `IsolationConfig` has a single variant, so `Inherit`, `UseDefault` and
+    /// `Config` all resolve to the same value and no assertion can tell those
+    /// three arms apart. Cover them as one case; `Disabled` below is the arm
+    /// that genuinely differs.
     #[test]
-    fn resolve_inherit_uses_defaults() {
+    fn resolve_non_disabled_arms_yield_the_default_config() {
         let defaults = IsolationConfig::chroot();
-        let result = TaskIsolation::Inherit.resolve(&defaults);
-        assert_eq!(result, Some(IsolationConfig::chroot()));
-    }
-
-    #[test]
-    fn resolve_use_default_uses_defaults() {
-        let defaults = IsolationConfig::chroot();
-        let result = TaskIsolation::UseDefault.resolve(&defaults);
-        assert_eq!(result, Some(IsolationConfig::chroot()));
+        for iso in [
+            TaskIsolation::Inherit,
+            TaskIsolation::UseDefault,
+            TaskIsolation::Config(IsolationConfig::chroot()),
+        ] {
+            assert_eq!(iso.resolve(&defaults), Some(IsolationConfig::chroot()));
+        }
     }
 
     #[test]
@@ -377,13 +379,6 @@ mod tests {
         let defaults = IsolationConfig::chroot();
         let result = TaskIsolation::Disabled.resolve(&defaults);
         assert_eq!(result, None);
-    }
-
-    #[test]
-    fn resolve_config_uses_explicit() {
-        let defaults = IsolationConfig::chroot();
-        let result = TaskIsolation::Config(IsolationConfig::chroot()).resolve(&defaults);
-        assert_eq!(result, Some(IsolationConfig::chroot()));
     }
 
     #[test]
@@ -424,28 +419,18 @@ mod tests {
         yaml_serde::from_str(&yaml).unwrap()
     }
 
+    /// `Serialize` is hand-written to mirror the visitor, so every variant must
+    /// survive a round trip — including `Inherit`, which serializes to null.
     #[test]
-    fn serialize_roundtrip_inherit() {
-        // Inherit serializes to null and an explicit null deserializes back to Inherit.
-        assert_eq!(roundtrip(&TaskIsolation::Inherit), TaskIsolation::Inherit);
-    }
-
-    #[test]
-    fn serialize_roundtrip_use_default() {
-        assert_eq!(roundtrip(&TaskIsolation::UseDefault), TaskIsolation::UseDefault);
-    }
-
-    #[test]
-    fn serialize_roundtrip_disabled() {
-        assert_eq!(roundtrip(&TaskIsolation::Disabled), TaskIsolation::Disabled);
-    }
-
-    #[test]
-    fn serialize_roundtrip_config_chroot() {
-        assert_eq!(
-            roundtrip(&TaskIsolation::Config(IsolationConfig::chroot())),
-            TaskIsolation::Config(IsolationConfig::chroot())
-        );
+    fn serialize_roundtrip_every_variant() {
+        for original in [
+            TaskIsolation::Inherit,
+            TaskIsolation::UseDefault,
+            TaskIsolation::Disabled,
+            TaskIsolation::Config(IsolationConfig::chroot()),
+        ] {
+            assert_eq!(roundtrip(&original), original, "roundtrip changed {original:?}");
+        }
     }
 
     // `TaskIsolationWire` is the schema-side mirror of the hand-written visitor. These

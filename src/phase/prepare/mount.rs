@@ -270,24 +270,6 @@ mod tests {
     }
 
     #[test]
-    fn resolved_mounts_merge_replaces_preset() {
-        let task = MountTask {
-            preset: Some(MountPreset::Recommends),
-            mounts: vec![MountEntry {
-                source: "/dev".to_string(),
-                target: "/dev".into(),
-                options: vec!["bind".to_string()],
-            }],
-        };
-        let mounts = task.resolved_mounts();
-        assert_eq!(mounts.len(), 6);
-
-        let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
-        assert_eq!(dev_entry.source, "/dev");
-        assert!(dev_entry.is_bind_mount());
-    }
-
-    #[test]
     fn resolved_mounts_merge_preserves_mount_order() {
         let task = MountTask {
             preset: Some(MountPreset::Recommends),
@@ -298,7 +280,11 @@ mod tests {
             }],
         };
         let mounts = task.resolved_mounts();
-        assert_eq!(mounts.len(), 6);
+        assert_eq!(mounts.len(), 6, "the custom /dev entry replaces the preset's, not appends");
+
+        let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
+        assert_eq!(dev_entry.source, "/dev");
+        assert!(dev_entry.is_bind_mount());
 
         let dev_pos = mounts
             .iter()

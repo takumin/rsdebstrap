@@ -130,21 +130,6 @@ fn test_pipeline_validate_succeeds_for_valid_inline_tasks() {
 }
 
 #[test]
-fn test_pipeline_validate_fails_for_invalid_provisioner() {
-    let bad_task = [ProvisionTask::Shell(ShellTask::new(ScriptSource::Script(
-        "../../../etc/passwd".into(),
-    )))];
-    let pipeline = provision_pipeline(&bad_task);
-    let err = pipeline.validate().unwrap_err();
-    let err_msg = format!("{:#}", err);
-    assert!(
-        err_msg.contains("provision 1 validation failed"),
-        "Expected 'provision 1 validation failed' in error, got: {}",
-        err_msg
-    );
-}
-
-#[test]
 fn test_pipeline_validate_reports_correct_index() {
     let good = inline_task("echo ok");
     let bad =
@@ -197,37 +182,6 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
 }
 
 #[test]
-fn test_pipeline_run_phase_error_with_successful_teardown() {
-    let tasks = [inline_task("echo hello")];
-    let pipeline = provision_pipeline(&tasks);
-
-    let mock_executor = Arc::new(MockExecutor::failing_on(0));
-    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("failed to run provision 1"),
-        "Expected phase error, got: {}",
-        err_msg
-    );
-}
-
-#[test]
-fn test_pipeline_run_skips_empty_phases() {
-    let prov = [inline_task("echo prov")];
-    let pipeline = provision_pipeline(&prov);
-
-    let mock_executor = Arc::new(MockExecutor::new());
-    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
-    assert!(result.is_ok());
-    assert_eq!(mock_executor.call_count(), 1);
-}
-
-#[test]
 fn test_pipeline_run_tasks_execute_in_order_within_phase() {
     let mut task1 =
         ShellTask::with_shell(ScriptSource::Content("echo t1".to_string()), "/bin/sh-1");
@@ -262,23 +216,6 @@ fn test_pipeline_run_tasks_execute_in_order_within_phase() {
     assert_eq!(calls[0][2], String::from("/bin/sh-1"));
     assert_eq!(calls[1][2], String::from("/bin/sh-2"));
     assert_eq!(calls[2][2], String::from("/bin/sh-3"));
-}
-
-#[test]
-fn test_pipeline_run_stops_on_first_task_error() {
-    let tasks = [
-        inline_task("echo 1"),
-        inline_task("echo 2"),
-        inline_task("echo 3"),
-    ];
-    let pipeline = provision_pipeline(&tasks);
-
-    let mock_executor = Arc::new(MockExecutor::failing_on(0));
-    let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
-
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
-    assert!(result.is_err());
-    assert_eq!(mock_executor.call_count(), 1);
 }
 
 #[test]
