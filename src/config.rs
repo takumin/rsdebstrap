@@ -384,7 +384,10 @@ impl IsolationConfig {
     ///
     /// This allows calling `IsolationProvider` methods without matching
     /// on each variant explicitly.
-    pub fn as_provider(&self) -> Box<dyn IsolationProvider> {
+    ///
+    /// Named `to_` rather than `as_`: it constructs an owned value, where
+    /// [`Bootstrap::as_backend`] hands out a borrow of what is already there.
+    pub fn to_provider(&self) -> Box<dyn IsolationProvider> {
         match self {
             Self::Chroot(_) => Box::new(ChrootProvider),
         }
