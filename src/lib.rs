@@ -160,7 +160,7 @@ fn run_pipeline_phase_with(
     };
 
     let assemble_result =
-        restored.and_then(|token| pipeline.run_assemble(token, &rootfs, &executor, &ops, dry_run));
+        restored.and_then(|token| pipeline.run_assemble(token, &rootfs, &ops, dry_run));
     let unmount_result = mounts.unmount();
 
     if let Err(e) = assemble_result {

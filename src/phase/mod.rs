@@ -1,7 +1,8 @@
 //! Phase module for pipeline task definitions.
 //!
 //! This module provides phase-specific task types and the internal `PhaseItem`
-//! trait used by the pipeline to process tasks generically across phases.
+//! trait used by the pipeline to name and validate tasks generically across
+//! phases, plus the per-phase item traits that say what each phase may do.
 //!
 //! ## Phase structure
 //!
@@ -13,7 +14,8 @@
 //!
 //! Adding a new task to a named-field phase requires:
 //! 1. Adding an `Option<...>` field to the phase config struct
-//! 2. Implementing `PhaseItem` for the task struct
+//! 2. Implementing `PhaseItem` plus that phase's item trait (`PrepareItem` or
+//!    `AssembleItem`) for the task struct
 //! 3. Emitting it from the config's `items()` in the desired execution order
 
 pub mod assemble;
@@ -39,7 +41,7 @@ pub use provision::ShellTask;
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::executor::ExecutionResult;
-use crate::isolation::IsolationContext;
+use crate::isolation::{IsolationContext, RootfsContext};
 use crate::privilege::PrivilegeMethod;
 
 /// Script source for task execution.
@@ -106,14 +108,33 @@ impl ScriptSource {
     }
 }
 
-/// Internal trait for the pipeline to process phases uniformly.
+/// What every phase item shares: a name to log and a configuration to validate.
 ///
-/// This is not an extension point, but for internal convenience only.
+/// This is not an extension point, but for internal convenience only. What an
+/// item can *do* is not here — it differs per phase, and the three traits below
+/// say so:
+///
+/// - [`PrepareItem`] adds nothing. Prepare tasks are declarations; the mount and
+///   resolv.conf lifecycles are driven by the pipeline's RAII guards, which
+///   bracket the whole run rather than a single task.
+/// - [`ProvisionItem`] runs programs, and is the only phase whose items carry an
+///   isolation setting.
+/// - [`AssembleItem`] writes the rootfs's final state through
+///   [`RootfsContext`] and cannot run a program at all.
 pub(crate) trait PhaseItem: std::fmt::Debug {
     fn name(&self) -> Cow<'_, str>;
     fn validate(&self) -> Result<(), RsdebstrapError>;
-    fn execute(&self, ctx: &dyn IsolationContext) -> Result<()>;
+}
+
+pub(crate) trait PrepareItem: PhaseItem {}
+
+pub(crate) trait ProvisionItem: PhaseItem {
     fn resolved_isolation_config(&self) -> Option<&IsolationConfig>;
+    fn execute(&self, ctx: &dyn IsolationContext) -> Result<()>;
+}
+
+pub(crate) trait AssembleItem: PhaseItem {
+    fn execute(&self, ctx: &dyn RootfsContext) -> Result<()>;
 }
 
 /// Validates that a path contains no `..` components.

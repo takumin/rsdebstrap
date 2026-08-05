@@ -19,7 +19,7 @@ use serde::Deserialize;
 pub use mount::MountTask;
 pub use resolv_conf::ResolvConfTask;
 
-use crate::phase::PhaseItem;
+use crate::phase::PrepareItem;
 
 /// Prepare phase configuration (named-field, schema-first).
 ///
@@ -41,8 +41,8 @@ pub struct PrepareConfig {
 impl PrepareConfig {
     /// Returns the present phase items in fixed execution order: `mount` then
     /// `resolv_conf`. The order is structural, independent of YAML key order.
-    pub(crate) fn items(&self) -> Vec<&dyn PhaseItem> {
-        let mut items: Vec<&dyn PhaseItem> = Vec::new();
+    pub(crate) fn items(&self) -> Vec<&dyn PrepareItem> {
+        let mut items: Vec<&dyn PrepareItem> = Vec::new();
         if let Some(mount) = &self.mount {
             items.push(mount);
         }

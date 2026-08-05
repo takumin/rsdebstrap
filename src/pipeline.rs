@@ -17,8 +17,8 @@ use tracing::{debug, info};
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
 use crate::isolation::resolv_conf::Restored;
-use crate::isolation::{DirectProvider, IsolationProvider};
-use crate::phase::{AssembleConfig, PhaseItem, PrepareConfig, ProvisionTask};
+use crate::isolation::{DirectProvider, IsolationProvider, PlainRootfsContext};
+use crate::phase::{AssembleConfig, PhaseItem, PrepareConfig, ProvisionItem, ProvisionTask};
 use crate::rootfs::RootfsOps;
 
 const PHASE_PREPARE: &str = "prepare";
@@ -87,7 +87,7 @@ impl<'a> Pipeline<'a> {
         // No prepare guard runs here, so nothing detached the rootfs's own
         // resolv.conf and there is nothing to put back.
         let restored = Restored::nothing_was_detached(provisioned);
-        self.run_assemble(restored, rootfs, &executor, &ops, dry_run)
+        self.run_assemble(restored, rootfs, &ops, dry_run)
     }
 
     /// Executes the prepare and provision phases (the first pipeline stage)
@@ -110,15 +110,13 @@ impl<'a> Pipeline<'a> {
         }
 
         info!("starting pipeline with {} task(s)", self.total_tasks());
-        run_phase_items(PHASE_PREPARE, &self.prepare.items(), rootfs, executor, ops, dry_run)?;
-        run_phase_items(
-            PHASE_PROVISION,
-            &provision_items(self.provision),
-            rootfs,
-            executor,
-            ops,
-            dry_run,
-        )?;
+        // A prepare item has nothing to run: the mount and resolv.conf lifecycles
+        // are driven by RAII guards that bracket the whole pipeline. Iterating is
+        // still what reports them as the tasks they are.
+        run_phase_items(PHASE_PREPARE, &self.prepare.items(), |_| Ok(()))?;
+        run_phase_items(PHASE_PROVISION, &provision_items(self.provision), |task| {
+            run_provision_item(task, rootfs, executor, ops, dry_run)
+        })?;
         Ok(Provisioned::new())
     }
 
@@ -131,7 +129,6 @@ impl<'a> Pipeline<'a> {
         &self,
         _restored: Restored,
         rootfs: &Utf8Path,
-        executor: &Arc<dyn CommandExecutor>,
         ops: &Arc<dyn RootfsOps>,
         dry_run: bool,
     ) -> Result<()> {
@@ -139,7 +136,10 @@ impl<'a> Pipeline<'a> {
             return Ok(());
         }
 
-        run_phase_items(PHASE_ASSEMBLE, &self.assemble.items(), rootfs, executor, ops, dry_run)?;
+        // Assemble takes no isolation provider: its items only write files, and
+        // the values a `RootfsContext` needs are already here.
+        let ctx = PlainRootfsContext::new(rootfs, ops.clone(), dry_run);
+        run_phase_items(PHASE_ASSEMBLE, &self.assemble.items(), |task| task.execute(&ctx))?;
         info!("pipeline completed successfully");
         Ok(())
     }
@@ -158,19 +158,18 @@ impl Provisioned {
     }
 }
 
-/// Borrows the provision tasks as `PhaseItem` trait objects for uniform handling
-/// with the named-field prepare/assemble phases.
-fn provision_items(tasks: &[ProvisionTask]) -> Vec<&dyn PhaseItem> {
-    tasks.iter().map(|t| t as &dyn PhaseItem).collect()
+/// Borrows the provision tasks as `ProvisionItem` trait objects for uniform
+/// handling with the named-field prepare/assemble phases.
+fn provision_items(tasks: &[ProvisionTask]) -> Vec<&dyn ProvisionItem> {
+    tasks.iter().map(|t| t as &dyn ProvisionItem).collect()
 }
 
-fn run_phase_items(
+/// Logs and error-wraps one phase's items, whatever running one means for that
+/// phase. The three phases differ only in `run`; the reporting is shared.
+fn run_phase_items<T: PhaseItem + ?Sized>(
     phase_name: &str,
-    tasks: &[&dyn PhaseItem],
-    rootfs: &Utf8Path,
-    executor: &Arc<dyn CommandExecutor>,
-    ops: &Arc<dyn RootfsOps>,
-    dry_run: bool,
+    tasks: &[&T],
+    mut run: impl FnMut(&T) -> Result<()>,
 ) -> Result<()> {
     if tasks.is_empty() {
         debug!("skipping empty {} phase", phase_name);
@@ -181,19 +180,18 @@ fn run_phase_items(
 
     for (index, task) in tasks.iter().enumerate() {
         info!("running {} {}/{}: {}", phase_name, index + 1, tasks.len(), task.name());
-        run_task_item(*task, rootfs, executor, ops, dry_run)
-            .with_context(|| format!("failed to run {} {}", phase_name, index + 1))?;
+        run(task).with_context(|| format!("failed to run {} {}", phase_name, index + 1))?;
     }
 
     Ok(())
 }
 
-/// Runs a single task with its own isolation context.
+/// Runs a single provision task with its own isolation context.
 ///
 /// Creates the appropriate provider based on the task's resolved isolation
 /// config, sets up the context, executes the task, and ensures teardown.
-fn run_task_item(
-    task: &dyn PhaseItem,
+fn run_provision_item(
+    task: &dyn ProvisionItem,
     rootfs: &Utf8Path,
     executor: &Arc<dyn CommandExecutor>,
     ops: &Arc<dyn RootfsOps>,
@@ -228,7 +226,10 @@ fn run_task_item(
 /// preserving the `source` for programmatic inspection.
 /// Other error variants are wrapped in `Validation` with phase context for
 /// forward-compatibility, ensuring no future variant loses phase information.
-fn validate_phase_items(phase_name: &str, tasks: &[&dyn PhaseItem]) -> Result<(), RsdebstrapError> {
+fn validate_phase_items<T: PhaseItem + ?Sized>(
+    phase_name: &str,
+    tasks: &[&T],
+) -> Result<(), RsdebstrapError> {
     for (index, task) in tasks.iter().enumerate() {
         task.validate().map_err(|e| match e {
             RsdebstrapError::Validation(msg) => RsdebstrapError::Validation(format!(

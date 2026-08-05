@@ -12,17 +12,18 @@
 // `CommandExecutor`, so `ctx.executor().execute(&spec)` does not compile either. Building
 // a spec inside a phase is inert.
 //
-// Two things are still expressible and are not worth contorting the design to forbid:
+// Nor can every phase reach `ctx.execute(argv, privilege)`. Only `ProvisionItem::execute`
+// receives an `IsolationContext`; `AssembleItem::execute` receives a `RootfsContext`, which
+// has no `execute` method. The assemble unit tests in `src/phase/assemble/resolv_conf.rs`
+// pin that from the other side: their mock context implements `RootfsContext` and nothing
+// else, so widening the signature back would stop compiling.
 //
-//   1. `CommandSpec::for_task_command`, which runs the program a provision task declared
-//      and so takes a name from the profile. Only `DirectContext` should call it, but Rust
-//      cannot restrict a constructor to one module — `pub(crate)` is the whole crate, and
-//      `pub(in path)` only restricts to ancestor modules, which `isolation` is not to
-//      `executor`. This file guards it.
-//   2. `ctx.execute(argv, privilege)` from any task. Closing that means giving each phase
-//      a different context capability (provision needs to run programs; assemble does not),
-//      which is a redesign of `PhaseItem` dispatch rather than a visibility change. It is
-//      at least explicit at the call site, unlike the `sudo cp` it replaced.
+// One thing is still expressible and is not worth contorting the design to forbid:
+// `CommandSpec::for_task_command`, which runs the program a provision task declared and so
+// takes a name from the profile. Only `DirectContext` should call it, but Rust cannot
+// restrict a constructor to one module — `pub(crate)` is the whole crate, and `pub(in path)`
+// only restricts to ancestor modules, which `isolation` is not to `executor`. This file
+// guards it.
 
 use std::fs;
 use std::path::{Path, PathBuf};

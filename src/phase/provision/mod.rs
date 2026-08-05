@@ -28,7 +28,7 @@ pub use shell::ShellTask;
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::TaskIsolation;
-use crate::phase::PhaseItem;
+use crate::phase::{PhaseItem, ProvisionItem};
 use crate::privilege::PrivilegeDefaults;
 
 /// Declarative task definition for provision pipeline steps.
@@ -57,7 +57,9 @@ impl PhaseItem for ProvisionTask {
             Self::Mitamae(task) => task.validate(),
         }
     }
+}
 
+impl ProvisionItem for ProvisionTask {
     fn execute(&self, ctx: &dyn crate::isolation::IsolationContext) -> anyhow::Result<()> {
         match self {
             Self::Shell(task) => task.execute(ctx),
