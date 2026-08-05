@@ -25,6 +25,12 @@ and this project adheres to
   release binary. `--no-default-features` no longer produces a schema-less
   build.
 
+### Added
+
+- `tests/privileged_helper_test.rs`, which exercises real `sudo` escalation
+  against a root-owned rootfs. `#[ignore]`d and self-skipping when passwordless
+  sudo is unavailable.
+
 ### Fixed
 
 - A dangling `/etc/resolv.conf` symlink — the normal state of a systemd rootfs
