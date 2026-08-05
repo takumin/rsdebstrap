@@ -492,8 +492,20 @@ impl Drop for CwdGuard {
 }
 
 // Mock isolation context for testing task execution.
+
+// Real descriptor-anchored ops over the mock's rootfs, so tests can assert what
+// a task actually left on disk. Falls back to the dry-run implementation for the
+// tests whose rootfs path is a fixture that was never created.
+pub fn mock_rootfs_ops(rootfs: &Utf8Path) -> std::sync::Arc<dyn rsdebstrap::rootfs::RootfsOps> {
+    match rsdebstrap::rootfs::LocalRootfsOps::open(rootfs) {
+        Ok(ops) => std::sync::Arc::new(ops),
+        Err(_) => std::sync::Arc::new(rsdebstrap::rootfs::DryRunRootfsOps::new(rootfs)),
+    }
+}
+
 pub struct MockContext {
     rootfs: Utf8PathBuf,
+    ops: std::sync::Arc<dyn rsdebstrap::rootfs::RootfsOps>,
     dry_run: bool,
     should_fail: bool,
     exit_code: Option<i32>,
@@ -508,6 +520,7 @@ impl MockContext {
     pub fn new(rootfs: &Utf8Path) -> Self {
         Self {
             rootfs: rootfs.to_owned(),
+            ops: mock_rootfs_ops(rootfs),
             dry_run: false,
             should_fail: false,
             exit_code: None,
@@ -522,6 +535,7 @@ impl MockContext {
     pub fn new_dry_run(rootfs: &Utf8Path) -> Self {
         Self {
             rootfs: rootfs.to_owned(),
+            ops: mock_rootfs_ops(rootfs),
             dry_run: true,
             should_fail: false,
             exit_code: None,
@@ -536,6 +550,7 @@ impl MockContext {
     pub fn with_failure(rootfs: &Utf8Path, exit_code: i32) -> Self {
         Self {
             rootfs: rootfs.to_owned(),
+            ops: mock_rootfs_ops(rootfs),
             dry_run: false,
             should_fail: true,
             exit_code: Some(exit_code),
@@ -550,6 +565,7 @@ impl MockContext {
     pub fn with_error(rootfs: &Utf8Path, message: &str) -> Self {
         Self {
             rootfs: rootfs.to_owned(),
+            ops: mock_rootfs_ops(rootfs),
             dry_run: false,
             should_fail: false,
             exit_code: None,
@@ -564,6 +580,7 @@ impl MockContext {
     pub fn with_no_status(rootfs: &Utf8Path) -> Self {
         Self {
             rootfs: rootfs.to_owned(),
+            ops: mock_rootfs_ops(rootfs),
             dry_run: false,
             should_fail: false,
             exit_code: None,
@@ -585,6 +602,10 @@ impl MockContext {
 }
 
 impl IsolationContext for MockContext {
+    fn rootfs_ops(&self) -> &dyn rsdebstrap::rootfs::RootfsOps {
+        &*self.ops
+    }
+
     fn name(&self) -> &'static str {
         "mock"
     }
