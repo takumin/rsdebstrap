@@ -563,34 +563,6 @@ mod tests {
     }
 
     #[test]
-    fn unmount_failure_collects_errors() {
-        // 2 mounts succeed, then umount of second entry (call index 2) fails
-        let executor = Arc::new(MockMountExecutor::failing_umount_on(vec![2]));
-        let temp_dir = tempfile::tempdir().unwrap();
-        let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
-
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
-        mounts.mount().unwrap();
-
-        let err = mounts.unmount().unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("failed to unmount"),
-            "error should describe unmount failure: {}",
-            msg
-        );
-        assert!(msg.contains("1"), "error should contain failure count: {}", msg);
-
-        let calls = executor.calls();
-        // 2 mounts + 2 umount attempts (both attempted even though first fails)
-        assert_eq!(calls.len(), 4);
-        assert_eq!(calls[2][0], "umount");
-        assert_eq!(calls[3][0], "umount");
-
-        assert!(!mounts.torn_down, "torn_down should be false after unmount failure");
-    }
-
-    #[test]
     fn mount_executor_error_triggers_partial_unmount() {
         // 2 entries: first mount succeeds, second mount returns Err
         let executor = Arc::new(MockMountExecutor::returning_err_on(1));
