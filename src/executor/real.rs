@@ -90,6 +90,7 @@ fn spawn_reader_threads(
 // The field is private because whether a run is a dry run is fixed when the executor
 // is built: `CommandExecutor::dry_run()` is the single answer every layer derives from,
 // and a `pub` field would let a holder flip it between two commands of the same run.
+#[derive(Debug)]
 pub struct RealCommandExecutor {
     dry_run: bool,
 }

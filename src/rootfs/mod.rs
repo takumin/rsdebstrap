@@ -180,6 +180,7 @@ pub trait RootfsOps: Send + Sync {
 }
 
 /// [`RootfsOps`] performed directly by this process.
+#[derive(Debug)]
 pub struct LocalRootfsOps {
     root: OwnedFd,
     /// Rendered only in error messages; resolution never consults it.
@@ -413,6 +414,7 @@ impl RootfsOps for LocalRootfsOps {
 }
 
 /// [`RootfsOps`] that reports what it would do and changes nothing.
+#[derive(Debug)]
 pub struct DryRunRootfsOps {
     rootfs: Utf8PathBuf,
 }

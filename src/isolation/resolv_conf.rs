@@ -35,6 +35,7 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
 /// permanent `/etc/resolv.conf`, and a restore running afterwards would
 /// overwrite it — so the orchestration is not free to reorder the two.
 #[must_use]
+#[derive(Debug)]
 pub struct Restored(());
 
 impl Restored {
