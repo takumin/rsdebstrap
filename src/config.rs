@@ -305,6 +305,8 @@ impl MountEntry {
 ///
 /// This enum represents the different bootstrap tools that can be used.
 /// The `type` field in YAML determines which variant is used.
+// Every internally tagged enum here puts `deny_unknown_fields` on the variant payload
+// rather than the enum; see the `deny_unknown_fields` note in docs/ARCHITECTURE.md.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Bootstrap {
@@ -356,8 +358,6 @@ impl Bootstrap {
 /// `defaults.isolation`) is omitted entirely.
 // Internally tagged like `Bootstrap` so each backend keeps its own payload struct as an
 // extension point for backend-specific options (bwrap, nspawn, …).
-// `deny_unknown_fields` on the variant payload, not the enum: see the
-// `deny_unknown_fields` note in docs/ARCHITECTURE.md for why serde honors it here.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum IsolationConfig {
@@ -1484,11 +1484,8 @@ mod tests {
     // =========================================================================
     // Profile::validate_mounts / validate_resolv_conf tests
     //
-    // `IsolationConfig` has a single `Chroot` variant, so `defaults.isolation` is
-    // always chroot; the former "require chroot isolation" guards were removed as
-    // unreachable dead code (e0fd092). These tests cover the two private validators
-    // directly, complementing the integration-level `test_profile_validation_*`
-    // tests in tests/config_test.rs.
+    // These cover the two private validators directly, complementing the
+    // integration-level `test_profile_validation_*` tests in tests/config_test.rs.
     // =========================================================================
 
     // Builds a minimal valid `Profile` YAML document; `extra` splices in more

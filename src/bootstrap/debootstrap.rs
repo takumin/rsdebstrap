@@ -31,8 +31,6 @@ pub enum Variant {
 ///
 /// This structure contains all settings needed to customize the Debian
 /// bootstrapping process using debootstrap.
-// `deny_unknown_fields` on the variant payload, not the enum: see the
-// `deny_unknown_fields` note in docs/ARCHITECTURE.md for why serde honors it here.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DebootstrapConfig {

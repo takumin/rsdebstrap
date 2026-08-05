@@ -773,12 +773,6 @@ mod tests {
         assert_eq!(etc, ["resolv.conf"], "unexpected leftovers in /etc: {etc:?}");
     }
 
-    // The old design moved the original to `<resolv>.rsdebstrap-orig`, so a
-    // failed restore left it there: the rootfs ended with no /etc/resolv.conf
-    // and an orphan file the operator had to move back by hand. The original is
-    // now held in memory, so the failure mode this replaces cannot occur — a
-    // restore that fails is retried by Drop, and nothing is left behind either
-    // way.
     #[test]
     fn a_failed_restore_leaves_no_orphan_behind() {
         let tmp = tempfile::tempdir().unwrap();
