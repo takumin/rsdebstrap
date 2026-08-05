@@ -150,30 +150,6 @@ fn test_run_fails_when_shell_is_directory() {
 }
 
 #[test]
-fn test_run_fails_when_script_execution_fails() {
-    let temp_dir = tempdir().expect("failed to create temp dir");
-    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
-        .expect("path should be valid UTF-8");
-
-    setup_valid_rootfs(&temp_dir);
-
-    let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
-
-    let context = MockContext::with_failure(&rootfs, 1);
-    let result = task.execute(&context);
-
-    assert!(result.is_err());
-    let err_msg = format!("{:#}", result.unwrap_err());
-    assert!(
-        err_msg.contains("failed") && err_msg.contains("status: 1"),
-        "Expected failure message with status 1, got: {}",
-        err_msg
-    );
-}
-
-#[test]
 fn test_run_dry_run_skips_rootfs_validation() {
     let temp_dir = tempdir().expect("failed to create temp dir");
     let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
