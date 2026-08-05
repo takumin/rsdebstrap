@@ -95,6 +95,17 @@ be honored. Setting it is a parse error rather than a silent no-op.
 - `isolation: false` → `Disabled`: no isolation (direct execution on host via `DirectProvider`)
 - `isolation: { type: chroot }` → `Config`: use the specified isolation backend explicitly
 
+`isolation: false` runs the program the task names — a path *inside* the rootfs — directly
+on the host. Two consequences follow, and both are enforced rather than documented:
+
+- It cannot be combined with a resolved privilege. A task that inherits
+  `defaults.privilege` and sets `isolation: false` is rejected at load time, because
+  escalating it would run rootfs-supplied code as root on the host. Say `privilege: false`
+  on the task if that is what you mean.
+- The program's path must resolve inside the rootfs. If any component of it is a symlink,
+  execution fails: the kernel resolves the path when it execs, and a symlink there would
+  silently run a host binary instead.
+
 ## `resolv_conf` task fields (prepare phase)
 
 - `copy: true` → copy host's /etc/resolv.conf into the `chroot`
