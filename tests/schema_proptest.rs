@@ -4,10 +4,9 @@
 // the same contract with randomly generated documents so drift cannot hide in a shape nobody
 // thought to enumerate.
 //
-// The property asserted is the *critical safety invariant*: whenever the structural
-// deserializer accepts a document, the generated schema must also accept it. A violation means
-// editor/CI tooling would flag a config that `apply`/`validate` happily parse — the exact
-// failure mode the schema exists to avoid.
+// The property asserted is the same one-directional invariant, stated at
+// `schema_divergences_are_pinned` in that file: whenever the structural deserializer accepts a
+// document, the schema must too.
 //
 // Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
 // `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
