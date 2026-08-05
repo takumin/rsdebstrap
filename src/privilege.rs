@@ -148,18 +148,8 @@ impl Privilege {
     }
 }
 
-// Wire shape of the `{ method: <method> }` map form.
-//
-// Single source of truth for the map form's fields, shared by both deserialization
-// (via `Privilege`'s strict dispatch) and schema generation (via `PrivilegeWire`).
-// `deny_unknown_fields` keeps typo'd keys rejected, and schemars mirrors that as
-// `additionalProperties: false`. The `///` docs below are user-facing on purpose: they
-// become the `$defs/PrivilegeConfig` descriptions (which editors show), keeping it on
-// par with `PrivilegeDefaults`; maintainer notes stay in `//` comments.
-//
-// The schemars rename fixes the schema-facing `$defs` name (`PrivilegeConfig`, symmetric
-// with `IsolationConfig` on the isolation branch) so this private type's Rust name is not
-// part of the published schema contract and stays free to change.
+// The schemars rename keeps this private type's Rust name out of the published schema
+// contract (`$defs/PrivilegeConfig`, symmetric with the isolation branch).
 /// Explicit privilege escalation configuration for a task or bootstrap backend.
 #[derive(Debug, Deserialize)]
 #[cfg_attr(
@@ -173,26 +163,33 @@ struct PrivilegeMethodMap {
     method: PrivilegeMethod,
 }
 
-// Schema-only mirror of the accepted YAML shapes: `true`/`false`, `{ method: ... }`, or an
-// explicit null (which — like field absence — resolves to `Inherit`).
-// Not on the production parse path — `Privilege`'s `Deserialize` performs the strict
-// dispatch. `Deserialize` is derived here solely so the `wire_parity` tests can prove this
-// enum accepts exactly what `PrivilegeVisitor` accepts: the variants below and the
-// visitor's `visit_*` methods must change in lockstep, and those tests fail on any drift.
-// Exists so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
-#[cfg(feature = "schema")]
-#[derive(Debug, Deserialize, JsonSchema)]
+// The accepted YAML shapes: `true`/`false`, `{ method: ... }`, or an explicit null (which
+// — like field absence — resolves to `Inherit`). This one type drives both deserialization
+// and schema generation, so the two cannot describe different acceptance sets.
+//
+// Untagged rather than a hand-written visitor: the visitor's `expecting` string is a nicer
+// message than untagged's "did not match any variant", but keeping it meant maintaining a
+// second enum for schemars and a parity test to pin them together. `load_profile` wraps
+// deserialization in `serde_path_to_error`, so the field path recovers the lost context.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(untagged)]
 enum PrivilegeWire {
-    // The payloads are written by the derived `Deserialize` and read only as *types* by
-    // schema generation, never as values — hence the field-level allows. Unlike the
-    // previous enum-level allow, these keep "variant is never constructed" armed, so
-    // dropping the `Deserialize` derive that ties this enum to the tests is a warning.
-    Toggle(#[allow(dead_code)] bool),
-    Method(#[allow(dead_code)] PrivilegeMethodMap),
-    // Unit variant → `{ "type": "null" }` in the generated `anyOf`, mirroring that an
-    // explicit null deserializes to `Inherit` (see `visit_unit`).
+    Toggle(bool),
+    Method(PrivilegeMethodMap),
+    // Unit variant → `{ "type": "null" }` in the generated `anyOf`.
     Inherit,
+}
+
+impl From<PrivilegeWire> for Privilege {
+    fn from(wire: PrivilegeWire) -> Self {
+        match wire {
+            PrivilegeWire::Toggle(true) => Self::UseDefault,
+            PrivilegeWire::Toggle(false) => Self::Disabled,
+            PrivilegeWire::Method(m) => Self::Method(m.method),
+            PrivilegeWire::Inherit => Self::Inherit,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for Privilege {
@@ -200,52 +197,7 @@ impl<'de> Deserialize<'de> for Privilege {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de;
-
-        // The set of `visit_*` methods below must stay in lockstep with `PrivilegeWire`'s
-        // variants (the schema mirror); the `wire_parity` tests enforce the equivalence.
-        struct PrivilegeVisitor;
-
-        impl<'de> de::Visitor<'de> for PrivilegeVisitor {
-            type Value = Privilege;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a boolean or a map with a 'method' field")
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(Privilege::Inherit)
-            }
-
-            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if v {
-                    Ok(Privilege::UseDefault)
-                } else {
-                    Ok(Privilege::Disabled)
-                }
-            }
-
-            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::MapAccess<'de>,
-            {
-                // Reuse the shared strict map shape so unknown keys stay rejected.
-                let pm =
-                    PrivilegeMethodMap::deserialize(de::value::MapAccessDeserializer::new(map))?;
-                Ok(Privilege::Method(pm.method))
-            }
-        }
-
-        // Field absence is handled by `#[serde(default)]` (→ Inherit); an explicit null
-        // also maps to Inherit (via `visit_unit`). Any other present value must be a boolean
-        // or a `{ method }` map — anything else is a parse error.
-        deserializer.deserialize_any(PrivilegeVisitor)
+        PrivilegeWire::deserialize(deserializer).map(Into::into)
     }
 }
 
@@ -491,44 +443,27 @@ mod tests {
         }
     }
 
-    // `PrivilegeWire` is the schema-side mirror of the hand-written visitor. These
-    // tests pin the two acceptance sets together: adding or removing a `visit_*`
-    // method without the matching wire-variant change (or vice versa) makes a
-    // battery value below diverge and fail.
-    #[cfg(feature = "schema")]
-    mod wire_parity {
-        use super::super::{Privilege, PrivilegeWire};
-        use serde_json::{Value, json};
-
-        fn battery() -> Vec<Value> {
-            vec![
-                json!(null),
-                json!(true),
-                json!(false),
-                json!({"method": "sudo"}),
-                json!({"method": "doas"}),
-                json!({"method": "pkexec"}),
-                json!({"methd": "sudo"}),
-                json!({"method": "sudo", "extra": 1}),
-                json!({}),
-                json!("sudo"),
-                json!([]),
-                json!(42),
-                json!(42.5),
-            ]
-        }
-
-        #[test]
-        fn wire_accepts_exactly_what_the_visitor_accepts() {
-            for value in battery() {
-                let wire = serde_json::from_value::<PrivilegeWire>(value.clone()).is_ok();
-                let visitor = serde_json::from_value::<Privilege>(value.clone()).is_ok();
-                assert_eq!(
-                    wire, visitor,
-                    "PrivilegeWire and Privilege's visitor disagree on {value}: \
-                    wire accepts = {wire}, visitor accepts = {visitor}"
-                );
-            }
+    // The acceptance set is now a property of one type, so this pins the boundary itself
+    // rather than the agreement between two definitions.
+    #[test]
+    fn privilege_acceptance_set() {
+        for (yaml, accepted) in [
+            ("~", true),
+            ("true", true),
+            ("false", true),
+            ("method: sudo", true),
+            ("method: doas", true),
+            ("method: pkexec", false),
+            ("methd: sudo", false),
+            ("{method: sudo, extra: 1}", false),
+            ("{}", false),
+            ("sudo", false),
+            ("[]", false),
+            ("42", false),
+            ("42.5", false),
+        ] {
+            let got = yaml_serde::from_str::<Privilege>(yaml).is_ok();
+            assert_eq!(got, accepted, "{yaml:?}: accepted = {got}, expected {accepted}");
         }
     }
 }
