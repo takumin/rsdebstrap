@@ -6,6 +6,30 @@ use rsdebstrap::phase::{ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 use tempfile::tempdir;
 
+/// Runs a loaded provision task against a `MockContext` and returns the privilege
+/// it handed to the isolation layer.
+///
+/// A task's resolved privilege is private, so the only way to observe what
+/// `load_profile` resolved is to execute the task and record what reaches
+/// `IsolationContext::execute`.
+fn executed_privilege(task: &ProvisionTask) -> Option<PrivilegeMethod> {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("path should be valid UTF-8");
+    setup_valid_rootfs(&temp_dir);
+
+    let ProvisionTask::Shell(shell) = task else {
+        panic!("expected Shell task, got: {:?}", task);
+    };
+
+    let context = helpers::MockContext::new(&rootfs);
+    shell.execute(&context).expect("execute should succeed");
+
+    let privileges = context.executed_privileges();
+    assert_eq!(privileges.len(), 1, "expected exactly one execution");
+    privileges[0]
+}
+
 #[test]
 fn test_default_privilege_sudo_inherited_by_bootstrap_and_tasks() {
     // editorconfig-checker-disable
@@ -35,10 +59,11 @@ fn test_default_privilege_sudo_inherited_by_bootstrap_and_tasks() {
         other => panic!("expected mmdebstrap, got: {:?}", other),
     }
 
-    // Task should also inherit Sudo from defaults.
-    // The resolved privilege field is private, but we verify the profile
-    // loads without error (resolve_privilege succeeded).
-    assert!(matches!(&profile.provision[0], ProvisionTask::Shell(_)), "expected Shell task");
+    assert_eq!(
+        executed_privilege(&profile.provision[0]),
+        Some(PrivilegeMethod::Sudo),
+        "task should inherit Sudo from defaults"
+    );
 }
 
 #[test]
@@ -72,7 +97,11 @@ fn test_task_level_privilege_overrides_default() {
         other => panic!("expected mmdebstrap, got: {:?}", other),
     }
 
-    assert_eq!(profile.provision.len(), 1);
+    assert_eq!(
+        executed_privilege(&profile.provision[0]),
+        Some(PrivilegeMethod::Doas),
+        "task-level method should win over defaults.privilege.method"
+    );
 }
 
 #[test]
@@ -105,6 +134,12 @@ fn test_privilege_false_disables_escalation() {
         }
         other => panic!("expected mmdebstrap, got: {:?}", other),
     }
+
+    assert_eq!(
+        executed_privilege(&profile.provision[0]),
+        None,
+        "privilege: false on the task must suppress the inherited method"
+    );
 }
 
 #[test]
@@ -198,7 +233,11 @@ fn test_no_defaults_no_privilege_results_in_none() {
         other => panic!("expected mmdebstrap, got: {:?}", other),
     }
 
-    assert_eq!(profile.provision.len(), 1);
+    assert_eq!(
+        executed_privilege(&profile.provision[0]),
+        None,
+        "Inherit with no defaults should resolve to no escalation"
+    );
 }
 
 #[test]
