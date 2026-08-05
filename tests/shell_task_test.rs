@@ -373,7 +373,7 @@ fn test_execute_inline_script_verifies_file_written() {
         rootfs: camino::Utf8PathBuf,
         // These tests capture the script content the task hands to the shell,
         // so no rootfs mutation is exercised.
-        ops: rsdebstrap::rootfs::DryRunRootfsOps,
+        ops: rsdebstrap::rootfs::LocalRootfsOps,
         captured_content: Arc<Mutex<Option<String>>>,
         executed_commands: RefCell<Vec<Vec<String>>>,
     }
@@ -429,7 +429,7 @@ fn test_execute_inline_script_verifies_file_written() {
 
     let context = CapturingContext {
         rootfs: rootfs.clone(),
-        ops: rsdebstrap::rootfs::DryRunRootfsOps::new(&rootfs),
+        ops: rsdebstrap::rootfs::LocalRootfsOps::open(&rootfs).expect("rootfs should open"),
         captured_content: captured_clone,
         executed_commands: RefCell::new(Vec::new()),
     };
@@ -471,7 +471,7 @@ fn test_execute_external_script_verifies_file_copied() {
         rootfs: camino::Utf8PathBuf,
         // These tests capture the script content the task hands to the shell,
         // so no rootfs mutation is exercised.
-        ops: rsdebstrap::rootfs::DryRunRootfsOps,
+        ops: rsdebstrap::rootfs::LocalRootfsOps,
         captured_content: Arc<Mutex<Option<String>>>,
         executed_commands: RefCell<Vec<Vec<String>>>,
     }
@@ -519,7 +519,7 @@ fn test_execute_external_script_verifies_file_copied() {
 
     let context = CapturingContext {
         rootfs: rootfs.clone(),
-        ops: rsdebstrap::rootfs::DryRunRootfsOps::new(&rootfs),
+        ops: rsdebstrap::rootfs::LocalRootfsOps::open(&rootfs).expect("rootfs should open"),
         captured_content: captured_clone,
         executed_commands: RefCell::new(Vec::new()),
     };

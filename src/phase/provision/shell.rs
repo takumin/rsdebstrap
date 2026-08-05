@@ -16,7 +16,7 @@ use tracing::{debug, info};
 
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
-use crate::phase::{ScriptSource, TempFileGuard};
+use crate::phase::{ScriptSource, StagedFileGuard};
 use crate::privilege::{Privilege, PrivilegeMethod};
 
 /// Shell task data and execution logic.
@@ -197,10 +197,9 @@ impl ShellTask {
     /// This method:
     /// 1. Validates the rootfs (unless dry_run)
     /// 2. Sets up an RAII guard for cleanup of the temp script file
-    /// 3. Re-validates /tmp to mitigate TOCTOU race conditions (unless dry_run)
-    /// 4. Copies or writes the script to rootfs /tmp
-    /// 5. Executes the script via the isolation context
-    /// 6. Returns an error if the process fails or exits without status
+    /// 3. Stages the script under rootfs /tmp through `RootfsOps`
+    /// 4. Executes the script via the isolation context
+    /// 5. Returns an error if the process fails or exits without status
     ///
     /// In dry-run mode, skips file I/O (rootfs validation, script copy/write,
     /// permission changes, cleanup) while still constructing and delegating
@@ -222,14 +221,20 @@ impl ShellTask {
         debug!("rootfs: {}, shell: {}, dry_run: {}", rootfs, self.shell, dry_run);
 
         let script_name = format!("task-{}.sh", uuid::Uuid::new_v4());
-        let target_script = rootfs.join("tmp").join(&script_name);
-        let _guard = TempFileGuard::new(target_script.clone(), dry_run);
-
-        crate::phase::prepare_files_with_toctou_check(rootfs, dry_run, || {
-            crate::phase::prepare_source_file(&self.source, &target_script, 0o700, "script")
-        })?;
-
         let script_path_in_isolation = format!("/tmp/{}", script_name);
+        let staged = crate::rootfs::RelPath::parse(&script_path_in_isolation)?;
+        let _guard = StagedFileGuard::new(context.rootfs_ops(), staged.clone(), dry_run);
+
+        if !dry_run {
+            crate::phase::stage_source_file(
+                context.rootfs_ops(),
+                &self.source,
+                &staged,
+                0o700,
+                "script",
+            )?;
+        }
+
         let command: Vec<String> = vec![self.shell.clone(), script_path_in_isolation];
 
         let result = crate::phase::execute_in_context(context, &command, "script", privilege)?;
