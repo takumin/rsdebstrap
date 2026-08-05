@@ -38,7 +38,7 @@ const MAX_TAKE_SIZE: u64 = 1 << 20;
 ///
 /// Absolute paths, `.`, `..`, and empty components are rejected at construction,
 /// so no combination of `RelPath` values can escape the rootfs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RelPath {
     components: Vec<String>,
 }
@@ -78,6 +78,32 @@ impl RelPath {
         Ok(Self { components })
     }
 
+    /// The components this path is made of, each guaranteed free of separators.
+    pub fn components(&self) -> &[String] {
+        &self.components
+    }
+
+    /// True when `self` names this path or anything beneath it.
+    ///
+    /// Compares component-wise rather than by string prefix, so `/dev` does not appear to
+    /// contain `/devices`.
+    pub fn starts_with(&self, prefix: &Self) -> bool {
+        self.components.len() >= prefix.components.len()
+            && self.components[..prefix.components.len()] == prefix.components[..]
+    }
+
+    /// Renders this path against a host-side root directory.
+    ///
+    /// Only for handing a path to a program that takes one (`mount`, `umount`). Filesystem
+    /// mutation goes through [`RootfsOps`], which never renders a path at all.
+    pub fn to_host_path(&self, root: &Utf8Path) -> Utf8PathBuf {
+        let mut out = root.to_path_buf();
+        for component in &self.components {
+            out.push(component);
+        }
+        out
+    }
+
     /// The final component — the entry this path names within its parent.
     fn file_name(&self) -> &str {
         self.components.last().expect("RelPath is never empty")
@@ -87,7 +113,6 @@ impl RelPath {
     fn parent_components(&self) -> &[String] {
         &self.components[..self.components.len() - 1]
     }
-
 }
 
 impl std::fmt::Display for RelPath {

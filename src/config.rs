@@ -26,11 +26,17 @@ use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::phase::{AssembleConfig, PrepareConfig, ProvisionTask};
 use crate::pipeline::Pipeline;
 use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
+use crate::rootfs::RelPath;
 
 /// Known pseudo-filesystem source names.
 ///
 /// These are used to determine the correct `mount -t` type argument.
 const PSEUDO_FS_TYPES: &[&str] = &["proc", "sysfs", "devpts", "devtmpfs", "tmpfs"];
+
+/// Parses a rootfs path that is a literal in this crate rather than profile input.
+pub(crate) fn rootfs_path(path: &str) -> RelPath {
+    RelPath::parse(path).expect("built-in rootfs path is well-formed")
+}
 
 /// Mount preset defining a predefined set of mount entries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -47,32 +53,32 @@ impl MountPreset {
             Self::Recommends => vec![
                 MountEntry {
                     source: "proc".to_string(),
-                    target: "/proc".into(),
+                    target: rootfs_path("/proc"),
                     options: vec![],
                 },
                 MountEntry {
                     source: "sysfs".to_string(),
-                    target: "/sys".into(),
+                    target: rootfs_path("/sys"),
                     options: vec![],
                 },
                 MountEntry {
                     source: "devtmpfs".to_string(),
-                    target: "/dev".into(),
+                    target: rootfs_path("/dev"),
                     options: vec![],
                 },
                 MountEntry {
                     source: "devpts".to_string(),
-                    target: "/dev/pts".into(),
+                    target: rootfs_path("/dev/pts"),
                     options: vec!["gid=5".to_string(), "mode=620".to_string()],
                 },
                 MountEntry {
                     source: "tmpfs".to_string(),
-                    target: "/tmp".into(),
+                    target: rootfs_path("/tmp"),
                     options: vec![],
                 },
                 MountEntry {
                     source: "tmpfs".to_string(),
-                    target: "/run".into(),
+                    target: rootfs_path("/run"),
                     options: vec!["mode=755".to_string()],
                 },
             ],
@@ -180,9 +186,13 @@ pub struct MountEntry {
     #[serde(deserialize_with = "crate::de::string")]
     pub source: String,
     /// Mount point inside the rootfs (absolute path).
-    #[serde(deserialize_with = "crate::de::path")]
+    // A `RelPath`, not a `Utf8PathBuf`: `safe_create_mount_point` walks the target one
+    // component at a time with `openat`, so a `..` in it escapes the rootfs and the
+    // "verified" path it returns is then handed to a privileged `mount`. `RelPath` cannot
+    // express one, which makes that structural rather than a validation step to remember.
+    #[serde(deserialize_with = "crate::de::rootfs_abs_path")]
     #[schemars(with = "crate::schema::Utf8PathSchema")]
-    pub target: Utf8PathBuf,
+    pub target: RelPath,
     /// Mount options (e.g., "bind", "nosuid"). Joined with "," for `-o`.
     #[serde(default, deserialize_with = "crate::de::string_list")]
     #[schemars(with = "Option<Vec<String>>")]
@@ -244,19 +254,12 @@ impl MountEntry {
         CommandSpec::privileged(PrivilegedProgram::Umount, vec![abs_target.to_string()], privilege)
     }
 
-    /// Validates this mount entry's format: source must not be empty, target must
-    /// be an absolute path (not `/`) without `..` components, pseudo-filesystem
-    /// and bind mount are mutually exclusive, and bind/regular mount sources must
-    /// be absolute paths.
+    /// Validates this mount entry's format: source must not be empty, pseudo-filesystem
+    /// and bind mount are mutually exclusive, and bind/regular mount sources must be
+    /// absolute paths. The target needs no check — `RelPath` cannot name `/` or escape.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
         if self.source.trim().is_empty() {
             return Err(RsdebstrapError::Validation("mount source must not be empty".to_string()));
-        }
-
-        if self.target.as_str() == "/" {
-            return Err(RsdebstrapError::Validation(
-                "mount target '/' is not allowed (would mount over rootfs itself)".to_string(),
-            ));
         }
 
         if self.is_pseudo_fs() && self.is_bind_mount() {
@@ -265,15 +268,6 @@ impl MountEntry {
                 self.source
             )));
         }
-
-        if !self.target.starts_with("/") {
-            return Err(RsdebstrapError::Validation(format!(
-                "mount target '{}' must be an absolute path",
-                self.target
-            )));
-        }
-
-        crate::phase::validate_no_parent_dirs(&self.target, "mount target")?;
 
         if self.is_bind_mount() {
             let source_path = Utf8Path::new(&self.source);
@@ -881,14 +875,14 @@ mod tests {
     fn test_mount_entry_is_pseudo_fs() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         assert!(entry.is_pseudo_fs());
 
         let entry = MountEntry {
             source: "/dev".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         assert!(!entry.is_pseudo_fs());
@@ -898,14 +892,14 @@ mod tests {
     fn test_mount_entry_is_bind_mount() {
         let entry = MountEntry {
             source: "/dev".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         assert!(entry.is_bind_mount());
 
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         assert!(!entry.is_bind_mount());
@@ -915,7 +909,7 @@ mod tests {
     fn test_mount_entry_build_mount_spec_with_path_pseudo_fs() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/proc"), None);
@@ -927,7 +921,7 @@ mod tests {
     fn test_mount_entry_build_mount_spec_with_path_pseudo_fs_with_options() {
         let entry = MountEntry {
             source: "devpts".to_string(),
-            target: "/dev/pts".into(),
+            target: rootfs_path("/dev/pts"),
             options: vec!["gid=5".to_string(), "mode=620".to_string()],
         };
         let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/dev/pts"), None);
@@ -949,7 +943,7 @@ mod tests {
     fn test_mount_entry_build_mount_spec_with_path_bind() {
         let entry = MountEntry {
             source: "/dev".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/dev"), None);
@@ -961,7 +955,7 @@ mod tests {
     fn test_mount_entry_build_umount_spec_with_path() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         let spec = entry.build_umount_spec_with_path(Utf8Path::new("/rootfs/proc"), None);
@@ -973,7 +967,7 @@ mod tests {
     fn test_mount_entry_build_mount_spec_with_path_privilege() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         let spec = entry
@@ -985,7 +979,7 @@ mod tests {
     fn test_mount_entry_build_umount_spec_with_path_privilege() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         let spec = entry.build_umount_spec_with_path(
@@ -1001,34 +995,29 @@ mod tests {
     fn test_mount_entry_validate_valid() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         assert!(entry.validate().is_ok());
     }
 
+    // A `..`, a bare `/`, and a relative spelling are no longer `validate()`'s business:
+    // `target` is a `RelPath`, so none of them can be constructed at all and the rejection
+    // happens where the profile text is read.
     #[test]
-    fn test_mount_entry_validate_rejects_relative_target() {
-        let entry = MountEntry {
-            source: "proc".to_string(),
-            target: "proc".into(),
-            options: vec![],
-        };
-        let err = entry.validate().unwrap_err();
-        assert!(matches!(err, RsdebstrapError::Validation(_)));
-        assert!(err.to_string().contains("absolute path"));
-    }
-
-    #[test]
-    fn test_mount_entry_validate_rejects_target_with_dotdot() {
-        let entry = MountEntry {
-            source: "proc".to_string(),
-            target: "/proc/../etc".into(),
-            options: vec![],
-        };
-        let err = entry.validate().unwrap_err();
-        assert!(matches!(err, RsdebstrapError::Validation(_)));
-        assert!(err.to_string().contains(".."));
+    fn test_mount_entry_target_rejects_escapes_at_deserialization() {
+        for (yaml, expected) in [
+            ("source: proc\ntarget: /proc/../etc\n", ".."),
+            ("source: proc\ntarget: /\n", "does not name an entry"),
+            ("source: proc\ntarget: proc\n", "must be absolute"),
+        ] {
+            let err = yaml_serde::from_str::<MountEntry>(yaml)
+                .expect_err(&format!("{yaml:?} should be rejected"));
+            assert!(
+                err.to_string().contains(expected),
+                "{yaml:?}: expected {expected:?}, got {err}"
+            );
+        }
     }
 
     #[test]
@@ -1036,7 +1025,7 @@ mod tests {
         // /tmp is guaranteed to exist on any system
         let entry = MountEntry {
             source: "/tmp".to_string(),
-            target: "/tmp".into(),
+            target: rootfs_path("/tmp"),
             options: vec!["bind".to_string()],
         };
         assert!(entry.validate().is_ok());
@@ -1046,7 +1035,7 @@ mod tests {
     fn test_mount_entry_validate_bind_rejects_relative_source() {
         let entry = MountEntry {
             source: "dev".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         let err = entry.validate().unwrap_err();
@@ -1058,7 +1047,7 @@ mod tests {
     fn test_mount_entry_validate_bind_rejects_source_with_dotdot() {
         let entry = MountEntry {
             source: "/dev/../etc".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         let err = entry.validate().unwrap_err();
@@ -1070,7 +1059,7 @@ mod tests {
     fn test_mount_entry_serialize_deserialize() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec!["nosuid".to_string()],
         };
         let yaml = yaml_serde::to_string(&entry).unwrap();
@@ -1083,7 +1072,7 @@ mod tests {
         let yaml = "source: proc\ntarget: /proc\n";
         let entry: MountEntry = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(entry.source, "proc");
-        assert_eq!(entry.target, Utf8PathBuf::from("/proc"));
+        assert_eq!(entry.target, rootfs_path("/proc"));
         assert!(entry.options.is_empty());
     }
 
@@ -1092,13 +1081,13 @@ mod tests {
         let entries = MountPreset::Recommends.to_entries();
         assert_eq!(entries.len(), 6);
 
-        let targets: Vec<&str> = entries.iter().map(|e| e.target.as_str()).collect();
-        assert!(targets.contains(&"/proc"));
-        assert!(targets.contains(&"/sys"));
-        assert!(targets.contains(&"/dev"));
-        assert!(targets.contains(&"/dev/pts"));
-        assert!(targets.contains(&"/tmp"));
-        assert!(targets.contains(&"/run"));
+        let targets: Vec<String> = entries.iter().map(|e| e.target.to_string()).collect();
+        assert!(targets.iter().any(|t| t == "/proc"));
+        assert!(targets.iter().any(|t| t == "/sys"));
+        assert!(targets.iter().any(|t| t == "/dev"));
+        assert!(targets.iter().any(|t| t == "/dev/pts"));
+        assert!(targets.iter().any(|t| t == "/tmp"));
+        assert!(targets.iter().any(|t| t == "/run"));
     }
 
     #[test]
@@ -1112,12 +1101,12 @@ mod tests {
         let mounts = vec![
             MountEntry {
                 source: "devtmpfs".to_string(),
-                target: "/dev".into(),
+                target: rootfs_path("/dev"),
                 options: vec![],
             },
             MountEntry {
                 source: "devpts".to_string(),
-                target: "/dev/pts".into(),
+                target: rootfs_path("/dev/pts"),
                 options: vec![],
             },
         ];
@@ -1129,12 +1118,12 @@ mod tests {
         let mounts = vec![
             MountEntry {
                 source: "devpts".to_string(),
-                target: "/dev/pts".into(),
+                target: rootfs_path("/dev/pts"),
                 options: vec![],
             },
             MountEntry {
                 source: "devtmpfs".to_string(),
-                target: "/dev".into(),
+                target: rootfs_path("/dev"),
                 options: vec![],
             },
         ];
@@ -1147,7 +1136,7 @@ mod tests {
     fn test_mount_entry_validate_rejects_pseudo_fs_with_bind() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec!["bind".to_string()],
         };
         let err = entry.validate().unwrap_err();
@@ -1165,7 +1154,7 @@ mod tests {
     fn test_validate_mount_order_single() {
         let mounts = vec![MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         }];
         assert!(validate_mount_order(&mounts).is_ok());
@@ -1176,12 +1165,12 @@ mod tests {
         let mounts = vec![
             MountEntry {
                 source: "sysfs".to_string(),
-                target: "/sys".into(),
+                target: rootfs_path("/sys"),
                 options: vec![],
             },
             MountEntry {
                 source: "proc".to_string(),
-                target: "/proc".into(),
+                target: rootfs_path("/proc"),
                 options: vec![],
             },
         ];
@@ -1192,7 +1181,7 @@ mod tests {
     fn test_mount_entry_validate_rejects_empty_source() {
         let entry = MountEntry {
             source: "".to_string(),
-            target: "/mnt".into(),
+            target: rootfs_path("/mnt"),
             options: vec![],
         };
         let err = entry.validate().unwrap_err();
@@ -1201,22 +1190,10 @@ mod tests {
     }
 
     #[test]
-    fn test_mount_entry_validate_rejects_root_target() {
-        let entry = MountEntry {
-            source: "proc".to_string(),
-            target: "/".into(),
-            options: vec![],
-        };
-        let err = entry.validate().unwrap_err();
-        assert!(matches!(err, RsdebstrapError::Validation(_)));
-        assert!(err.to_string().contains("not allowed"));
-    }
-
-    #[test]
     fn test_mount_entry_validate_rejects_unknown_relative_source() {
         let entry = MountEntry {
             source: "foobar".to_string(),
-            target: "/mnt".into(),
+            target: rootfs_path("/mnt"),
             options: vec![],
         };
         let err = entry.validate().unwrap_err();
@@ -1247,7 +1224,7 @@ mod tests {
     fn test_mount_entry_validate_rejects_regular_source_with_dotdot() {
         let entry = MountEntry {
             source: "/mnt/../etc".to_string(),
-            target: "/mnt".into(),
+            target: rootfs_path("/mnt"),
             options: vec![],
         };
         let err = entry.validate().unwrap_err();

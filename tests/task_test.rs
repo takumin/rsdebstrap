@@ -712,7 +712,9 @@ isolation: false
     use rsdebstrap::config::IsolationConfig;
     let task_mut = task;
     assert_eq!(
-        task_mut.task_isolation().resolve(&IsolationConfig::chroot()),
+        task_mut
+            .task_isolation()
+            .resolve(&IsolationConfig::chroot()),
         None,
         "isolation: false should resolve to None (Disabled)"
     );
@@ -731,7 +733,9 @@ isolation: false
     use rsdebstrap::config::IsolationConfig;
     let task_mut = task;
     assert_eq!(
-        task_mut.task_isolation().resolve(&IsolationConfig::chroot()),
+        task_mut
+            .task_isolation()
+            .resolve(&IsolationConfig::chroot()),
         None,
         "isolation: false on MitamaeTask should resolve to None"
     );
@@ -740,9 +744,11 @@ isolation: false
 #[test]
 fn test_task_definition_resolve_isolation_dispatches_to_shell() {
     use rsdebstrap::config::IsolationConfig;
-    let task =
-        ProvisionTask::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
-    assert_eq!(task.task_isolation().resolve(&IsolationConfig::chroot()), Some(IsolationConfig::chroot()));
+    let task = ProvisionTask::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
+    assert_eq!(
+        task.task_isolation().resolve(&IsolationConfig::chroot()),
+        Some(IsolationConfig::chroot())
+    );
 }
 
 #[test]
@@ -752,5 +758,8 @@ fn test_task_definition_resolve_isolation_dispatches_to_mitamae() {
         ScriptSource::Content("package 'vim'".to_string()),
         "/usr/local/bin/mitamae".into(),
     ));
-    assert_eq!(task.task_isolation().resolve(&IsolationConfig::chroot()), Some(IsolationConfig::chroot()));
+    assert_eq!(
+        task.task_isolation().resolve(&IsolationConfig::chroot()),
+        Some(IsolationConfig::chroot())
+    );
 }

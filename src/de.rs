@@ -60,6 +60,28 @@ pub(crate) fn path<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Utf8Pat
         .map(Utf8PathBuf::from)
 }
 
+/// Deserializes a [`RelPath`](crate::rootfs::RelPath) field spelled as an absolute path
+/// inside the rootfs, rejecting non-string scalars.
+///
+/// Two things this does not delegate. `RelPath`'s own `Deserialize` goes through
+/// `String::deserialize`, which under the `yaml_serde` text deserializer would coerce
+/// `target: 42` into the path `"42"` — the scalar-coercion class this module exists to
+/// close. And `RelPath::parse` accepts a missing leading `/` because it denotes the same
+/// location, whereas a profile field is required to spell it, so that a typo like
+/// `target: proc` is an error rather than a silent `/proc`.
+pub(crate) fn rootfs_abs_path<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<crate::rootfs::RelPath, D::Error> {
+    let raw = deserializer.deserialize_any(StrictStringVisitor)?;
+    if !raw.starts_with('/') {
+        return Err(Error::custom(format!(
+            "rootfs path {:?} must be absolute (start with '/')",
+            raw
+        )));
+    }
+    crate::rootfs::RelPath::parse(&raw).map_err(Error::custom)
+}
+
 /// Deserializes an `Option<String>` field, rejecting non-string scalars.
 ///
 /// `null` (and an empty value) still deserializes to `None`, matching plain
