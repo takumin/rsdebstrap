@@ -46,9 +46,12 @@ tasks:
     deps:
     - task: setup:test
     cmds:
-    # The two #[ignore]d tests assert permission-denied I/O rendering by making a
+    # Two of the #[ignore]d tests assert permission-denied I/O rendering by making a
     # path unreadable/unwritable with chmod; as root those bits are bypassed, so the
     # operation succeeds and the assertion fails. Run them only as a non-root user.
+    #
+    # This also picks up tests/privileged_helper_test.rs, which needs passwordless
+    # sudo. Those skip themselves when it is unavailable, so no extra gating here.
     - cmd: |-
         if [ "$(id -u)" -eq 0 ]; then
           echo 'skipping #[ignore]d permission tests: they require a non-root user'

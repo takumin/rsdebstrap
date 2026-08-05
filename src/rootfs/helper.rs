@@ -151,9 +151,25 @@ impl PrivilegedRootfsOps {
     pub fn spawn(rootfs: &Utf8Path, method: PrivilegeMethod) -> Result<Self> {
         let exe = std::env::current_exe()
             .map_err(|e| RsdebstrapError::io("failed to locate the rsdebstrap executable", e))?;
+        Self::spawn_exe(&exe, rootfs, method)
+    }
 
+    /// [`spawn`](Self::spawn) with the helper executable named explicitly.
+    ///
+    /// `spawn` re-executes `current_exe()`, which is the right binary in
+    /// production and the *test harness* binary under `cargo test`. Tests that
+    /// exercise real escalation pass the built `rsdebstrap` path here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the helper cannot be spawned.
+    pub fn spawn_exe(
+        exe: &std::path::Path,
+        rootfs: &Utf8Path,
+        method: PrivilegeMethod,
+    ) -> Result<Self> {
         let mut child = Command::new(method.command_name())
-            .arg(&exe)
+            .arg(exe)
             .arg(HELPER_SUBCOMMAND)
             .arg("--rootfs")
             .arg(rootfs.as_str())
