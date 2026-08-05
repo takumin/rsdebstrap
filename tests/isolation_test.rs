@@ -20,10 +20,11 @@ struct RecordingExecutor {
 
 impl CommandExecutor for RecordingExecutor {
     fn execute(&self, spec: &CommandSpec) -> anyhow::Result<ExecutionResult> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push((spec.command.clone(), spec.args.clone(), spec.privilege));
+        self.calls.lock().unwrap().push((
+            spec.command().to_string(),
+            spec.args().to_vec(),
+            spec.privilege(),
+        ));
         Ok(ExecutionResult { status: None })
     }
 }

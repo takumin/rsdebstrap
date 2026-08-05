@@ -41,8 +41,13 @@ fn privilege_wrapping_prepends_escalation_command() {
     }
 
     let executor = RealCommandExecutor { dry_run: false };
-    let spec = CommandSpec::new("sh", vec!["-c".into(), "exit 0".into()])
-        .with_privilege(Some(PrivilegeMethod::Sudo));
+    // A task-declared program: the shell a provision task names, which is the one
+    // privileged path whose program is not a fixed `PrivilegedProgram`.
+    let spec = CommandSpec::for_task_command(
+        &["sh".to_string(), "-c".to_string(), "exit 0".to_string()],
+        Some(PrivilegeMethod::Sudo),
+    )
+    .unwrap();
     let result = executor.execute(&spec);
 
     // Restore PATH immediately, before any assertion can unwind.
@@ -63,7 +68,7 @@ fn privilege_wrapping_prepends_escalation_command() {
 
     // The fake sudo recorded its argv: the resolved command path (absolute,
     // ending in /sh) followed by the original args — proving the escalation
-    // command was prepended and spec.command was resolved to argv[0].
+    // command was prepended and spec.command() was resolved to argv[0].
     let recorded = std::fs::read_to_string(&marker).expect("marker file should exist");
     let lines: Vec<&str> = recorded.lines().collect();
     assert_eq!(lines.len(), 3, "expected 3 argv entries, got: {:?}", lines);

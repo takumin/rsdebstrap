@@ -372,10 +372,10 @@ mod tests {
         fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
             let mut calls = self.calls.lock().unwrap();
             let index = calls.len();
-            let mut args = vec![spec.command.clone()];
-            args.extend(spec.args.iter().cloned());
+            let mut args = vec![spec.command().to_string()];
+            args.extend(spec.args().iter().cloned());
             calls.push(args);
-            self.privileges.lock().unwrap().push(spec.privilege);
+            self.privileges.lock().unwrap().push(spec.privilege());
             drop(calls);
 
             if self.return_err_on_call == Some(index) {

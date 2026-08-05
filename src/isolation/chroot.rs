@@ -1,7 +1,7 @@
 //! Chroot isolation implementation.
 
 use super::{IsolationContext, IsolationProvider};
-use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
+use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult, PrivilegedProgram};
 use crate::privilege::PrivilegeMethod;
 use crate::rootfs::RootfsOps;
 use anyhow::Result;
@@ -89,7 +89,7 @@ impl IsolationContext for ChrootContext {
         args.push(self.rootfs.to_string());
         args.extend(command.iter().cloned());
 
-        let spec = CommandSpec::new("chroot", args).with_privilege(privilege);
+        let spec = CommandSpec::privileged(PrivilegedProgram::Chroot, args, privilege);
         self.executor.execute(&spec)
     }
 
