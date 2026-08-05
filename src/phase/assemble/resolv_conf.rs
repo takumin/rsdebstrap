@@ -398,12 +398,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .as_deref()
-                .is_some_and(|command| command == spec.command)
+                .is_some_and(|command| command == spec.command())
             {
                 self.commands.lock().unwrap().push((
-                    spec.command.clone(),
-                    spec.args.clone(),
-                    spec.privilege,
+                    spec.command().to_string(),
+                    spec.args().to_vec(),
+                    spec.privilege(),
                 ));
                 return Ok(ExecutionResult {
                     status: Some(ExitStatus::from_raw(1 << 8)),
@@ -411,20 +411,20 @@ mod tests {
             }
 
             // Actually execute the command so tests can verify file effects
-            let mut cmd = std::process::Command::new(&spec.command);
-            cmd.args(&spec.args);
-            if let Some(cwd) = &spec.cwd {
+            let mut cmd = std::process::Command::new(spec.command());
+            cmd.args(spec.args());
+            if let Some(cwd) = &spec.cwd() {
                 cmd.current_dir(cwd.as_std_path());
             }
-            for (key, value) in &spec.env {
+            for (key, value) in spec.env() {
                 cmd.env(key, value);
             }
             let status = cmd.status()?;
 
             self.commands.lock().unwrap().push((
-                spec.command.clone(),
-                spec.args.clone(),
-                spec.privilege,
+                spec.command().to_string(),
+                spec.args().to_vec(),
+                spec.privilege(),
             ));
 
             Ok(ExecutionResult {

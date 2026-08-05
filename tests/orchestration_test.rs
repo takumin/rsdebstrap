@@ -22,7 +22,7 @@ impl CommandExecutor for RecordingExecutor {
         self.calls
             .lock()
             .unwrap()
-            .push((spec.command.clone(), spec.args.clone()));
+            .push((spec.command().to_string(), spec.args().to_vec()));
         Ok(ExecutionResult { status: None })
     }
 }
@@ -230,7 +230,7 @@ impl CommandExecutor for FailingExecutor {
         self.calls
             .lock()
             .unwrap()
-            .push((spec.command.clone(), spec.args.clone()));
+            .push((spec.command().to_string(), spec.args().to_vec()));
 
         if current >= self.fail_on_call {
             anyhow::bail!("simulated failure on call {}", current)

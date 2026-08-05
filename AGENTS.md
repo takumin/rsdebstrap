@@ -42,9 +42,17 @@ different inodes — a symlink planted in between redirects a privileged write. 
 against a directory descriptor, and its `RelPath` cannot express a path outside the
 rootfs. Escalation happens once per run, in the helper process `rootfs::open()` spawns.
 
-`tests/privilege_boundary_test.rs` fails on the obvious way back. External programs with
-no syscall equivalent (`mount`, `umount`, `chroot`, the bootstrap backends) legitimately
-escalate per command and are exempt.
+This is mostly enforced by types rather than by review. `CommandSpec`'s fields are
+private and privilege is only reachable through `CommandSpec::privileged`, which takes
+the closed `PrivilegedProgram` enum — `mount`, `umount`, `chroot`, and the bootstrap
+backends, all programs with no syscall equivalent here. There is no `cp` variant and no
+way to set the field directly, so the old shape does not compile.
+
+The exception is `CommandSpec::for_task_command`, which runs the program a provision
+task declared and so takes a name from the profile. Rust cannot restrict a constructor
+to one module (`pub(crate)` is the whole crate), so that one is guarded by
+`tests/privilege_boundary_test.rs` instead. Closing it properly would mean splitting
+the executor into its own crate.
 
 Corollary: privilege for rootfs mutation is a property of the *run*, not of a task, so
 resist adding a per-task `privilege` key to anything that only writes files — it cannot

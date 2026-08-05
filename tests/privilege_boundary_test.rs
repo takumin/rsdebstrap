@@ -1,26 +1,29 @@
-// Guards the privilege boundary documented in `AGENTS.md` (Privilege boundary).
+// Backstop for the one gap the type system leaves in the privilege boundary.
 //
-// Rationale: rootfs mutation used to run as `sudo cp` / `sudo mv` / `sudo chmod` on path
-// strings, which is what made the `openat(O_NOFOLLOW)` checks unable to hold — a name
-// resolved twice can name two different inodes. It now goes through `RootfsOps`, which is
-// anchored to a descriptor.
+// `CommandSpec`'s fields are private and `privilege` is only reachable through
+// `CommandSpec::privileged`, which takes a closed `PrivilegedProgram` enum. Every form the
+// old privileged `cp` could take now fails to compile:
 //
-// Nothing in the type system prevents reintroducing the old shape: `CommandSpec::new("cp",
-// ...).with_privilege(...)` compiles fine and looks perfectly ordinary in review, and the
-// tests of whatever task did it would pass. The regression would be invisible until
-// someone re-derived the whole argument. So the boundary needs its own check.
+//     CommandSpec::new("cp", args).with_privilege(p)          // no such method
+//     CommandSpec { command: "cp".into(), privilege: p, .. }  // private fields
+//     CommandSpec::privileged(PrivilegedProgram::Cp, ..)      // no such variant
 //
-// Note this is a *shape* check, not a proof. It catches the obvious way back, not a
-// determined one (a command name built at runtime, say). That is the same bargain
-// `comment_style_test.rs` makes.
+// What remains is `CommandSpec::for_task_command`, which takes an argv named by the
+// profile and so cannot be an enum. Only `DirectContext` has any business calling it, but
+// Rust cannot say "only that module may": `pub(crate)` means the whole crate, and
+// `pub(in path)` restricts to ancestor modules, which `isolation` is not to `executor`.
+// Closing it properly means splitting the executor into its own crate.
+//
+// Until then this asserts the narrow thing left over: nothing hands a filesystem-mutating
+// coreutils name to that constructor.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// Commands that mutate the filesystem and therefore belong to `RootfsOps`. `mount`,
-// `umount`, `chroot` and the bootstrap backends are absent on purpose: they are external
-// programs with no syscall equivalent here, and they legitimately escalate per command.
+// Commands that mutate the filesystem and therefore belong to `RootfsOps`.
 const FILESYSTEM_COMMANDS: &[&str] = &["cp", "mv", "rm", "ln", "chmod", "chown", "mkdir", "touch"];
+
+const TASK_CONSTRUCTOR: &str = "for_task_command";
 
 fn rust_sources(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
@@ -38,9 +41,9 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
-// Line index where test code starts, or `None` when the file has no test module.
-// Mirrors `comment_style_test.rs`: every `#[cfg(test)]` in `src/` is a trailing module at
-// column 0, so anything below the first one is test code.
+// Line index where test code starts, or `None` when the file has no test module. Every
+// `#[cfg(test)]` in `src/` is a trailing module at column 0, so anything below the first
+// one is test code.
 fn test_region_start(contents: &str) -> Option<usize> {
     contents
         .lines()
@@ -48,20 +51,24 @@ fn test_region_start(contents: &str) -> Option<usize> {
 }
 
 #[test]
-fn production_code_does_not_shell_out_to_mutate_the_rootfs() {
+fn the_task_command_constructor_is_not_used_to_mutate_the_rootfs() {
     let mut offenders = Vec::new();
 
     for path in rust_sources(Path::new("src")) {
         let contents = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
         let production_ends = test_region_start(&contents).unwrap_or(usize::MAX);
+        let lines: Vec<&str> = contents.lines().collect();
 
-        for (index, line) in contents.lines().enumerate() {
-            if index >= production_ends {
-                break;
+        for (index, line) in lines.iter().enumerate() {
+            if index >= production_ends || !line.contains(TASK_CONSTRUCTOR) {
+                continue;
             }
+            // The argv may be built across several lines, so look at a window: a call is
+            // suspicious if a coreutils name appears near the constructor.
+            let window = lines[index..lines.len().min(index + 6)].join(" ");
             for command in FILESYSTEM_COMMANDS {
-                if line.contains(&format!("CommandSpec::new(\"{command}\"")) {
+                if window.contains(&format!("\"{command}\"")) {
                     offenders.push(format!("{}:{}: {}", path.display(), index + 1, line.trim()));
                 }
             }
@@ -70,36 +77,40 @@ fn production_code_does_not_shell_out_to_mutate_the_rootfs() {
 
     assert!(
         offenders.is_empty(),
-        "rootfs mutation shelling out to coreutils ({} occurrence(s)):\n{}\n\n\
-        Use `RootfsOps` (`src/rootfs/`) instead. It resolves each path component with \
+        "a filesystem command reached `{TASK_CONSTRUCTOR}` ({} occurrence(s)):\n{}\n\n\
+        That constructor is for the program a provision task declared. To modify the \
+        rootfs, use `RootfsOps` (`src/rootfs/`): it resolves each path component with \
         `O_NOFOLLOW` against a directory descriptor, so a planted symlink cannot redirect \
-        the write; a path string handed to `cp` under `sudo` can. See the Privilege \
+        the write — which a path string handed to `cp` under `sudo` can. See the Privilege \
         boundary section of docs/ARCHITECTURE.md.",
         offenders.len(),
         offenders.join("\n"),
     );
 }
 
-// The check above is only meaningful if it can actually see production code — a `src/`
-// that failed to enumerate, or a `#[cfg(test)]` detected at line 0, would make it vacuous.
+// The check above is vacuous if the scan cannot see production code, and it would stay
+// green forever if the constructor were renamed. Pin both.
 #[test]
-fn the_scan_covers_production_code() {
+fn the_scan_reaches_production_code_and_the_constructor_still_exists() {
     let sources = rust_sources(Path::new("src"));
     assert!(sources.len() > 10, "only found {} sources under src/", sources.len());
 
-    // `MountEntry::mount_spec` legitimately shells out to `mount`, so the scan must reach
-    // it — if the region calculation excluded everything, the check above would pass by
-    // seeing nothing at all.
-    let config = sources
+    let direct = sources
         .iter()
-        .find(|p| p.ends_with("config.rs"))
-        .expect("expected src/config.rs to exist");
-    let contents = fs::read_to_string(config).unwrap();
-
+        .find(|p| p.ends_with("isolation/direct.rs"))
+        .expect("expected src/isolation/direct.rs to exist");
+    let contents = fs::read_to_string(direct).unwrap();
     let production_ends = test_region_start(&contents).unwrap_or(usize::MAX);
+
     let reached = contents
         .lines()
         .take(production_ends)
-        .any(|l| l.contains("CommandSpec::new(\"mount\""));
-    assert!(reached, "the scan does not reach production code in {}", config.display());
+        .any(|l| l.contains(TASK_CONSTRUCTOR));
+    assert!(
+        reached,
+        "`{TASK_CONSTRUCTOR}` is not called in the production half of {} — either the scan \
+        is not reaching production code, or the constructor was renamed and this guard is \
+        now checking for a name that no longer exists",
+        direct.display()
+    );
 }

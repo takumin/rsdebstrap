@@ -162,8 +162,8 @@ pub struct MmdebstrapConfig {
 }
 
 impl BootstrapBackend for MmdebstrapConfig {
-    fn command_name(&self) -> &str {
-        "mmdebstrap"
+    fn program(&self) -> crate::executor::BootstrapProgram {
+        crate::executor::BootstrapProgram::Mmdebstrap
     }
 
     #[tracing::instrument(skip(self, output_dir))]

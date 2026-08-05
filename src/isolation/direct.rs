@@ -115,8 +115,7 @@ impl IsolationContext for DirectContext {
             })
             .collect();
 
-        let spec = CommandSpec::new(translated[0].clone(), translated[1..].to_vec())
-            .with_privilege(privilege);
+        let spec = CommandSpec::for_task_command(&translated, privilege)?;
         self.executor.execute(&spec)
     }
 

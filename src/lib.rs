@@ -47,14 +47,19 @@ fn run_bootstrap_phase(
     executor: &Arc<dyn CommandExecutor>,
 ) -> Result<()> {
     let backend = profile.bootstrap.as_backend();
-    let command_name = backend.command_name();
+    let program = backend.program();
+    let command_name = program.program_name();
 
     let args = backend
         .build_args(&profile.dir)
         .with_context(|| format!("failed to build arguments for {}", command_name))?;
 
     let privilege = profile.bootstrap.resolved_privilege_method();
-    let spec = executor::CommandSpec::new(command_name, args).with_privilege(privilege);
+    let spec = executor::CommandSpec::privileged(
+        executor::PrivilegedProgram::Bootstrap(program),
+        args,
+        privilege,
+    );
     executor
         .execute_checked(&spec)
         .with_context(|| format!("failed to execute {}", command_name))?;
@@ -293,10 +298,10 @@ mod tests {
             self.commands
                 .lock()
                 .unwrap()
-                .push((spec.command.clone(), spec.args.clone()));
+                .push((spec.command().to_string(), spec.args().to_vec()));
 
-            let status = std::process::Command::new(&spec.command)
-                .args(&spec.args)
+            let status = std::process::Command::new(spec.command())
+                .args(spec.args())
                 .status()?;
             Ok(ExecutionResult {
                 status: Some(status),

@@ -79,8 +79,8 @@ pub struct DebootstrapConfig {
 }
 
 impl BootstrapBackend for DebootstrapConfig {
-    fn command_name(&self) -> &str {
-        "debootstrap"
+    fn program(&self) -> crate::executor::BootstrapProgram {
+        crate::executor::BootstrapProgram::Debootstrap
     }
 
     #[tracing::instrument(skip(self, output_dir))]

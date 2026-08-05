@@ -153,6 +153,13 @@ Rootfs *mutation* does not use that path. `rootfs::open()` is called once per ru
 `sudo <self> __rootfs-helper --rootfs <path>`, a hidden subcommand of this same binary — which
 opens the rootfs descriptor and serves typed `Request`s over a pipe (`src/rootfs/helper.rs`).
 
+Privilege cannot be attached to an arbitrary command any more. `CommandSpec`'s fields are
+private, and the only constructor that sets `privilege` for a fixed program takes the closed
+`PrivilegedProgram` enum (`mount`, `umount`, `chroot`, the bootstrap backends — programs with
+no syscall equivalent in this crate). `CommandSpec::for_task_command` is the exception, since
+a provision task names its own program; `tests/privilege_boundary_test.rs` guards it, because
+Rust cannot restrict a constructor to a single module within a crate.
+
 Two things follow that per-command escalation could not give:
 
 - **Root's authority is bounded by an enum, not by what a command can be argued into.** Every

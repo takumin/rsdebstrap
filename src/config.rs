@@ -21,7 +21,7 @@ use crate::bootstrap::{
     BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
 use crate::error::RsdebstrapError;
-use crate::executor::CommandSpec;
+use crate::executor::{CommandSpec, PrivilegedProgram};
 use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::phase::{AssembleConfig, PrepareConfig, ProvisionTask};
 use crate::pipeline::Pipeline;
@@ -228,7 +228,7 @@ impl MountEntry {
         args.push(self.source.clone());
         args.push(abs_target.to_string());
 
-        CommandSpec::new("mount", args).with_privilege(privilege)
+        CommandSpec::privileged(PrivilegedProgram::Mount, args, privilege)
     }
 
     /// Builds a `CommandSpec` for the `umount` command using a pre-validated absolute target path.
@@ -241,7 +241,7 @@ impl MountEntry {
         abs_target: &Utf8Path,
         privilege: Option<PrivilegeMethod>,
     ) -> CommandSpec {
-        CommandSpec::new("umount", vec![abs_target.to_string()]).with_privilege(privilege)
+        CommandSpec::privileged(PrivilegedProgram::Umount, vec![abs_target.to_string()], privilege)
     }
 
     /// Validates this mount entry's format: source must not be empty, target must
@@ -911,8 +911,8 @@ mod tests {
             options: vec![],
         };
         let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/proc"), None);
-        assert_eq!(spec.command, "mount");
-        assert_eq!(spec.args, vec!["-t", "proc", "proc", "/rootfs/proc"]);
+        assert_eq!(spec.command(), "mount");
+        assert_eq!(spec.args(), vec!["-t", "proc", "proc", "/rootfs/proc"]);
     }
 
     #[test]
@@ -923,9 +923,9 @@ mod tests {
             options: vec!["gid=5".to_string(), "mode=620".to_string()],
         };
         let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/dev/pts"), None);
-        assert_eq!(spec.command, "mount");
+        assert_eq!(spec.command(), "mount");
         assert_eq!(
-            spec.args,
+            spec.args(),
             vec![
                 "-t",
                 "devpts",
@@ -945,8 +945,8 @@ mod tests {
             options: vec!["bind".to_string()],
         };
         let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/dev"), None);
-        assert_eq!(spec.command, "mount");
-        assert_eq!(spec.args, vec!["-o", "bind", "/dev", "/rootfs/dev"]);
+        assert_eq!(spec.command(), "mount");
+        assert_eq!(spec.args(), vec!["-o", "bind", "/dev", "/rootfs/dev"]);
     }
 
     #[test]
@@ -957,8 +957,8 @@ mod tests {
             options: vec![],
         };
         let spec = entry.build_umount_spec_with_path(Utf8Path::new("/rootfs/proc"), None);
-        assert_eq!(spec.command, "umount");
-        assert_eq!(spec.args, vec!["/rootfs/proc"]);
+        assert_eq!(spec.command(), "umount");
+        assert_eq!(spec.args(), vec!["/rootfs/proc"]);
     }
 
     #[test]
@@ -970,7 +970,7 @@ mod tests {
         };
         let spec = entry
             .build_mount_spec_with_path(Utf8Path::new("/rootfs/proc"), Some(PrivilegeMethod::Sudo));
-        assert_eq!(spec.privilege, Some(PrivilegeMethod::Sudo));
+        assert_eq!(spec.privilege(), Some(PrivilegeMethod::Sudo));
     }
 
     #[test]
@@ -984,9 +984,9 @@ mod tests {
             Utf8Path::new("/rootfs/proc"),
             Some(PrivilegeMethod::Sudo),
         );
-        assert_eq!(spec.command, "umount");
-        assert_eq!(spec.args, vec!["/rootfs/proc"]);
-        assert_eq!(spec.privilege, Some(PrivilegeMethod::Sudo));
+        assert_eq!(spec.command(), "umount");
+        assert_eq!(spec.args(), vec!["/rootfs/proc"]);
+        assert_eq!(spec.privilege(), Some(PrivilegeMethod::Sudo));
     }
 
     #[test]

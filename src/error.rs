@@ -130,21 +130,21 @@ impl RsdebstrapError {
         spec: &crate::executor::CommandSpec,
         status: impl Into<String>,
     ) -> Self {
-        let command = if let Some(method) = &spec.privilege {
-            if spec.args.is_empty() {
-                format!("{} {}", method.command_name(), spec.command)
+        let command = if let Some(method) = spec.privilege().as_ref() {
+            if spec.args().is_empty() {
+                format!("{} {}", method.command_name(), spec.command())
             } else {
                 format!(
                     "{} {} {}",
                     method.command_name(),
-                    spec.command,
-                    format_command_args(&spec.args)
+                    spec.command(),
+                    format_command_args(spec.args())
                 )
             }
-        } else if spec.args.is_empty() {
-            spec.command.clone()
+        } else if spec.args().is_empty() {
+            spec.command().to_string()
         } else {
-            format!("{} {}", spec.command, format_command_args(&spec.args))
+            format!("{} {}", spec.command(), format_command_args(spec.args()))
         };
         Self::Execution {
             command,
@@ -210,10 +210,13 @@ mod tests {
 
     #[test]
     fn test_execution_constructor_with_privilege_and_args() {
-        use crate::executor::CommandSpec;
+        use crate::executor::{CommandSpec, PrivilegedProgram};
         use crate::privilege::PrivilegeMethod;
-        let spec = CommandSpec::new("chroot", vec!["/tmp/rootfs".into(), "/bin/sh".into()])
-            .with_privilege(Some(PrivilegeMethod::Sudo));
+        let spec = CommandSpec::privileged(
+            PrivilegedProgram::Chroot,
+            vec!["/tmp/rootfs".into(), "/bin/sh".into()],
+            Some(PrivilegeMethod::Sudo),
+        );
         let err = RsdebstrapError::execution(&spec, "exit status: 1");
         assert_eq!(
             err.to_string(),
@@ -223,9 +226,10 @@ mod tests {
 
     #[test]
     fn test_execution_constructor_with_privilege_without_args() {
-        use crate::executor::CommandSpec;
+        use crate::executor::{CommandSpec, PrivilegedProgram};
         use crate::privilege::PrivilegeMethod;
-        let spec = CommandSpec::new("chroot", vec![]).with_privilege(Some(PrivilegeMethod::Doas));
+        let spec =
+            CommandSpec::privileged(PrivilegedProgram::Chroot, vec![], Some(PrivilegeMethod::Doas));
         let err = RsdebstrapError::execution(&spec, "exit status: 1");
         assert_eq!(err.to_string(), "command execution failed: doas chroot: exit status: 1");
     }
