@@ -136,6 +136,7 @@ fn dispatch(ops: &LocalRootfsOps, request: Request) -> Response {
 }
 
 /// [`RootfsOps`] performed by a privileged helper process.
+#[derive(Debug)]
 pub struct PrivilegedRootfsOps {
     // One mutex over the whole channel: a request and its response are a single
     // transaction, and interleaving two of them would pair each with the other's
@@ -145,6 +146,7 @@ pub struct PrivilegedRootfsOps {
     method: PrivilegeMethod,
 }
 
+#[derive(Debug)]
 struct Channel {
     child: Child,
     // `None` once `Drop` has closed it to end the helper's read loop.

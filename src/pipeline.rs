@@ -37,6 +37,7 @@ const PHASE_ASSEMBLE: &str = "assemble";
 /// - Creating per-task isolation contexts
 /// - Executing tasks in the correct phase order
 /// - Error handling with guaranteed teardown per task
+#[derive(Debug)]
 pub struct Pipeline<'a> {
     prepare: &'a PrepareConfig,
     provision: Vec<ResolvedProvisionTask<'a>>,
@@ -174,6 +175,7 @@ impl<'a> Pipeline<'a> {
 /// Produced only by [`Pipeline::run_prepare_and_provision`] and consumed by
 /// [`RootfsResolvConf::restore`](crate::isolation::resolv_conf::RootfsResolvConf::restore).
 #[must_use]
+#[derive(Debug)]
 pub struct Provisioned(());
 
 impl Provisioned {

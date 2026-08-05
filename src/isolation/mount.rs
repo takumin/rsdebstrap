@@ -29,6 +29,7 @@ use crate::rootfs::RelPath;
 /// from — so it must see the rootfs the way the image will: without `/proc`,
 /// `/sys` and `/dev` bound over it.
 #[must_use]
+#[derive(Debug)]
 pub struct Unmounted(());
 
 impl Unmounted {
