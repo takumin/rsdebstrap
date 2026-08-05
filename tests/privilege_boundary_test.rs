@@ -1,21 +1,28 @@
-// Backstop for the one gap the type system leaves in the privilege boundary.
+// Backstop for the gaps the type system leaves in the privilege boundary.
 //
-// `CommandSpec`'s fields are private and `privilege` is only reachable through
-// `CommandSpec::privileged`, which takes a closed `PrivilegedProgram` enum. Every form the
-// old privileged `cp` could take now fails to compile:
+// Most of it is closed by types. `CommandSpec`'s fields are private and privilege is only
+// reachable through `CommandSpec::privileged`, which takes a closed `PrivilegedProgram`
+// enum, so every form the old privileged `cp` could take fails to compile:
 //
 //     CommandSpec::new("cp", args).with_privilege(p)          // no such method
 //     CommandSpec { command: "cp".into(), privilege: p, .. }  // private fields
 //     CommandSpec::privileged(PrivilegedProgram::Cp, ..)      // no such variant
 //
-// What remains is `CommandSpec::for_task_command`, which takes an argv named by the
-// profile and so cannot be an enum. Only `DirectContext` has any business calling it, but
-// Rust cannot say "only that module may": `pub(crate)` means the whole crate, and
-// `pub(in path)` restricts to ancestor modules, which `isolation` is not to `executor`.
-// Closing it properly means splitting the executor into its own crate.
+// A phase task cannot run a spec at all: `IsolationContext` no longer hands out a
+// `CommandExecutor`, so `ctx.executor().execute(&spec)` does not compile either. Building
+// a spec inside a phase is inert.
 //
-// Until then this asserts the narrow thing left over: nothing hands a filesystem-mutating
-// coreutils name to that constructor.
+// Two things are still expressible and are not worth contorting the design to forbid:
+//
+//   1. `CommandSpec::for_task_command`, which runs the program a provision task declared
+//      and so takes a name from the profile. Only `DirectContext` should call it, but Rust
+//      cannot restrict a constructor to one module — `pub(crate)` is the whole crate, and
+//      `pub(in path)` only restricts to ancestor modules, which `isolation` is not to
+//      `executor`. This file guards it.
+//   2. `ctx.execute(argv, privilege)` from any task. Closing that means giving each phase
+//      a different context capability (provision needs to run programs; assemble does not),
+//      which is a redesign of `PhaseItem` dispatch rather than a visibility change. It is
+//      at least explicit at the call site, unlike the `sudo cp` it replaced.
 
 use std::fs;
 use std::path::{Path, PathBuf};

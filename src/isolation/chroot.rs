@@ -65,10 +65,6 @@ impl IsolationContext for ChrootContext {
         self.dry_run
     }
 
-    fn executor(&self) -> &dyn CommandExecutor {
-        &*self.executor
-    }
-
     fn rootfs_ops(&self) -> &dyn RootfsOps {
         &*self.ops
     }
