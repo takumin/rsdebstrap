@@ -1246,106 +1246,6 @@ provision:
 }
 
 #[test]
-fn test_load_profile_task_isolation_absent_resolves_to_chroot() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs
-  format: directory
-provision:
-  - type: shell
-    content: echo "hello"
-"#
-    ))?;
-    // editorconfig-checker-enable
-
-    use rsdebstrap::config::IsolationConfig;
-    match &profile.provision[0] {
-        ProvisionTask::Shell(task) => {
-            assert_eq!(
-                task.resolved_isolation_config(),
-                Some(&IsolationConfig::chroot()),
-                "Absent isolation should resolve to Chroot from defaults"
-            );
-        }
-        other => panic!("Expected Shell task, got: {:?}", other),
-    }
-
-    Ok(())
-}
-
-#[test]
-fn test_load_profile_task_isolation_true_resolves_to_chroot() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs
-  format: directory
-provision:
-  - type: shell
-    content: echo "hello"
-    isolation: true
-"#
-    ))?;
-    // editorconfig-checker-enable
-
-    use rsdebstrap::config::IsolationConfig;
-    match &profile.provision[0] {
-        ProvisionTask::Shell(task) => {
-            assert_eq!(
-                task.resolved_isolation_config(),
-                Some(&IsolationConfig::chroot()),
-                "isolation: true should resolve to Chroot from defaults"
-            );
-        }
-        other => panic!("Expected Shell task, got: {:?}", other),
-    }
-
-    Ok(())
-}
-
-#[test]
-fn test_load_profile_task_isolation_false_resolves_to_none() -> Result<()> {
-    // editorconfig-checker-disable
-    let profile = helpers::load_profile_from_yaml(crate::yaml!(
-        r#"---
-dir: /tmp/test
-bootstrap:
-  type: mmdebstrap
-  suite: bookworm
-  target: rootfs
-  format: directory
-provision:
-  - type: shell
-    content: echo "hello"
-    isolation: false
-"#
-    ))?;
-    // editorconfig-checker-enable
-
-    match &profile.provision[0] {
-        ProvisionTask::Shell(task) => {
-            assert_eq!(
-                task.resolved_isolation_config(),
-                None,
-                "isolation: false should resolve to None (Disabled)"
-            );
-        }
-        other => panic!("Expected Shell task, got: {:?}", other),
-    }
-
-    Ok(())
-}
-
-#[test]
 fn test_load_profile_task_isolation_explicit_chroot_resolves_to_chroot() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(
@@ -1427,6 +1327,9 @@ provision:
     Ok(())
 }
 
+/// Covers the three shorthand forms of `isolation` in one profile: `true`,
+/// `false` and absent. The map form has its own test above because it is a
+/// distinct wire shape, not because it resolves differently.
 #[test]
 fn test_load_profile_mixed_task_isolation_settings() -> Result<()> {
     // editorconfig-checker-disable

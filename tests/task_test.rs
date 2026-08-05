@@ -758,23 +758,10 @@ fn test_task_definition_binary_path_mitamae_none_when_unset() {
     assert_eq!(task.binary_path(), None);
 }
 
-#[test]
-fn test_shell_task_deserialize_isolation_true() {
-    let yaml = r#"content: echo hello
-isolation: true
-"#;
-    let task: ShellTask =
-        yaml_serde::from_str(yaml).expect("should parse ShellTask with isolation: true");
-    use rsdebstrap::config::IsolationConfig;
-    let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::chroot());
-    assert_eq!(
-        task_mut.resolved_isolation_config(),
-        Some(&IsolationConfig::chroot()),
-        "isolation: true should resolve to Chroot"
-    );
-}
-
+/// `false` is the only shorthand whose resolved outcome differs: `true`,
+/// the map form and an absent field all yield the single `IsolationConfig`
+/// variant. The forms themselves are pinned by `TaskIsolation`'s
+/// deserialize tests in `src/isolation/mod.rs`.
 #[test]
 fn test_shell_task_deserialize_isolation_false() {
     let yaml = r#"content: echo hello
@@ -789,42 +776,6 @@ isolation: false
         task_mut.resolved_isolation_config(),
         None,
         "isolation: false should resolve to None (Disabled)"
-    );
-}
-
-#[test]
-fn test_shell_task_deserialize_isolation_explicit_chroot() {
-    // editorconfig-checker-disable
-    let yaml = r#"content: echo hello
-isolation:
-  type: chroot
-"#;
-    // editorconfig-checker-enable
-    let task: ShellTask =
-        yaml_serde::from_str(yaml).expect("should parse ShellTask with explicit isolation");
-    use rsdebstrap::config::IsolationConfig;
-    let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::chroot());
-    assert_eq!(
-        task_mut.resolved_isolation_config(),
-        Some(&IsolationConfig::chroot()),
-        "explicit chroot isolation should resolve to Chroot"
-    );
-}
-
-#[test]
-fn test_shell_task_deserialize_isolation_absent_defaults_to_inherit() {
-    let yaml = r#"content: echo hello
-"#;
-    let task: ShellTask =
-        yaml_serde::from_str(yaml).expect("should parse ShellTask without isolation");
-    use rsdebstrap::config::IsolationConfig;
-    let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::chroot());
-    assert_eq!(
-        task_mut.resolved_isolation_config(),
-        Some(&IsolationConfig::chroot()),
-        "absent isolation (Inherit) should resolve to Chroot from defaults"
     );
 }
 
