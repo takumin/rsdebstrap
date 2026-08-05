@@ -58,8 +58,9 @@ config-type change; the autofix.ci workflow also regenerates it and auto-commits
 to pull requests (see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#json-schema-generation)).
 
-**For the full profile format — every field's meaning, the YAML scalar/null rules, the
-`privilege` and `isolation` tri-states, and the `mount` / `resolv_conf` invariants — see
-[`docs/PROFILE.md`](docs/PROFILE.md).** Read it before writing or reviewing a profile,
-changing `src/config.rs`, or touching profile validation; those rules are not all
-recoverable from the schema alone.
+**For the profile format — the pipeline fields' meaning, the YAML scalar/null rules, the
+four-state `privilege` / `isolation` resolution, and the `mount` / `resolv_conf`
+invariants — see [`docs/PROFILE.md`](docs/PROFILE.md)** (the backend-specific keys inside
+`bootstrap:` are documented by the generated schema, not there). Read it before writing
+or reviewing a profile, changing `src/config.rs`, or touching profile validation; those
+rules are not all recoverable from the schema alone.
