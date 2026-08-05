@@ -58,7 +58,7 @@ fn resolv_conf_path() -> RelPath {
 /// one so provisioning can resolve names, and restores the original on teardown.
 /// `Drop` retries the restore if the caller never did.
 ///
-/// The original is held in memory as a [`TakenEntry`](crate::rootfs::TakenEntry) rather
+/// The original is held in memory as a [`TakenEntry`] rather
 /// than moved to a backup path; that type documents why.
 pub struct RootfsResolvConf {
     ops: Arc<dyn RootfsOps>,
