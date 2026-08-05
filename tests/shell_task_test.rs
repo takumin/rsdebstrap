@@ -643,3 +643,31 @@ fn test_execute_nonzero_exit_returns_execution_error() {
         );
     }
 }
+
+// `validate()` rejects a symlinked script, but execution re-reads the path later. If the
+// name is repointed in between, the read must fail rather than follow it: the check and the
+// use have to land on the same inode.
+#[test]
+fn execute_refuses_a_script_that_became_a_symlink_after_validation() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    setup_valid_rootfs(&temp_dir);
+
+    let work = tempdir().expect("failed to create work dir");
+    let script = camino::Utf8PathBuf::from_path_buf(work.path().join("task.sh")).unwrap();
+    std::fs::write(&script, "echo benign\n").unwrap();
+    let elsewhere = work.path().join("attacker-target");
+    std::fs::write(&elsewhere, "echo malicious\n").unwrap();
+
+    let task = ShellTask::new(ScriptSource::Script(script.clone()));
+    task.validate().expect("a regular file passes validation");
+
+    std::fs::remove_file(&script).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &script).unwrap();
+
+    let context = MockContext::new(&rootfs);
+    let err = task
+        .execute(&context, None)
+        .expect_err("the repointed script must be refused");
+    assert!(format!("{err:#}").contains("is a symlink"), "unexpected error: {err:#}");
+}
