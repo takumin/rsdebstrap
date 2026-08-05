@@ -162,9 +162,6 @@ pub trait RootfsOps: Send + Sync {
     /// Replaces `path` with a symlink to `target`, atomically.
     fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()>;
 
-    /// Copies a host file into the rootfs at `path`, atomically.
-    fn import_file(&self, host_src: &Utf8Path, path: &RelPath, mode: u32) -> Result<()>;
-
     /// Removes `path`. Succeeds if it does not exist; never follows a symlink.
     fn remove(&self, path: &RelPath) -> Result<()>;
 
@@ -333,12 +330,6 @@ impl RootfsOps for LocalRootfsOps {
         self.promote(dir, &staging, name)
     }
 
-    fn import_file(&self, host_src: &Utf8Path, path: &RelPath, mode: u32) -> Result<()> {
-        let content = std::fs::read(host_src)
-            .map_err(|e| RsdebstrapError::io(format!("failed to read {}", host_src), e))?;
-        self.write_file(path, &content, mode)
-    }
-
     fn remove(&self, path: &RelPath) -> Result<()> {
         let parent = self.parent_dir(path)?;
         match rfs::unlinkat(parent.fd(), path.file_name(), AtFlags::empty()) {
@@ -448,11 +439,6 @@ impl RootfsOps for DryRunRootfsOps {
 
     fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()> {
         tracing::info!("dry run: symlink {}{} -> {}", self.rootfs, path, target);
-        Ok(())
-    }
-
-    fn import_file(&self, host_src: &Utf8Path, path: &RelPath, mode: u32) -> Result<()> {
-        tracing::info!("dry run: copy {} to {}{} (mode {:o})", host_src, self.rootfs, path, mode);
         Ok(())
     }
 

@@ -3,14 +3,16 @@
 //! Modifying a rootfs built by `mmdebstrap` needs root, and the boundary is crossed
 //! exactly once: the parent spawns one helper under `sudo`/`doas`, the helper opens the
 //! rootfs descriptor and serves typed requests over a pipe, and the parent never names a
-//! rootfs path to a shell command. What root will do is bounded by [`Request`] — no
-//! request can name a path outside the rootfs, because [`RelPath`] cannot express one.
+//! rootfs path to a shell command. What root will do is bounded by [`Request`] — every path
+//! in it is a [`RelPath`], which cannot name anything outside the rootfs, and no variant
+//! carries a host path for root to resolve. Host files are read by the parent, so what
+//! crosses the boundary is bytes.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 
 use super::{LocalRootfsOps, RelPath, RootfsOps, TakenEntry};
@@ -36,11 +38,6 @@ pub enum Request {
     WriteSymlink {
         path: RelPath,
         target: String,
-    },
-    ImportFile {
-        host_src: Utf8PathBuf,
-        path: RelPath,
-        mode: u32,
     },
     Remove {
         path: RelPath,
@@ -97,13 +94,6 @@ fn dispatch(ops: &LocalRootfsOps, request: Request) -> Response {
         Request::WriteSymlink { path, target } => {
             ops.write_symlink(&path, &target).map(|()| Response::Unit)
         }
-        Request::ImportFile {
-            host_src,
-            path,
-            mode,
-        } => ops
-            .import_file(&host_src, &path, mode)
-            .map(|()| Response::Unit),
         Request::Remove { path } => ops.remove(&path).map(|()| Response::Unit),
         Request::Take { path } => ops.take(&path).map(Response::Taken),
     };
@@ -283,14 +273,6 @@ impl RootfsOps for PrivilegedRootfsOps {
         self.unit(Request::WriteSymlink {
             path: path.clone(),
             target: target.to_string(),
-        })
-    }
-
-    fn import_file(&self, host_src: &Utf8Path, path: &RelPath, mode: u32) -> Result<()> {
-        self.unit(Request::ImportFile {
-            host_src: host_src.to_owned(),
-            path: path.clone(),
-            mode,
         })
     }
 
