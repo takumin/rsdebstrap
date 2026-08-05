@@ -48,10 +48,6 @@
 						"null"
 					]
 				},
-				"privilege": {
-					"$ref": "#/$defs/Privilege",
-					"description": "Privilege escalation setting (resolved during defaults application)."
-				},
 				"search": {
 					"description": "Search domains to write to resolv.conf.",
 					"items": {

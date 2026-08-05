@@ -663,10 +663,6 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
         task.resolve_isolation(&isolation_defaults);
     }
 
-    if let Some(task) = profile.assemble.resolv_conf.as_mut() {
-        task.resolve_privilege(privilege_defaults)?;
-    }
-
     Ok(())
 }
 
