@@ -68,18 +68,11 @@ pub trait IsolationProvider: Send + Sync {
     ) -> Result<Box<dyn IsolationContext>>;
 }
 
-/// Active isolation context with command execution capability.
+/// Read-only view of the rootfs plus the operations that may mutate it.
 ///
-/// Represents an active isolation session. Commands can be executed within
-/// this context, and resources are cleaned up when [`teardown`](Self::teardown)
-/// is called or the context is dropped.
-///
-/// Contexts are not thread-safe by design - they represent a single
-/// isolation session that should be used sequentially.
-pub trait IsolationContext: Send {
-    /// Returns the name of this isolation backend.
-    fn name(&self) -> &'static str;
-
+/// Split out of [`IsolationContext`] so that the rootfs view can be handed to a
+/// caller without also handing it the ability to run a program.
+pub trait RootfsContext {
     /// Returns the path to the rootfs directory.
     fn rootfs(&self) -> &Utf8Path;
 
@@ -90,6 +83,27 @@ pub trait IsolationContext: Send {
     /// and passing commands to the executor, which handles dry-run
     /// semantics at its own level.
     fn dry_run(&self) -> bool;
+
+    /// Returns the descriptor-anchored filesystem operations for this rootfs.
+    ///
+    /// Tasks that modify the rootfs use these rather than running `cp`/`mv`/`ln`
+    /// through the executor: the operations here cannot be redirected by a
+    /// symlink, and they escalate through one helper rather than once per
+    /// command.
+    fn rootfs_ops(&self) -> &dyn RootfsOps;
+}
+
+/// Active isolation context with command execution capability.
+///
+/// Represents an active isolation session. Commands can be executed within
+/// this context, and resources are cleaned up when [`teardown`](Self::teardown)
+/// is called or the context is dropped.
+///
+/// Contexts are not thread-safe by design - they represent a single
+/// isolation session that should be used sequentially.
+pub trait IsolationContext: RootfsContext + Send {
+    /// Returns the name of this isolation backend.
+    fn name(&self) -> &'static str;
 
     /// Executes a command within the isolated environment.
     ///
@@ -104,14 +118,6 @@ pub trait IsolationContext: Send {
         command: &[String],
         privilege: Option<PrivilegeMethod>,
     ) -> Result<ExecutionResult>;
-
-    /// Returns the descriptor-anchored filesystem operations for this rootfs.
-    ///
-    /// Tasks that modify the rootfs use these rather than running `cp`/`mv`/`ln`
-    /// through [`executor`](Self::executor): the operations here cannot be
-    /// redirected by a symlink, and they escalate through one helper rather than
-    /// once per command.
-    fn rootfs_ops(&self) -> &dyn RootfsOps;
 
     /// Tears down the isolation environment and releases resources.
     ///
