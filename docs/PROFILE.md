@@ -116,6 +116,9 @@ be honored. Setting it is a parse error rather than a silent no-op.
 - Mount order must satisfy parent-before-child ordering
 - Custom mounts override preset entries with the same target at their original position (preserving mount order)
 - Two custom `mounts` entries may not share a target (duplicates are a validation error)
+- Mounts cover `prepare` and `provision` only: they are released after `provision` and before
+  `assemble`, so assemble tasks see the rootfs as the image will have it. A failed unmount
+  skips `assemble` for that reason
 
 ## resolv.conf task rules
 
