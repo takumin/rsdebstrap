@@ -23,7 +23,8 @@ bootstrap:
   suite: trixie             # Debian suite
   target: rootfs            # Output name (directory or archive)
   privilege: true           # Use default privilege method
-  # Backend-specific options...
+  # Backend-specific options (mirrors, variant, components, hooks, …) are not listed
+  # here — see the generated schema or examples/debian_trixie_mmdebstrap.yml
 prepare:                    # Optional preparation steps (named-field struct)
   mount:                    # Filesystem mounts for the rootfs (at most one)
     preset: recommends      # Optional: predefined mount set
@@ -100,7 +101,8 @@ assemble:                   # Optional finalization steps (named-field struct)
 
 - Mounts are configured in the `prepare` phase under the `mount` key (a singleton `Option`, so
   at most one mount task is structural — a duplicate `mount` key is a parse error)
-- When mounts are specified, `defaults.isolation` must be `chroot` and `defaults.privilege` must be configured
+- When mounts are specified, `defaults.privilege` must be configured (`mount`/`umount` require
+  privilege escalation), and both commands must be on `PATH`
 - Mount targets must be absolute paths without `..` components
 - Bind mount sources must exist on the host
 - Mount order must satisfy parent-before-child ordering

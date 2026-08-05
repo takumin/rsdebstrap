@@ -111,9 +111,10 @@ patterns run throughout `src/isolation/`:
   reject a symlinked `/etc` — but a TOCTOU window remains before the subsequent
   `mv`/`cp`/`ln` path-string commands, inherent to privilege escalation via external
   commands. Implemented with the `rustix` crate for memory-safe syscall wrappers.
-- **RAII lifecycle managers.** `RootfsMounts`, `RootfsResolvConf`, and `TempFileGuard`
-  all guarantee cleanup via `Drop`, including on error paths. Mounts unmount in reverse
-  order and `unmount()` is idempotent, collecting errors across entries.
+- **RAII lifecycle managers.** `RootfsMounts` and `RootfsResolvConf` (plus
+  `TempFileGuard` in `src/phase/mod.rs`, which cleans up scripts and binaries staged
+  into the rootfs) all guarantee cleanup via `Drop`, including on error paths. Mounts
+  unmount in reverse order and `unmount()` is idempotent, collecting errors across entries.
   `RootfsResolvConf` backs up the existing file and rolls back via rename on write
   failure to avoid destroying the host/rootfs resolv.conf. Atomic writes go through a
   temp file + `cp`.
