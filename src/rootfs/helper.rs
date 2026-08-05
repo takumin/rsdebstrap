@@ -10,7 +10,7 @@
 //!
 //! What that bound is *relative to* is the anchor, and the anchor is a path argument from
 //! the unprivileged parent. A `sudo` rule permitting this helper therefore permits root
-//! writes under any directory the invoking user can name; [`check_anchor`] only refuses the
+//! writes under any directory the invoking user can name; `check_anchor` only refuses the
 //! live system's own hierarchy. Grant the rule accordingly.
 
 use std::io::{BufRead, BufReader, Write};
