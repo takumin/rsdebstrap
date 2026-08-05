@@ -173,31 +173,20 @@ impl RsdebstrapError {
 mod tests {
     use super::*;
 
+    /// The user-facing prefix each variant renders with. One table keeps the
+    /// wording of every string-carrying variant in a single place; the
+    /// constructor tests below cover the variants whose `Display` output is
+    /// assembled rather than interpolated verbatim.
     #[test]
-    fn test_validation_display() {
-        let err = RsdebstrapError::Validation("shell path must not be empty".to_string());
-        assert_eq!(err.to_string(), "validation error: shell path must not be empty");
-    }
-
-    #[test]
-    fn test_execution_display() {
-        let err = RsdebstrapError::Execution {
-            command: "mmdebstrap".to_string(),
-            status: "exit status: 1".to_string(),
-        };
-        assert_eq!(err.to_string(), "command execution failed: mmdebstrap: exit status: 1");
-    }
-
-    #[test]
-    fn test_execution_display_thread_spawn_failure() {
-        let err = RsdebstrapError::Execution {
-            command: "mmdebstrap --variant=debootstrap".to_string(),
-            status: "failed to spawn stdout reader thread: resource exhausted".to_string(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("command execution failed:"));
-        assert!(display.contains("mmdebstrap"));
-        assert!(display.contains("failed to spawn stdout reader thread"));
+    fn test_variant_display_prefixes() {
+        let cases = [
+            (RsdebstrapError::Validation("boom".to_string()), "validation error: boom"),
+            (RsdebstrapError::Isolation("boom".to_string()), "isolation error: boom"),
+            (RsdebstrapError::Config("boom".to_string()), "configuration error: boom"),
+        ];
+        for (err, expected) in cases {
+            assert_eq!(err.to_string(), expected);
+        }
     }
 
     #[test]
@@ -254,23 +243,6 @@ mod tests {
     fn test_command_not_found_display_regular_command() {
         let err = RsdebstrapError::command_not_found("mmdebstrap", "command");
         assert_eq!(err.to_string(), "command not found: command 'mmdebstrap' not found in PATH");
-    }
-
-    #[test]
-    fn test_isolation_display() {
-        let err = RsdebstrapError::Isolation(
-            "cannot execute command: chroot context has already been torn down".to_string(),
-        );
-        assert_eq!(
-            err.to_string(),
-            "isolation error: cannot execute command: chroot context has already been torn down"
-        );
-    }
-
-    #[test]
-    fn test_config_display() {
-        let err = RsdebstrapError::Config("YAML parse error at line 3".to_string());
-        assert_eq!(err.to_string(), "configuration error: YAML parse error at line 3");
     }
 
     #[test]
