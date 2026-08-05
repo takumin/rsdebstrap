@@ -192,29 +192,33 @@ fn the_helper_refuses_to_escape_its_rootfs_even_as_root() {
 fn the_helper_exits_when_the_parent_drops_it() {
     require_sudo!();
     let fixture = RootOwnedRootfs::new();
-    let before = helper_process_count();
 
     {
         let ops = privileged(&fixture.path);
         ops.write_file(&RelPath::parse("/etc/resolv.conf").unwrap(), b"x\n", 0o644)
             .unwrap();
-        assert!(helper_process_count() > before, "the helper does not appear to be running");
+        assert!(helper_is_running(&fixture.path), "the helper does not appear to be running");
     }
 
-    assert_eq!(helper_process_count(), before, "the helper outlived its parent");
+    // `Drop` reaps the helper before returning, so this needs no settling time: if
+    // the process is still matched here, it was genuinely left behind.
+    assert!(!helper_is_running(&fixture.path), "the helper outlived its parent");
 }
 
-// Matches on the process *name*, not the command line: `pgrep -f` also matches
-// any shell whose own argv happens to contain the pattern, which makes the
-// before/after comparison depend on how the test was invoked.
-fn helper_process_count() -> usize {
-    let out = std::process::Command::new("pgrep")
-        .args(["-xc", "rsdebstrap"])
+// Scoped to this test's own helper by its rootfs, which the helper carries in argv.
+// A machine-wide count of `rsdebstrap` processes would instead couple the result to
+// the other tests in this binary: they run concurrently and spawn helpers of their
+// own, so a sibling starting or exiting between two samples moves the count on its
+// own. The tempdir path is unique to this fixture, which is also what makes `-f`
+// safe here where a bare `rsdebstrap` pattern was not — no unrelated process, and
+// no shell that happened to invoke this test, names this directory.
+// `output` rather than `status` so the matched PIDs are captured instead of landing
+// in the test's own stdout.
+fn helper_is_running(rootfs: &camino::Utf8Path) -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-f", &format!("__rootfs-helper --rootfs {rootfs}")])
         .output()
-        .expect("failed to run pgrep");
-    String::from_utf8(out.stdout)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap_or(0)
+        .expect("failed to run pgrep")
+        .status
+        .success()
 }
