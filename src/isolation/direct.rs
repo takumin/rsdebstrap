@@ -113,7 +113,8 @@ impl IsolationContext for DirectContext {
             })
             .collect();
 
-        let spec = CommandSpec::for_task_command(&translated, privilege)?;
+        let spec =
+            CommandSpec::for_task_command(&super::TaskCommandToken::new(), &translated, privilege)?;
         self.executor.execute(&spec)
     }
 

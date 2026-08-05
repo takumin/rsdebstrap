@@ -1,29 +1,11 @@
-// Backstop for the gaps the type system leaves in the privilege boundary.
+// Guards the one thing the privilege boundary cannot express in types: *which argv* reaches
+// `CommandSpec::for_task_command`.
 //
-// Most of it is closed by types. `CommandSpec`'s fields are private and privilege is only
-// reachable through `CommandSpec::privileged`, which takes a closed `PrivilegedProgram`
-// enum, so every form the old privileged `cp` could take fails to compile:
-//
-//     CommandSpec::new("cp", args).with_privilege(p)          // no such method
-//     CommandSpec { command: "cp".into(), privilege: p, .. }  // private fields
-//     CommandSpec::privileged(PrivilegedProgram::Cp, ..)      // no such variant
-//
-// A phase task cannot run a spec at all: `IsolationContext` no longer hands out a
-// `CommandExecutor`, so `ctx.executor().execute(&spec)` does not compile either. Building
-// a spec inside a phase is inert.
-//
-// Nor can every phase reach `ctx.execute(argv, privilege)`. Only `ProvisionItem::execute`
-// receives an `IsolationContext`; `AssembleItem::execute` receives a `RootfsContext`, which
-// has no `execute` method. The assemble unit tests in `src/phase/assemble/resolv_conf.rs`
-// pin that from the other side: their mock context implements `RootfsContext` and nothing
-// else, so widening the signature back would stop compiling.
-//
-// One thing is still expressible and is not worth contorting the design to forbid:
-// `CommandSpec::for_task_command`, which runs the program a provision task declared and so
-// takes a name from the profile. Only `DirectContext` should call it, but Rust cannot
-// restrict a constructor to one module — `pub(crate)` is the whole crate, and `pub(in path)`
-// only restricts to ancestor modules, which `isolation` is not to `executor`. This file
-// guards it.
+// Who may call it is settled by the compiler. It takes a `TaskCommandToken` whose field is
+// private to `isolation`, so `isolation::direct` is the only module that can build one; every
+// other caller fails to compile. What it may be handed is not, because the program name comes
+// from the profile and so cannot be a `PrivilegedProgram`. A `["cp", …]` argv assembled inside
+// `isolation` would still type-check — this scan is what rejects it.
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -26,6 +26,21 @@ use crate::executor::{CommandExecutor, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
 use crate::rootfs::RootfsOps;
 
+/// Evidence that a command is a provision task's own declared program.
+///
+/// [`CommandSpec::for_task_command`](crate::executor::CommandSpec::for_task_command) is the
+/// one privileged constructor whose program name comes from the profile rather than the
+/// closed [`PrivilegedProgram`](crate::executor::PrivilegedProgram) enum. Requiring this
+/// token restricts it to the layer that runs a task's command: the field is private to
+/// `isolation`, so `executor` can name the type but cannot build one.
+pub(crate) struct TaskCommandToken(());
+
+impl TaskCommandToken {
+    fn new() -> Self {
+        Self(())
+    }
+}
+
 pub mod chroot;
 pub mod direct;
 pub mod mount;

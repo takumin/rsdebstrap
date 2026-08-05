@@ -9,8 +9,12 @@
 
 use std::os::unix::fs::PermissionsExt;
 
-use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
+use std::sync::Arc;
+
+use rsdebstrap::executor::RealCommandExecutor;
+use rsdebstrap::isolation::{DirectProvider, IsolationProvider};
 use rsdebstrap::privilege::PrivilegeMethod;
+use rsdebstrap::rootfs::DryRunRootfsOps;
 
 #[test]
 fn privilege_wrapping_prepends_escalation_command() {
@@ -40,15 +44,23 @@ fn privilege_wrapping_prepends_escalation_command() {
         std::env::set_var("PATH", &new_path);
     }
 
-    let executor = RealCommandExecutor { dry_run: false };
-    // A task-declared program: the shell a provision task names, which is the one
-    // privileged path whose program is not a fixed `PrivilegedProgram`.
-    let spec = CommandSpec::for_task_command(
+    // Driven through a `DirectContext` because that is the only caller able to build a
+    // task-command spec: the shell a provision task names is the one privileged path whose
+    // program is not a fixed `PrivilegedProgram`, and `CommandSpec::for_task_command` is
+    // reachable only with a token `isolation` alone can produce.
+    let rootfs = camino::Utf8Path::from_path(dir.path()).expect("temp dir path should be UTF-8");
+    let context = DirectProvider
+        .setup(
+            rootfs,
+            Arc::new(RealCommandExecutor { dry_run: false }),
+            Arc::new(DryRunRootfsOps::new(rootfs)),
+            false,
+        )
+        .expect("direct setup should succeed");
+    let result = context.execute(
         &["sh".to_string(), "-c".to_string(), "exit 0".to_string()],
         Some(PrivilegeMethod::Sudo),
-    )
-    .unwrap();
-    let result = executor.execute(&spec);
+    );
 
     // Restore PATH immediately, before any assertion can unwind.
     // SAFETY: same as above — single-threaded access within this binary.
