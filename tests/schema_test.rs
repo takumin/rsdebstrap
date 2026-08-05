@@ -16,13 +16,6 @@
 //    expectations in `schema_divergences_are_pinned`. The invariant is one-directional, so a
 //    new false-accept is not a test failure — add a row there when one is discovered.
 
-// The whole crate is compiled out without the default-on `schema` feature: it exercises the
-// generated schema, which does not exist in a schema-less build. Gated in-file rather than
-// via a Cargo `[[test]]` stanza with `required-features` because an explicit test target
-// makes manifest parsing require the file to exist, breaking CI's sparse checkouts (the
-// fetch/build jobs check out the manifest without `tests/`).
-#![cfg(feature = "schema")]
-
 use jsonschema::Validator;
 use rsdebstrap::config::Profile;
 use serde_json::Value;

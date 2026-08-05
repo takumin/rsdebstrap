@@ -16,10 +16,8 @@
 
 use anyhow::Result;
 use camino::Utf8Path;
-#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "schema")]
 use std::borrow::Cow;
 use std::sync::{Arc, LazyLock};
 
@@ -206,8 +204,7 @@ impl TaskIsolation {
 // `deny_unknown_fields` (the `type` tag is consumed before the payload sees the map).
 //
 // Plain `//` (not `///`) so this note does not leak into the schema's `description`.
-#[derive(Debug, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum TaskIsolationWire {
     Toggle(bool),
@@ -236,7 +233,6 @@ impl<'de> Deserialize<'de> for TaskIsolation {
     }
 }
 
-#[cfg(feature = "schema")]
 impl JsonSchema for TaskIsolation {
     fn schema_name() -> Cow<'static, str> {
         "TaskIsolation".into()

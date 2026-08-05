@@ -18,13 +18,6 @@
 // round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
 // through `de::null_to_default`).
 
-// The whole crate is compiled out without the default-on `schema` feature: it exercises the
-// generated schema, which does not exist in a schema-less build. Gated in-file rather than
-// via a Cargo `[[test]]` stanza with `required-features` because an explicit test target
-// makes manifest parsing require the file to exist, breaking CI's sparse checkouts (the
-// fetch/build jobs check out the manifest without `tests/`).
-#![cfg(feature = "schema")]
-
 use std::sync::LazyLock;
 
 use jsonschema::Validator;

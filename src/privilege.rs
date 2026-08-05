@@ -4,18 +4,15 @@
 //! on a per-command basis. Tasks and bootstrap backends can declare their own
 //! privilege settings, inheriting from profile-level defaults when unspecified.
 
-#[cfg(feature = "schema")]
 use std::borrow::Cow;
 
-#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 use crate::error::RsdebstrapError;
 
 /// Privilege escalation method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum PrivilegeMethod {
     /// Use `sudo` for privilege escalation.
@@ -41,8 +38,7 @@ impl std::fmt::Display for PrivilegeMethod {
 }
 
 /// Default privilege settings for the profile.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PrivilegeDefaults {
     /// The default privilege escalation method.
@@ -151,12 +147,8 @@ impl Privilege {
 // The schemars rename keeps this private type's Rust name out of the published schema
 // contract (`$defs/PrivilegeConfig`, symmetric with the isolation branch).
 /// Explicit privilege escalation configuration for a task or bootstrap backend.
-#[derive(Debug, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(JsonSchema),
-    schemars(rename = "PrivilegeConfig")
-)]
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(rename = "PrivilegeConfig")]
 #[serde(deny_unknown_fields)]
 struct PrivilegeMethodMap {
     /// The privilege escalation method to use.
@@ -171,8 +163,7 @@ struct PrivilegeMethodMap {
 // message than untagged's "did not match any variant", but keeping it meant maintaining a
 // second enum for schemars and a parity test to pin them together. `load_profile` wraps
 // deserialization in `serde_path_to_error`, so the field path recovers the lost context.
-#[derive(Debug, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum PrivilegeWire {
     Toggle(bool),
@@ -201,7 +192,6 @@ impl<'de> Deserialize<'de> for Privilege {
     }
 }
 
-#[cfg(feature = "schema")]
 impl JsonSchema for Privilege {
     fn schema_name() -> Cow<'static, str> {
         "Privilege".into()

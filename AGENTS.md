@@ -16,10 +16,6 @@ cargo llvm-cov --workspace
 # Check for errors without building
 cargo check --all-targets --all-features --quiet
 
-# Also check the schema-less build: schema generation lives behind the default-on
-# `schema` cargo feature, and a missed `cfg_attr` gate only surfaces here.
-cargo check --all-targets --no-default-features --quiet
-
 # Generate the profile JSON Schema (derived from the Rust config types).
 # Regenerate the committed copy after any config-type change, or `cargo test` fails.
 # The autofix.ci workflow also runs this on PRs and auto-commits any drift.

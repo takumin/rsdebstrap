@@ -4,7 +4,6 @@ use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle, RootfsOutput};
 use crate::privilege::Privilege;
 use anyhow::Result;
 use camino::Utf8Path;
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::Display;
@@ -15,13 +14,12 @@ const KNOWN_ARCHIVE_EXTENSIONS: &[&str] =
     &["tar", "gz", "bz2", "xz", "zst", "squashfs", "ext2", "img"];
 
 /// Variant defines the package selection strategy for mmdebstrap
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 // Distinct schema name so it does not collide with debootstrap's `Variant` (which would make
 // schemars auto-suffix one to the non-descriptive `Variant2`).
-#[cfg_attr(feature = "schema", schemars(rename = "MmdebstrapVariant"))]
+#[schemars(rename = "MmdebstrapVariant")]
 pub enum Variant {
     /// The `required` set plus all packages with `Priority:important` (default)
     #[default]
@@ -49,8 +47,7 @@ pub enum Variant {
 }
 
 /// Mode for mmdebstrap operation
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum Mode {
@@ -72,8 +69,7 @@ pub enum Mode {
 }
 
 /// Format for the target output
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum Format {
@@ -118,8 +114,7 @@ pub enum Format {
 // relies on) and `yaml_serde`. (The well-known serde limitation is that `deny_unknown_fields`
 // is a no-op when placed on the internally-tagged *enum* itself, not — as here — on a
 // variant's struct.)
-#[derive(Debug, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MmdebstrapConfig {
     /// Debian suite name (e.g., "bookworm", "sid")

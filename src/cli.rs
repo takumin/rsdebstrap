@@ -80,7 +80,6 @@ pub enum Commands {
     /// ```sh
     /// rsdebstrap schema > schema/rsdebstrap.schema.json
     /// ```
-    #[cfg(feature = "schema")]
     Schema,
 }
 

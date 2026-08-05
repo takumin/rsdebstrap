@@ -9,7 +9,6 @@
 
 pub mod resolv_conf;
 
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -21,8 +20,7 @@ use crate::phase::PhaseItem;
 ///
 /// The single field is an optional singleton; a duplicate YAML key is rejected
 /// by `yaml_serde` at parse time and an unknown key by `deny_unknown_fields`.
-#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssembleConfig {
     /// resolv_conf task writing a permanent `/etc/resolv.conf` into the final rootfs.
