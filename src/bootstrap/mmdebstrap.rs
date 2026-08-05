@@ -105,8 +105,6 @@ pub enum Format {
 /// This structure contains all settings needed to customize the Debian
 /// bootstrapping process using mmdebstrap, including package selection,
 /// format, mode, and hook scripts.
-// `deny_unknown_fields` on the variant payload, not the enum: see the
-// `deny_unknown_fields` note in docs/ARCHITECTURE.md for why serde honors it here.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MmdebstrapConfig {

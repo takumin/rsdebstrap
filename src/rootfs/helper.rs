@@ -1,16 +1,10 @@
 //! Privileged execution of [`RootfsOps`] in a single helper process.
 //!
-//! Modifying a rootfs built by `mmdebstrap` needs root. The previous design
-//! escalated per operation — `sudo mv`, `sudo cp`, `sudo chmod` — which put one
-//! trust boundary at every filesystem call and made each of them a path-string
-//! operation with no way to anchor to a descriptor.
-//!
-//! Here the boundary is crossed once. The parent spawns one helper under
-//! `sudo`/`doas`, the helper opens the rootfs descriptor and serves typed
-//! requests over a pipe, and the parent never names a rootfs path to a shell
-//! command again. What root will do is bounded by [`Request`]: there is no
-//! request that names a path outside the rootfs, because [`RelPath`] cannot
-//! express one.
+//! Modifying a rootfs built by `mmdebstrap` needs root, and the boundary is crossed
+//! exactly once: the parent spawns one helper under `sudo`/`doas`, the helper opens the
+//! rootfs descriptor and serves typed requests over a pipe, and the parent never names a
+//! rootfs path to a shell command. What root will do is bounded by [`Request`] — no
+//! request can name a path outside the rootfs, because [`RelPath`] cannot express one.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};

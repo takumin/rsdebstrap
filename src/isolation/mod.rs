@@ -98,10 +98,8 @@ pub trait RootfsContext {
 
     /// Returns the descriptor-anchored filesystem operations for this rootfs.
     ///
-    /// Tasks that modify the rootfs use these rather than running `cp`/`mv`/`ln`
-    /// through the executor: the operations here cannot be redirected by a
-    /// symlink, and they escalate through one helper rather than once per
-    /// command.
+    /// Every rootfs mutation goes through these rather than through the executor; see
+    /// [`RootfsOps`] for why.
     fn rootfs_ops(&self) -> &dyn RootfsOps;
 }
 
@@ -143,11 +141,9 @@ pub trait IsolationContext: RootfsContext + Send {
     fn teardown(&mut self) -> Result<()>;
 }
 
-/// A [`RootfsContext`] built from the values the pipeline already holds.
-///
-/// The assemble phase used to go through an [`IsolationProvider`], which always
-/// resolved to [`DirectProvider`] and whose only used capability was
-/// `rootfs_ops`. This replaces that setup/teardown round trip.
+/// A [`RootfsContext`] built from the values the pipeline already holds, with no
+/// [`IsolationProvider`] setup/teardown round trip: the assemble phase needs `rootfs_ops`
+/// and nothing else.
 pub struct PlainRootfsContext {
     rootfs: camino::Utf8PathBuf,
     ops: Arc<dyn RootfsOps>,
