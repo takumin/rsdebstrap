@@ -88,13 +88,6 @@ impl RelPath {
         &self.components[..self.components.len() - 1]
     }
 
-    /// Returns this path with `suffix` appended to its final component.
-    pub fn with_suffix(&self, suffix: &str) -> Self {
-        let mut components = self.components.clone();
-        let last = components.last_mut().expect("RelPath is never empty");
-        last.push_str(suffix);
-        Self { components }
-    }
 }
 
 impl std::fmt::Display for RelPath {
@@ -485,6 +478,23 @@ mod tests {
     fn rel_path_rejects_escapes() {
         for bad in ["..", "../etc", "etc/../../x", "/etc/..", "", "/", "."] {
             assert!(RelPath::parse(bad).is_err(), "{bad:?} should be rejected");
+        }
+    }
+
+    // The resolution walk hands each component straight to `openat`/`unlinkat`, which
+    // interpret a separator as another level of path. A component carrying one would be
+    // resolved without the per-component `O_NOFOLLOW` the walk relies on, so a `..` inside a
+    // component escapes the rootfs. `parse` splitting on '/' is what makes that impossible,
+    // and it is the only constructor.
+    #[test]
+    fn rel_path_components_never_carry_a_separator() {
+        for form in ["/etc/resolv.conf", "a/b/c/d", "etc//x", "//a//b//"] {
+            let path = RelPath::parse(form).unwrap();
+            assert!(
+                path.components.iter().all(|c| !c.contains('/')),
+                "{form:?} produced a component containing a separator: {:?}",
+                path.components
+            );
         }
     }
 
