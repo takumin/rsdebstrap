@@ -35,12 +35,19 @@ filesystem-safety code — it captures decisions that are not obvious from the s
 
 ## Privilege boundary
 
-**Never mutate the rootfs by running a command.** `cp`/`mv`/`rm`/`ln`/`chmod` under
-`sudo` take path *strings*, so a name checked once and resolved again can name two
-different inodes — a symlink planted in between redirects a privileged write. Use
-[`RootfsOps`](src/rootfs/) instead: it resolves each path component with `O_NOFOLLOW`
-against a directory descriptor, and its `RelPath` cannot express a path outside the
-rootfs. Escalation happens once per run, in the helper process `rootfs::open()` spawns.
+**Never mutate the rootfs by running a command, and never by a host path string.**
+`cp`/`mv`/`rm`/`ln`/`chmod` under `sudo` take path *strings*, and so does `std::fs`: a name
+checked once and resolved again can name two different inodes, and a symlink planted in
+between redirects the write. Use [`RootfsOps`](src/rootfs/) instead — it resolves each path
+component with `O_NOFOLLOW` against a directory descriptor, and its `RelPath` cannot express
+a path outside the rootfs. That includes staging a provision task's script or the mitamae
+binary: `write_file` carries the mode from creation and `StagedFileGuard` removes through the
+same descriptor. Escalation happens once per run, in the helper process `rootfs::open()`
+spawns.
+
+Reading a *host* file has the same shape from the other side. `read_host_file` opens with
+`O_NOFOLLOW` and checks the opened descriptor, so validation and use land on one inode;
+`validate_host_file_exists` is a pre-flight check for a readable error, not the control.
 
 This is mostly enforced by types rather than by review. `CommandSpec`'s fields are
 private and privilege is only reachable through `CommandSpec::privileged`, which takes
@@ -69,6 +76,26 @@ Corollary: privilege for rootfs mutation is a property of the *run*, not of a ta
 resist adding a per-task `privilege` key to anything that only writes files — it cannot
 be honored. See the Privilege boundary section of
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+Two settings that are individually fine are refused in combination: `isolation: false` with
+any resolved privilege. Direct execution runs a program from *inside* the rootfs on the host,
+so escalating it hands root to whatever the half-built rootfs contains. `ProvisionTask::resolve`
+rejects it at load time.
+
+## Evidence types
+
+Several invariants are carried as values rather than as an order to remember. `Validated`
+(from `Profile::validate`, required by `Profile::pipeline`); `Provisioned` → `Restored` →
+`Unmounted` (the phase-ordering chain); `TaskCommandToken` (only `isolation` can build one).
+When you find yourself writing "callers must call X first", check whether X can return
+something instead.
+
+Settings follow the same rule from the other direction: `Privilege` and `TaskIsolation`
+describe only what the profile declared, and resolution produces a separate value
+(`ResolvedProvisionTask`). Do not reintroduce a "resolved" variant on a wire enum — the
+readers then have to defend against the unresolved ones, and the safe fallback differs per
+setting. `CommandExecutor::dry_run()` is likewise the single answer for a run; derive from it
+rather than threading another `bool`.
 
 ## Code Comments
 

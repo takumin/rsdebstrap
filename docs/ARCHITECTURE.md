@@ -33,11 +33,34 @@ one deliberate 4-state pattern, resolved against profile `defaults`:
 - The custom `Serialize`/`Deserialize` impls encode this mapping (`true` → `UseDefault`,
   `false` → `Disabled`, mapping → explicit, absent → `Inherit`). Keeping the scalar
   `true`/`false` shorthand in YAML is the reason these are hand-written rather than derived.
-- `resolve()` collapses a state against the profile default into a concrete
-  `Option<...>` (`None` == disabled/no-op). `resolve_in_place()` mutates ahead of execution.
+- **Both types describe only what the profile *declared*.** `resolve()` collapses a state
+  against the profile default into a concrete `Option<...>` (`None` == disabled/no-op) and
+  returns it; neither type has a resolved variant to be in, and neither is mutated in place.
 - **Non-obvious:** for `TaskIsolation`, `UseDefault` and `Inherit` behave identically
   because `IsolationConfig` always has a default (chroot). Both variants exist only for
   API symmetry with `Privilege`, where the distinction is real.
+
+The declared/resolved split is the point. These enums used to span both: `resolve_in_place()`
+rewrote `Inherit`/`UseDefault` into `Method`/`Config`, and the readers took the unresolved
+states as a case to defend against — a `debug_assert!`, a `tracing::warn!`, and a fallback
+each. The two fallbacks pointed opposite ways (privilege fell back to *no* escalation,
+isolation to chroot), so which direction counted as safe lived only in a comment. Resolution
+now produces a separate value, `ResolvedProvisionTask` (`src/phase/provision/mod.rs`), which
+pairs a task with the settings it resolves to and is what implements `ProvisionItem`. An
+unresolved setting has no path to a reader at all, and all of that runtime defence is gone.
+
+`ProvisionTask::resolve` also rejects one combination outright: a task that resolves to *no
+isolation* and *some privilege method*. `isolation: false` runs the program the task names —
+a path inside the rootfs — directly on the host, so escalating it hands root to whatever the
+half-built rootfs contains. Each setting is reasonable alone, so neither one can reject it;
+the check belongs where both are known. It fires during `load_profile`, not mid-run.
+
+`Profile::validate` returns a `Validated` token and `Profile::pipeline` requires one. The
+semantic checks — a mount target that must be a reachable directory, a declared script that
+must be a regular file, a backend output that must be a directory when there are pipeline
+tasks — cannot be stated in the config types, so "this profile was validated" is carried as a
+value rather than as a convention `run_apply` happens to follow. (`Pipeline::new` remains
+public as the unvalidated low-level constructor, and says so.)
 
 `mount` and `resolv_conf` used to live under `IsolationConfig`; they were moved out to
 the `prepare` phase. `IsolationConfig` is now just the backend selector: an internally
@@ -61,6 +84,10 @@ three sub-traits say so:
 | `PrepareItem`   | nothing                                         |
 | `ProvisionItem` | `resolved_isolation_config`, `execute(&dyn IsolationContext)` |
 | `AssembleItem`  | `execute(&dyn RootfsContext)`                   |
+
+`ProvisionItem` is implemented by `ResolvedProvisionTask`, not by `ProvisionTask`: a task
+cannot be run until its settings have been resolved, because the type the pipeline runs is
+the one resolution produces.
 
 Each phase is flattened to a `&[&dyn <phase>Item]` before running: `PrepareConfig::items()` and
 `AssembleConfig::items()` emit their present `Option` fields in a **fixed execution order**
@@ -132,6 +159,14 @@ patterns run throughout `src/isolation/`:
   (`RsdebstrapError::Isolation`). Verified absolute paths are cached and reused for the
   matching `umount` to avoid re-traversal. Implemented with the `rustix` crate for
   memory-safe syscall wrappers.
+
+  The target it walks is a `RelPath`, not a `Utf8PathBuf`. That matters: camino yields `..`
+  as a component, so a target of `/sub/../../x` used to walk *out* of the rootfs, create the
+  directory there, and return that path to a privileged `mount` as "verified". Only
+  `MountEntry::validate` stood in the way, and nothing in the types required it to have run.
+  `RelPath` cannot express `..`, `.`, or an empty path, so the walk is now safe by
+  construction; deserialization additionally requires the leading `/`, keeping the profile
+  contract that a target is spelled absolutely.
 - **All rootfs mutation goes through `RootfsOps`** (`src/rootfs/`), which applies the same
   traversal to every write. Paths are `RelPath` values — absolute forms are accepted and
   normalized, `..` is rejected at construction — so no combination of them names anything
@@ -142,8 +177,27 @@ patterns run throughout `src/isolation/`:
   so an `openat(O_NOFOLLOW)` check could only prove a path was safe at one instant and the
   command then resolved the name again — the window was real and previously documented here as
   unavoidable. It is not: see *Privilege boundary* below.
+  `RelPath` has exactly one constructor, `parse`, which splits on `/`. That is what keeps
+  every component separator-free, which the walk depends on: `openat`/`unlinkat` read a
+  separator as another level of path and apply `O_NOFOLLOW` only to the last one. A
+  `with_suffix` helper that appended to the final component could put `/..` inside a single
+  component and so escape; it was unused and has been removed.
+- **Provision staging is inside the boundary too.** A task's script, and the mitamae binary
+  and recipe, are written with `RootfsOps::write_file` and removed with `RootfsOps::remove`.
+  They used to be host-path `fs::write`/`fs::copy`/`chmod`/`remove_file` guarded by a
+  `symlink_metadata` on `<rootfs>/tmp` that ran once at validation and once more just before
+  the write — check-then-use, twice over, in the one place the rest of the crate had stopped
+  doing it. The anchored write also carries its mode from creation, so a staged binary never
+  exists in the rootfs with permissions other than the ones asked for.
+
+  The host side of that copy stays in the parent and goes through `read_host_file`, which
+  opens with `O_NOFOLLOW`, `fstat`s the *opened* descriptor, and reads from it. The earlier
+  `validate_host_file_exists` resolves a path string, so it can only report what was true
+  then; repointing the name in between used to make execution stage whatever it pointed at
+  under a path validation had approved. It remains as the pre-flight check that gives a
+  readable error, and its doc says it is not the control.
 - **RAII lifecycle managers.** `RootfsMounts` and `RootfsResolvConf` (plus
-  `TempFileGuard` in `src/phase/mod.rs`, which cleans up scripts and binaries staged
+  `StagedFileGuard` in `src/phase/mod.rs`, which removes scripts and binaries staged
   into the rootfs) all guarantee cleanup via `Drop`, including on error paths. Mounts
   unmount in reverse order and `unmount()` is idempotent, collecting errors across entries.
   `RootfsResolvConf` detaches the rootfs's own resolv.conf with `RootfsOps::take`, which
@@ -163,10 +217,23 @@ patterns run throughout `src/isolation/`:
   `ChrootProvider` runs inside a chroot; `DirectProvider` (`src/isolation/direct.rs`)
   executes on the host, translating absolute paths to rootfs-prefixed paths
   (`/bin/sh` → `<rootfs>/bin/sh`) and guarding against empty or post-teardown commands.
+
+  That translation is a string join, and the kernel resolves the result when it execs — so a
+  rootfs whose `/bin/sh` is a symlink pointing outward used to run a host binary. The program
+  (only the program: it is the one argument the kernel resolves on our behalf) is now walked
+  component by component with `O_NOFOLLOW` first, with the final component checked by
+  `statat` rather than an open, because `O_NOFOLLOW | O_PATH` opens the *link itself* and
+  succeeds. See also the escalation ban in
+  [Configuration & resolution model](#configuration--resolution-model).
 - `IsolationContext` is split so that the two capabilities can be handed out separately.
   `RootfsContext` is the rootfs view — `rootfs()`, `dry_run()`, `rootfs_ops()` — and
   `IsolationContext: RootfsContext` adds `name()`, `execute()` and `teardown()`. Only
   provision tasks are given the latter.
+- **One answer to "is this a dry run".** `CommandExecutor::dry_run()` is it; contexts,
+  `RootfsMounts` and `rootfs::open` all derive from there, and `IsolationProvider::setup`
+  takes no such flag. The value existed four times over before, passed independently, so a
+  dry-run executor paired with a live context was constructible and wrote for real. `main`
+  builds the executor from `--dry-run` and nothing downstream re-reads the CLI flag.
 - Privilege is threaded through *command* execution as `Option<PrivilegeMethod>`, so
   escalation is uniform across the commands that genuinely are external programs
   (`mount`, `umount`, `chroot`, the bootstrap backend, provision scripts).
@@ -227,8 +294,9 @@ including that the helper exits when its parent drops the channel — otherwise 
 would outlive the build holding a descriptor into the rootfs. It is `#[ignore]`d and skips
 itself when passwordless sudo is unavailable.
 - `CommandSpec` (`src/executor/mod.rs`) is the command value object (command/args/cwd/
-  env/privilege) with a builder API. `RealCommandExecutor` supports dry-run; tests use
-  mock executors to assert on constructed commands without running anything.
+  env/privilege) with a builder API. `RealCommandExecutor` implements dry-run and is what
+  `dry_run()` answers for; tests use mock executors to assert on constructed commands without
+  running anything.
 
 ## Bootstrap backends
 
@@ -336,13 +404,17 @@ Drift guards (all in `cargo test`, so CI fails on drift):
   property test asserts this twice per generated document — once on the `serde_json::Value` and
   once through a YAML text round-trip, because production parses YAML and `yaml_serde`'s
   acceptance surface is not identical to the JSON value model. The known divergences in the
-  other direction (annotational `ipv4`/`ipv6` formats; duplicate mapping keys, which serde
-  rejects but the YAML→JSON conversion resolves last-wins before the schema can see them; and
+  other direction (annotational `ipv4`/`ipv6` formats; mount targets, whose `RelPath` shape
+  JSON Schema can only approximate with a regex; duplicate mapping keys, which serde rejects
+  but the YAML→JSON conversion resolves last-wins before the schema can see them; and
   non-finite floats like `.nan`, which that conversion collapses to `null`, so nullable fields
   schema-accept them) are pinned with per-side expectations in `schema_divergences_are_pinned`.
-  The pinning documents each known divergence exactly, but constrains only the enumerated rows:
-  the invariant is deliberately one-directional, so a newly discovered false-accept fails no
-  test and should be added to that table. Semantic checks that JSON Schema cannot express (mount
+
+  That direction is checked, not merely documented: the property test asserts the converse too,
+  allowing only those classes. A schema that accepts what the parser rejects is not a safety
+  violation, but an unlisted one means the schema drifted looser than the parser with nothing
+  saying so. Typing `mount.target` as a `RelPath` produced exactly such a divergence, and this
+  assertion is what surfaced it. Semantic checks that JSON Schema cannot express (mount
   `name_servers` exclusivity, mitamae binary resolution) stay in `Profile::validate_*` and are out
   of scope here.
 
@@ -370,7 +442,7 @@ Mock-executor pattern (`tests/helpers/mod.rs`):
 
 ### Known test gaps
 
-- **`run_task_item()` teardown failure paths** (execute `Ok`/teardown `Err`, and
+- **`run_provision_item()` teardown failure paths** (execute `Ok`/teardown `Err`, and
   `Err`/`Err`) are untestable today: the pipeline builds providers from
   `task.resolved_isolation_config()`, so failure injection is impractical, and both
   `ChrootProvider` and `DirectProvider` have infallible teardown — these paths are

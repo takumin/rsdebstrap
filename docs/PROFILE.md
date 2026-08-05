@@ -88,6 +88,9 @@ be honored. Setting it is a parse error rather than a silent no-op.
 - `privilege: false` → `Disabled`: no privilege escalation
 - `privilege: { method: sudo }` → `Method`: use the specified method explicitly
 
+A task that resolves to some method *and* `isolation: false` is rejected when the profile is
+loaded — see the note under [Isolation field values](#isolation-field-values).
+
 ## Isolation field values
 
 - Absent (field not specified) → `Inherit`: use `defaults.isolation` (defaults to chroot)
@@ -122,7 +125,9 @@ on the host. Two consequences follow, and both are enforced rather than document
   at most one mount task is structural — a duplicate `mount` key is a parse error)
 - When mounts are specified, `defaults.privilege` must be configured (`mount`/`umount` require
   privilege escalation), and both commands must be on `PATH`
-- Mount targets must be absolute paths without `..` components
+- Mount targets must be absolute paths without `.` or `..` components, and may not be `/`.
+  These are rejected while the profile is read, not by a later validation pass: the field is a
+  `RelPath`, which cannot express any of them
 - Bind mount sources must exist on the host
 - Mount order must satisfy parent-before-child ordering
 - Custom mounts override preset entries with the same target at their original position (preserving mount order)
