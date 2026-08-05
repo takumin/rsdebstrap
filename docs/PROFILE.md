@@ -42,6 +42,7 @@ provision:                  # Optional main provisioning steps (ordered list)
     content: "..."          # Inline script
     # OR
     script: ./script.sh     # External script path
+    shell: /bin/sh           # Optional: interpreter (default /bin/sh)
     privilege: false         # Disable privilege escalation for this task
     isolation: false         # Disable isolation (direct execution on host)
   - type: mitamae
@@ -96,6 +97,9 @@ assemble:                   # Optional finalization steps (named-field struct)
 - `name_servers: [...]` → generate `resolv.conf` with specified nameservers
 - `name_servers: [...], search: [...]` → generate with nameservers + search domains
 - `copy` and `name_servers`/`search` are mutually exclusive
+- resolv.conf specification limits apply to both the prepare and assemble tasks: at most 3
+  `name_servers`, at most 6 `search` domains totalling 256 characters, and no empty or
+  whitespace-containing search domain
 
 ## Mount configuration rules
 
@@ -107,6 +111,7 @@ assemble:                   # Optional finalization steps (named-field struct)
 - Bind mount sources must exist on the host
 - Mount order must satisfy parent-before-child ordering
 - Custom mounts override preset entries with the same target at their original position (preserving mount order)
+- Two custom `mounts` entries may not share a target (duplicates are a validation error)
 
 ## resolv.conf task rules
 
@@ -115,7 +120,8 @@ assemble:                   # Optional finalization steps (named-field struct)
 - The pipeline always applies `mount` before `resolv_conf`; key order in the YAML is irrelevant
 - Assemble `resolv_conf` writes a permanent `/etc/resolv.conf` (file or symlink) to the final
   rootfs under the `assemble.resolv_conf` key (also a singleton `Option`)
-- `link` and `name_servers`/`search` are mutually exclusive in assemble `resolv_conf`
+- `link` and `name_servers`/`search` are mutually exclusive in assemble `resolv_conf`, and
+  exactly one of the two forms must be given (a task with neither is a validation error)
 - Prepare and assemble can both have `resolv_conf` tasks — different roles: temporary DNS vs permanent config
 - The temporary prepare `resolv_conf` is removed (and the original restored) after `provision`
   and before `assemble`, so assemble `resolv_conf` output persists in the final rootfs; the
