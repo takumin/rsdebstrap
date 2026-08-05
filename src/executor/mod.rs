@@ -241,6 +241,17 @@ pub trait CommandExecutor: Send + Sync {
     /// Executes a command with the given specification.
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult>;
 
+    /// Whether this executor only reports what it would do.
+    ///
+    /// The single source of that answer for a run. Isolation contexts, the mount guard and
+    /// the rootfs operations all derive their behaviour from it rather than carrying their
+    /// own copy, so no two layers can disagree about whether the run is a dry run.
+    ///
+    /// Defaults to `false` for the mock executors in tests, which are not dry runs.
+    fn dry_run(&self) -> bool {
+        false
+    }
+
     /// Executes a command and returns an error for non-zero exit status.
     ///
     /// This is the preferred API for ordinary command execution paths where

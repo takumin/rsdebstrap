@@ -85,13 +85,11 @@ impl IsolationProvider for DirectProvider {
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
         ops: Arc<dyn RootfsOps>,
-        dry_run: bool,
     ) -> Result<Box<dyn IsolationContext>> {
         Ok(Box::new(DirectContext {
             rootfs: rootfs.to_owned(),
             executor,
             ops,
-            dry_run,
             torn_down: false,
         }))
     }
@@ -105,7 +103,6 @@ pub struct DirectContext {
     rootfs: Utf8PathBuf,
     executor: Arc<dyn CommandExecutor>,
     ops: Arc<dyn RootfsOps>,
-    dry_run: bool,
     torn_down: bool,
 }
 
@@ -115,7 +112,7 @@ impl RootfsContext for DirectContext {
     }
 
     fn dry_run(&self) -> bool {
-        self.dry_run
+        self.executor.dry_run()
     }
 
     fn rootfs_ops(&self) -> &dyn RootfsOps {
@@ -174,7 +171,7 @@ impl IsolationContext for DirectContext {
         // therefore run a host binary. Verify the program — and only the program, since it
         // is the one argument the kernel resolves on our behalf — component by component
         // with `O_NOFOLLOW`.
-        if !self.dry_run && Utf8Path::new(&command[0]).is_absolute() {
+        if !self.executor.dry_run() && Utf8Path::new(&command[0]).is_absolute() {
             verify_program_stays_in_rootfs(&self.rootfs, &command[0])?;
         }
 

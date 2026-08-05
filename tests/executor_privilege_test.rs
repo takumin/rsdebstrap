@@ -54,7 +54,6 @@ fn privilege_wrapping_prepends_escalation_command() {
             rootfs,
             Arc::new(RealCommandExecutor { dry_run: false }),
             Arc::new(DryRunRootfsOps::new(rootfs)),
-            false,
         )
         .expect("direct setup should succeed");
     let result = context.execute(

@@ -74,9 +74,8 @@ fn run_pipeline_phase(
     profile: &config::Profile,
     validated: &config::Validated,
     executor: Arc<dyn CommandExecutor>,
-    dry_run: bool,
 ) -> Result<()> {
-    run_pipeline_phase_with(profile, validated, executor, None, dry_run)
+    run_pipeline_phase_with(profile, validated, executor, None)
 }
 
 /// [`run_pipeline_phase`] with the rootfs operations supplied rather than opened.
@@ -89,8 +88,9 @@ fn run_pipeline_phase_with(
     validated: &config::Validated,
     executor: Arc<dyn CommandExecutor>,
     ops: Option<Arc<dyn rootfs::RootfsOps>>,
-    dry_run: bool,
 ) -> Result<()> {
+    // The executor owns whether this is a dry run; every other layer derives it from there.
+    let dry_run = executor.dry_run();
     let pipeline = profile.pipeline(validated)?;
 
     if pipeline.is_empty() {
@@ -150,7 +150,7 @@ fn run_pipeline_phase_with(
     // permanent entry and a restore afterwards would overwrite it; the unmount
     // has to land before assembly because assemble writes the rootfs's final
     // state, which is the state without `/proc`, `/sys` and `/dev` bound over it.
-    let restored = match pipeline.run_prepare_and_provision(&rootfs, &executor, &ops, dry_run) {
+    let restored = match pipeline.run_prepare_and_provision(&rootfs, &executor, &ops) {
         Ok(provisioned) => resolv_conf.restore(provisioned).context(
             "failed to restore resolv.conf after provisioning; any assemble tasks were skipped",
         ),
@@ -188,7 +188,11 @@ fn run_pipeline_phase_with(
 }
 
 pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
-    if opts.dry_run {
+    // `opts.dry_run` is what `main` builds the executor from; from here on the executor is
+    // the single answer to whether this is a dry run, so no layer can disagree with the one
+    // that would actually run the commands.
+    let dry_run = executor.dry_run();
+    if dry_run {
         warn!("DRY-RUN MODE: No changes will be made");
     }
 
@@ -196,13 +200,13 @@ pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> R
         .with_context(|| format!("failed to load profile from {}", opts.common.file))?;
     let validated = profile.validate().context("profile validation failed")?;
 
-    if !opts.dry_run && !profile.dir.exists() {
+    if !dry_run && !profile.dir.exists() {
         fs::create_dir_all(&profile.dir)
             .with_context(|| format!("failed to create directory: {}", profile.dir))?;
     }
 
     run_bootstrap_phase(&profile, &executor)?;
-    run_pipeline_phase(&profile, &validated, executor, opts.dry_run)?;
+    run_pipeline_phase(&profile, &validated, executor)?;
 
     Ok(())
 }
@@ -557,7 +561,7 @@ mod tests {
             timeline: timeline.clone(),
         });
 
-        run_pipeline_phase_with(&profile, &profile.validate().unwrap(), executor, Some(ops), false)
+        run_pipeline_phase_with(&profile, &profile.validate().unwrap(), executor, Some(ops))
             .unwrap();
 
         assert_eq!(
@@ -575,8 +579,7 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-            .unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(
@@ -596,8 +599,7 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, None, false));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-            .unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
@@ -612,8 +614,7 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, false, None, true));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-            .unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(
@@ -633,8 +634,7 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, false, None, false));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-            .unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         assert!(executor.command_names().is_empty());
         let resolv = rootfs.join("etc/resolv.conf");
@@ -655,7 +655,6 @@ mod tests {
             &profile.validate().unwrap(),
             executor.clone(),
             Some(ops),
-            false,
         )
         .unwrap_err();
 
@@ -688,7 +687,6 @@ mod tests {
             &profile.validate().unwrap(),
             executor.clone(),
             Some(ops),
-            false,
         )
         .unwrap_err();
 
@@ -711,8 +709,7 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, Some("true"), true));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-            .unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         // The provision task is the only command; the resolv.conf lifecycle
         // around it is syscalls now. What the sequencing has to produce is the
@@ -737,9 +734,8 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, Some("exit 1"), true));
         let executor = RecordingExecutor::new();
 
-        let err =
-            run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-                .unwrap_err();
+        let err = run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone())
+            .unwrap_err();
 
         assert!(
             format!("{:#}", err).contains("failed to run provision"),
@@ -770,7 +766,6 @@ mod tests {
             &profile.validate().unwrap(),
             executor.clone(),
             Some(ops),
-            false,
         )
         .unwrap_err();
 
@@ -804,7 +799,6 @@ mod tests {
             &profile.validate().unwrap(),
             executor.clone(),
             Some(ops),
-            false,
         )
         .unwrap_err();
 
@@ -833,8 +827,7 @@ mod tests {
         ));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-            .unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         // The generated file replaces the just-restored original.
         assert!(executor.command_names().is_empty(), "no command should have run");
@@ -860,8 +853,7 @@ mod tests {
         ));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-            .unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         assert!(executor.command_names().is_empty(), "no command should have run");
         let resolv = rootfs.join("etc/resolv.conf");
@@ -889,8 +881,7 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, None, false));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-            .unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         // Same shape as prepare_only_restores_original, but the detached and restored
         // entry is a symlink.
@@ -920,8 +911,7 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone(), false)
-            .unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         assert!(
             fs::symlink_metadata(&resolv)

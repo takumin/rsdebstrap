@@ -92,6 +92,10 @@ pub struct RealCommandExecutor {
 }
 
 impl CommandExecutor for RealCommandExecutor {
+    fn dry_run(&self) -> bool {
+        self.dry_run
+    }
+
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
         if self.dry_run {
             let privilege_prefix = spec

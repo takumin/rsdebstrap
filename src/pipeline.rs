@@ -106,9 +106,9 @@ impl<'a> Pipeline<'a> {
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
         ops: Arc<dyn RootfsOps>,
-        dry_run: bool,
     ) -> Result<()> {
-        let provisioned = self.run_prepare_and_provision(rootfs, &executor, &ops, dry_run)?;
+        let dry_run = executor.dry_run();
+        let provisioned = self.run_prepare_and_provision(rootfs, &executor, &ops)?;
         // No prepare guard runs here, so nothing detached the rootfs's own
         // resolv.conf and nothing was mounted over it.
         let restored = Restored::nothing_was_detached(provisioned);
@@ -128,7 +128,6 @@ impl<'a> Pipeline<'a> {
         rootfs: &Utf8Path,
         executor: &Arc<dyn CommandExecutor>,
         ops: &Arc<dyn RootfsOps>,
-        dry_run: bool,
     ) -> Result<Provisioned> {
         if self.is_empty() {
             return Ok(Provisioned::new());
@@ -140,7 +139,7 @@ impl<'a> Pipeline<'a> {
         // still what reports them as the tasks they are.
         run_phase_items(PHASE_PREPARE, &self.prepare.items(), |_| Ok(()))?;
         run_phase_items(PHASE_PROVISION, &provision_items(&self.provision), |task| {
-            run_provision_item(task, rootfs, executor, ops, dry_run)
+            run_provision_item(task, rootfs, executor, ops)
         })?;
         Ok(Provisioned::new())
     }
@@ -220,7 +219,6 @@ fn run_provision_item(
     rootfs: &Utf8Path,
     executor: &Arc<dyn CommandExecutor>,
     ops: &Arc<dyn RootfsOps>,
-    dry_run: bool,
 ) -> Result<()> {
     let provider: Box<dyn IsolationProvider> = match task.resolved_isolation_config() {
         Some(config) => config.as_provider(),
@@ -228,7 +226,7 @@ fn run_provision_item(
     };
 
     let mut ctx = provider
-        .setup(rootfs, executor.clone(), ops.clone(), dry_run)
+        .setup(rootfs, executor.clone(), ops.clone())
         .context("failed to setup isolation context")?;
 
     let run_result = task.execute(ctx.as_ref());

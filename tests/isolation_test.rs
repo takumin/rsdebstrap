@@ -35,7 +35,7 @@ fn test_chroot_provider_setup_creates_context() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let context = provider.setup(rootfs, executor, mock_ops(rootfs), false);
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs));
     assert!(context.is_ok());
 
     let context = context.unwrap();
@@ -53,9 +53,7 @@ fn test_chroot_context_execute_builds_correct_args() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
-    let context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let result = context.execute(&command, None);
     assert!(result.is_ok());
 
@@ -80,9 +78,7 @@ fn test_chroot_context_execute_empty_command() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec![];
 
-    let context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let result = context.execute(&command, None);
     assert!(result.is_ok());
 
@@ -100,9 +96,7 @@ fn test_chroot_context_teardown_is_idempotent() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let mut context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let mut context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
 
     assert!(context.teardown().is_ok());
     assert!(context.teardown().is_ok());
@@ -117,9 +111,7 @@ fn test_chroot_context_multiple_executions() {
     });
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
 
     let cmd1: Vec<String> = vec!["/bin/echo".to_string(), "hello".to_string()];
     let cmd2: Vec<String> = vec!["/bin/ls".to_string(), "-la".to_string()];
@@ -145,9 +137,7 @@ fn test_chroot_context_execute_after_teardown_returns_isolation_error() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let mut context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let mut context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     context.teardown().unwrap();
 
     let command: Vec<String> = vec!["/bin/sh".to_string()];
@@ -171,9 +161,7 @@ fn test_chroot_context_propagates_sudo_privilege() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
-    let context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let result = context.execute(&command, Some(PrivilegeMethod::Sudo));
     assert!(result.is_ok());
 
@@ -198,7 +186,7 @@ fn test_direct_provider_setup_creates_context() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let context = provider.setup(rootfs, executor, mock_ops(rootfs), false);
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs));
     assert!(context.is_ok());
 
     let context = context.unwrap();
@@ -230,7 +218,7 @@ fn test_direct_context_execute_translates_absolute_paths() {
     let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
     let context = provider
-        .setup(&rootfs, executor, mock_ops(&rootfs), false)
+        .setup(&rootfs, executor, mock_ops(&rootfs))
         .unwrap();
     let result = context.execute(&command, None);
     assert!(result.is_ok());
@@ -254,9 +242,7 @@ fn test_direct_context_execute_preserves_relative_paths() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec!["relative/bin".to_string(), "relative/arg".to_string()];
 
-    let context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let result = context.execute(&command, None);
     assert!(result.is_ok());
 
@@ -274,9 +260,7 @@ fn test_direct_context_execute_empty_command_returns_error() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec![];
 
-    let context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let err = context.execute(&command, None).unwrap_err();
     let downcast = err.downcast_ref::<RsdebstrapError>();
     assert!(downcast.is_some(), "Expected RsdebstrapError, got: {:#}", err);
@@ -296,9 +280,7 @@ fn test_direct_context_teardown_is_idempotent() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let mut context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let mut context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
 
     assert!(context.teardown().is_ok());
     assert!(context.teardown().is_ok());
@@ -314,7 +296,7 @@ fn test_direct_context_multiple_executions() {
     let (_tmp, rootfs) = seeded_direct_rootfs(&["/bin/echo", "/bin/ls"]);
 
     let context = provider
-        .setup(&rootfs, executor, mock_ops(&rootfs), false)
+        .setup(&rootfs, executor, mock_ops(&rootfs))
         .unwrap();
 
     let cmd1: Vec<String> = vec!["/bin/echo".to_string(), "hello".to_string()];
@@ -338,9 +320,7 @@ fn test_direct_context_execute_after_teardown_returns_isolation_error() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let mut context = provider
-        .setup(rootfs, executor, mock_ops(rootfs), false)
-        .unwrap();
+    let mut context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     context.teardown().unwrap();
 
     let command: Vec<String> = vec!["/bin/sh".to_string()];
@@ -365,7 +345,7 @@ fn test_direct_context_propagates_sudo_privilege() {
     let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
     let context = provider
-        .setup(&rootfs, executor, mock_ops(&rootfs), false)
+        .setup(&rootfs, executor, mock_ops(&rootfs))
         .unwrap();
     let result = context.execute(&command, Some(PrivilegeMethod::Sudo));
     assert!(result.is_ok());
@@ -398,7 +378,7 @@ fn direct_context_refuses_a_program_symlinked_out_of_the_rootfs() {
         calls: Arc::clone(&calls),
     });
     let context = DirectProvider
-        .setup(&rootfs, executor, mock_ops(&rootfs), false)
+        .setup(&rootfs, executor, mock_ops(&rootfs))
         .unwrap();
 
     let err = context
@@ -406,4 +386,24 @@ fn direct_context_refuses_a_program_symlinked_out_of_the_rootfs() {
         .expect_err("a symlinked program must be refused");
     assert!(format!("{err:#}").contains("is a symlink"), "unexpected error: {err:#}");
     assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
+// A context used to carry its own `dry_run` flag, so pairing a dry-run executor with a live
+// context was expressible and silently performed real work. It now derives the answer from
+// the executor, which is the layer that would run the commands.
+#[test]
+fn context_dry_run_comes_from_the_executor() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    let ops = mock_ops(&rootfs);
+
+    let live: Arc<dyn CommandExecutor> =
+        Arc::new(rsdebstrap::executor::RealCommandExecutor { dry_run: false });
+    let dry: Arc<dyn CommandExecutor> =
+        Arc::new(rsdebstrap::executor::RealCommandExecutor { dry_run: true });
+
+    let live_ctx = DirectProvider.setup(&rootfs, live, ops.clone()).unwrap();
+    let dry_ctx = DirectProvider.setup(&rootfs, dry, ops).unwrap();
+
+    assert!(!live_ctx.dry_run());
+    assert!(dry_ctx.dry_run());
 }
