@@ -235,7 +235,7 @@ fn test_run_fails_when_script_copy_fails() {
     let script_path_utf8 =
         camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
 
-    // Make /tmp read-only to cause copy failure
+    // Make the rootfs's /tmp read-only so staging the script fails there
     let tmp_path = temp_dir.path().join("tmp");
     let mut perms = std::fs::metadata(&tmp_path)
         .expect("failed to get tmp metadata")
@@ -257,8 +257,8 @@ fn test_run_fails_when_script_copy_fails() {
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
     assert!(
-        err_msg.contains("failed to copy script"),
-        "Expected 'failed to copy script' in error, got: {}",
+        err_msg.contains("failed to stage script"),
+        "Expected 'failed to stage script' in error, got: {}",
         err_msg
     );
 }
