@@ -16,6 +16,7 @@ use tracing::{debug, info};
 
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
+use crate::isolation::resolv_conf::Restored;
 use crate::isolation::{DirectProvider, IsolationProvider};
 use crate::phase::{AssembleConfig, PhaseItem, PrepareConfig, ProvisionTask};
 use crate::rootfs::RootfsOps;
@@ -82,8 +83,11 @@ impl<'a> Pipeline<'a> {
         ops: Arc<dyn RootfsOps>,
         dry_run: bool,
     ) -> Result<()> {
-        self.run_prepare_and_provision(rootfs, &executor, &ops, dry_run)?;
-        self.run_assemble(rootfs, &executor, &ops, dry_run)
+        let provisioned = self.run_prepare_and_provision(rootfs, &executor, &ops, dry_run)?;
+        // No prepare guard runs here, so nothing detached the rootfs's own
+        // resolv.conf and there is nothing to put back.
+        let restored = Restored::nothing_was_detached(provisioned);
+        self.run_assemble(restored, rootfs, &executor, &ops, dry_run)
     }
 
     /// Executes the prepare and provision phases (the first pipeline stage)
@@ -100,9 +104,9 @@ impl<'a> Pipeline<'a> {
         executor: &Arc<dyn CommandExecutor>,
         ops: &Arc<dyn RootfsOps>,
         dry_run: bool,
-    ) -> Result<()> {
+    ) -> Result<Provisioned> {
         if self.is_empty() {
-            return Ok(());
+            return Ok(Provisioned::new());
         }
 
         info!("starting pipeline with {} task(s)", self.total_tasks());
@@ -114,7 +118,8 @@ impl<'a> Pipeline<'a> {
             executor,
             ops,
             dry_run,
-        )
+        )?;
+        Ok(Provisioned::new())
     }
 
     /// Executes the assemble phase (the second pipeline stage) and logs
@@ -124,6 +129,7 @@ impl<'a> Pipeline<'a> {
     /// Returns immediately if the pipeline has no tasks.
     pub fn run_assemble(
         &self,
+        _restored: Restored,
         rootfs: &Utf8Path,
         executor: &Arc<dyn CommandExecutor>,
         ops: &Arc<dyn RootfsOps>,
@@ -136,6 +142,19 @@ impl<'a> Pipeline<'a> {
         run_phase_items(PHASE_ASSEMBLE, &self.assemble.items(), rootfs, executor, ops, dry_run)?;
         info!("pipeline completed successfully");
         Ok(())
+    }
+}
+
+/// Evidence that the prepare and provision phases both completed.
+///
+/// Produced only by [`Pipeline::run_prepare_and_provision`] and consumed by
+/// [`RootfsResolvConf::restore`](crate::isolation::resolv_conf::RootfsResolvConf::restore).
+#[must_use]
+pub struct Provisioned(());
+
+impl Provisioned {
+    fn new() -> Self {
+        Self(())
     }
 }
 

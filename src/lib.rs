@@ -135,57 +135,33 @@ fn run_pipeline_phase_with(
         .setup()
         .context("failed to set up resolv.conf in rootfs")?;
 
-    // Run prepare + provision, then restore the original resolv.conf BEFORE
-    // the assemble phase: an assemble resolv_conf task writes the permanent
-    // /etc/resolv.conf, which teardown's `rm -f` + backup restore would
-    // otherwise destroy. Assemble is gated on both prior stages succeeding:
-    // after a failed teardown the guard's Drop backstop retries the restore
-    // at scope end and would clobber assemble's output. The assemble task
-    // itself replaces /etc/resolv.conf atomically (staged sibling + rename),
-    // so a mid-assemble failure cannot leave the rootfs without a resolv.conf
-    // even though the guard is already disarmed. Unmount always runs
-    // last (mounts bracket all three phases).
-    // Error priority: prepare/provision > resolv_conf restore > assemble > unmount.
-    let run_result = pipeline.run_prepare_and_provision(&rootfs, &executor, &ops, dry_run);
-    let resolv_result = resolv_conf.teardown();
-    let assemble_result = if run_result.is_ok() && resolv_result.is_ok() {
-        pipeline.run_assemble(&rootfs, &executor, &ops, dry_run)
-    } else {
-        Ok(())
-    };
-    let unmount_result = mounts.unmount();
-
-    if let Err(e) = run_result {
-        if let Err(r) = resolv_result {
-            tracing::error!("resolv.conf restore also failed: {:#}", r);
-        }
-        if let Err(u) = unmount_result {
-            tracing::error!(
-                "unmount also failed after pipeline error: {:#}. \
-                Drop guard will attempt cleanup.",
-                u
-            );
-        }
-        return Err(e);
-    }
-
-    if let Err(e) = resolv_result {
-        if let Err(u) = unmount_result {
-            tracing::error!(
-                "unmount also failed after resolv.conf restore error: {:#}. \
-                Drop guard will attempt cleanup.",
-                u
-            );
-        }
-        return Err(e).context(
+    // The ordering below is carried by `Provisioned`/`Restored`: assembly takes
+    // a token only `restore` can produce, so it cannot run before the guard has
+    // put the rootfs's own resolv.conf back — which matters because an assemble
+    // resolv_conf task installs the permanent one, and a restore afterwards
+    // would overwrite it. Mounts bracket everything, so unmount runs last.
+    let restored = match pipeline.run_prepare_and_provision(&rootfs, &executor, &ops, dry_run) {
+        Ok(provisioned) => resolv_conf.restore(provisioned).context(
             "failed to restore resolv.conf after provisioning; any assemble tasks were skipped",
-        );
-    }
+        ),
+        Err(run_err) => {
+            // `Drop` would restore too, but only after the unmount below; the
+            // restore belongs inside the mounted window.
+            if let Err(restore_err) = resolv_conf.teardown() {
+                tracing::error!("resolv.conf restore also failed: {:#}", restore_err);
+            }
+            Err(run_err)
+        }
+    };
+
+    let assemble_result =
+        restored.and_then(|token| pipeline.run_assemble(token, &rootfs, &executor, &ops, dry_run));
+    let unmount_result = mounts.unmount();
 
     if let Err(e) = assemble_result {
         if let Err(u) = unmount_result {
             tracing::error!(
-                "unmount also failed after assemble error: {:#}. \
+                "unmount also failed after pipeline error: {:#}. \
                 Drop guard will attempt cleanup.",
                 u
             );
