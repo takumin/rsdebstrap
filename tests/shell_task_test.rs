@@ -393,19 +393,22 @@ fn test_execute_inline_script_verifies_file_written() {
         executed_commands: RefCell<Vec<Vec<String>>>,
     }
 
-    impl IsolationContext for CapturingContext {
+    impl rsdebstrap::isolation::RootfsContext for CapturingContext {
         fn rootfs_ops(&self) -> &dyn rsdebstrap::rootfs::RootfsOps {
             &self.ops
         }
 
-        fn name(&self) -> &'static str {
-            "capturing-mock"
-        }
         fn rootfs(&self) -> &Utf8Path {
             &self.rootfs
         }
         fn dry_run(&self) -> bool {
             false
+        }
+    }
+
+    impl IsolationContext for CapturingContext {
+        fn name(&self) -> &'static str {
+            "capturing-mock"
         }
         fn execute(
             &self,
@@ -490,19 +493,22 @@ fn test_execute_external_script_verifies_file_copied() {
         executed_commands: RefCell<Vec<Vec<String>>>,
     }
 
-    impl IsolationContext for CapturingContext {
+    impl rsdebstrap::isolation::RootfsContext for CapturingContext {
         fn rootfs_ops(&self) -> &dyn rsdebstrap::rootfs::RootfsOps {
             &self.ops
         }
 
-        fn name(&self) -> &'static str {
-            "capturing-mock"
-        }
         fn rootfs(&self) -> &Utf8Path {
             &self.rootfs
         }
         fn dry_run(&self) -> bool {
             false
+        }
+    }
+
+    impl IsolationContext for CapturingContext {
+        fn name(&self) -> &'static str {
+            "capturing-mock"
         }
         fn execute(
             &self,

@@ -4,7 +4,7 @@
 //! directly on the host filesystem, translating absolute paths to be relative
 //! to the rootfs directory. Used when a task has `isolation: false`.
 
-use super::{IsolationContext, IsolationProvider};
+use super::{IsolationContext, IsolationProvider, RootfsContext};
 use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
 use crate::rootfs::RootfsOps;
@@ -53,11 +53,7 @@ pub struct DirectContext {
     torn_down: bool,
 }
 
-impl IsolationContext for DirectContext {
-    fn name(&self) -> &'static str {
-        "direct"
-    }
-
+impl RootfsContext for DirectContext {
     fn rootfs(&self) -> &Utf8Path {
         &self.rootfs
     }
@@ -68,6 +64,12 @@ impl IsolationContext for DirectContext {
 
     fn rootfs_ops(&self) -> &dyn RootfsOps {
         &*self.ops
+    }
+}
+
+impl IsolationContext for DirectContext {
+    fn name(&self) -> &'static str {
+        "direct"
     }
 
     /// Executes a command directly on the host filesystem.

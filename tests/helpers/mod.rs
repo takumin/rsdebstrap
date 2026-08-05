@@ -601,13 +601,9 @@ impl MockContext {
     }
 }
 
-impl IsolationContext for MockContext {
+impl rsdebstrap::isolation::RootfsContext for MockContext {
     fn rootfs_ops(&self) -> &dyn rsdebstrap::rootfs::RootfsOps {
         &*self.ops
-    }
-
-    fn name(&self) -> &'static str {
-        "mock"
     }
 
     fn rootfs(&self) -> &Utf8Path {
@@ -616,6 +612,12 @@ impl IsolationContext for MockContext {
 
     fn dry_run(&self) -> bool {
         self.dry_run
+    }
+}
+
+impl IsolationContext for MockContext {
+    fn name(&self) -> &'static str {
+        "mock"
     }
 
     fn execute(

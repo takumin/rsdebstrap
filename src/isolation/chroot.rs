@@ -1,6 +1,6 @@
 //! Chroot isolation implementation.
 
-use super::{IsolationContext, IsolationProvider};
+use super::{IsolationContext, IsolationProvider, RootfsContext};
 use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult, PrivilegedProgram};
 use crate::privilege::PrivilegeMethod;
 use crate::rootfs::RootfsOps;
@@ -52,11 +52,7 @@ pub struct ChrootContext {
     torn_down: bool,
 }
 
-impl IsolationContext for ChrootContext {
-    fn name(&self) -> &'static str {
-        "chroot"
-    }
-
+impl RootfsContext for ChrootContext {
     fn rootfs(&self) -> &Utf8Path {
         &self.rootfs
     }
@@ -67,6 +63,12 @@ impl IsolationContext for ChrootContext {
 
     fn rootfs_ops(&self) -> &dyn RootfsOps {
         &*self.ops
+    }
+}
+
+impl IsolationContext for ChrootContext {
+    fn name(&self) -> &'static str {
+        "chroot"
     }
 
     fn execute(

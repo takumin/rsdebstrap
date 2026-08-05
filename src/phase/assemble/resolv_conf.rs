@@ -529,11 +529,7 @@ mod tests {
         }
     }
 
-    impl IsolationContext for MockAssembleContext {
-        fn name(&self) -> &'static str {
-            "mock"
-        }
-
+    impl crate::isolation::RootfsContext for MockAssembleContext {
         fn rootfs(&self) -> &camino::Utf8Path {
             &self.rootfs
         }
@@ -544,6 +540,12 @@ mod tests {
 
         fn rootfs_ops(&self) -> &dyn crate::rootfs::RootfsOps {
             &*self.ops
+        }
+    }
+
+    impl IsolationContext for MockAssembleContext {
+        fn name(&self) -> &'static str {
+            "mock"
         }
 
         fn execute(
