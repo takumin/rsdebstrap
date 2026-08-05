@@ -14,11 +14,10 @@ use std::borrow::Cow;
 use std::fs;
 use tracing::{debug, info};
 
-use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::phase::{ScriptSource, TempFileGuard};
-use crate::privilege::{Privilege, PrivilegeDefaults};
+use crate::privilege::{Privilege, PrivilegeMethod};
 
 /// Shell task data and execution logic.
 ///
@@ -45,10 +44,10 @@ pub struct ShellTask {
     /// Shell interpreter to use (default: /bin/sh)
     shell: String,
 
-    /// Privilege escalation setting (resolved during defaults application)
+    /// Privilege escalation setting as declared in the profile
     privilege: Privilege,
 
-    /// Isolation setting (resolved during defaults application)
+    /// Isolation setting as declared in the profile
     isolation: TaskIsolation,
 }
 
@@ -153,34 +152,14 @@ impl ShellTask {
         self.source.resolve_paths(base_dir);
     }
 
-    /// Resolves the privilege setting against profile defaults.
-    ///
-    /// # Errors
-    ///
-    /// Returns `RsdebstrapError::Validation` if `privilege: true` is specified
-    /// but no `defaults.privilege.method` is configured in the profile.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        self.privilege.resolve_in_place(defaults)
+    /// Returns the privilege setting as written in the profile.
+    pub fn privilege(&self) -> &Privilege {
+        &self.privilege
     }
 
-    /// Returns a reference to the task's isolation setting.
+    /// Returns the isolation setting as written in the profile.
     pub fn task_isolation(&self) -> &TaskIsolation {
         &self.isolation
-    }
-
-    /// Resolves the isolation setting against profile defaults.
-    pub fn resolve_isolation(&mut self, defaults: &IsolationConfig) {
-        self.isolation.resolve_in_place(defaults);
-    }
-
-    /// Returns the resolved isolation config.
-    ///
-    /// Should only be called after [`resolve_isolation()`](Self::resolve_isolation).
-    pub fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        self.isolation.resolved_config()
     }
 
     /// Validates the task configuration.
@@ -226,7 +205,11 @@ impl ShellTask {
     /// In dry-run mode, skips file I/O (rootfs validation, script copy/write,
     /// permission changes, cleanup) while still constructing and delegating
     /// commands to the executor.
-    pub fn execute(&self, context: &dyn IsolationContext) -> Result<()> {
+    pub fn execute(
+        &self,
+        context: &dyn IsolationContext,
+        privilege: Option<PrivilegeMethod>,
+    ) -> Result<()> {
         let rootfs = context.rootfs();
         let dry_run = context.dry_run();
 
@@ -249,12 +232,7 @@ impl ShellTask {
         let script_path_in_isolation = format!("/tmp/{}", script_name);
         let command: Vec<String> = vec![self.shell.clone(), script_path_in_isolation];
 
-        let result = crate::phase::execute_in_context(
-            context,
-            &command,
-            "script",
-            self.privilege.resolved_method(),
-        )?;
+        let result = crate::phase::execute_in_context(context, &command, "script", privilege)?;
         crate::phase::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("shell script completed successfully");

@@ -334,23 +334,17 @@ impl Bootstrap {
         }
     }
 
-    /// Resolves the privilege setting against profile defaults, replacing
-    /// the stored `Privilege` with a fully resolved variant.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        match self {
-            Bootstrap::Mmdebstrap(cfg) => cfg.privilege.resolve_in_place(defaults),
-            Bootstrap::Debootstrap(cfg) => cfg.privilege.resolve_in_place(defaults),
-        }
-    }
-
-    /// Returns the resolved privilege method for the bootstrap backend.
+    /// Resolves the backend's privilege setting against the profile defaults.
     ///
-    /// Should only be called after `resolve_privilege()`.
-    pub fn resolved_privilege_method(&self) -> Option<PrivilegeMethod> {
-        self.privilege().resolved_method()
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if `privilege: true` is declared but no
+    /// `defaults.privilege.method` is configured in the profile.
+    pub fn resolve_privilege(
+        &self,
+        defaults: Option<&PrivilegeDefaults>,
+    ) -> Result<Option<PrivilegeMethod>, RsdebstrapError> {
+        self.privilege().resolve(defaults)
     }
 }
 
@@ -467,9 +461,21 @@ pub struct Profile {
 }
 
 impl Profile {
-    /// Creates a `Pipeline` from this profile's task phases.
-    pub fn pipeline(&self) -> Pipeline<'_> {
-        Pipeline::new(&self.prepare, &self.provision, &self.assemble)
+    /// Creates a `Pipeline` from this profile's task phases, resolving each provision
+    /// task's settings against `defaults`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if a task declares `privilege: true` but
+    /// the profile configures no `defaults.privilege.method`.
+    pub fn pipeline(&self) -> Result<Pipeline<'_>, RsdebstrapError> {
+        Pipeline::new(
+            &self.prepare,
+            &self.provision,
+            &self.assemble,
+            self.defaults.privilege.as_ref(),
+            &self.defaults.isolation,
+        )
     }
 
     /// Validate configuration semantics beyond basic deserialization.
@@ -484,7 +490,7 @@ impl Profile {
         self.validate_mounts()?;
         self.validate_resolv_conf()?;
 
-        let pipeline = self.pipeline();
+        let pipeline = self.pipeline()?;
         pipeline.validate()?;
 
         // rootfs_output() returns anyhow::Result, so we attempt to downcast to
@@ -651,6 +657,9 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
         );
     }
 
+    // Resolution happens where the resolved value is consumed (`Pipeline::new`,
+    // `Bootstrap::resolve_privilege`). Running it once here too makes an unsatisfiable
+    // `privilege: true` a load-time error rather than one raised mid-run.
     profile.bootstrap.resolve_privilege(privilege_defaults)?;
 
     for task in profile.provision.iter_mut() {
@@ -659,8 +668,7 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
         {
             mitamae_task.set_binary_if_absent(binary);
         }
-        task.resolve_privilege(privilege_defaults)?;
-        task.resolve_isolation(&isolation_defaults);
+        task.resolve(privilege_defaults, &isolation_defaults)?;
     }
 
     Ok(())

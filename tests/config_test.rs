@@ -1269,8 +1269,8 @@ provision:
     match &profile.provision[0] {
         ProvisionTask::Shell(task) => {
             assert_eq!(
-                task.resolved_isolation_config(),
-                Some(&IsolationConfig::chroot()),
+                task.task_isolation().resolve(&IsolationConfig::chroot()),
+                Some(IsolationConfig::chroot()),
                 "isolation: {{type: chroot}} should resolve to Chroot"
             );
         }
@@ -1313,10 +1313,11 @@ provision:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
+    use rsdebstrap::config::IsolationConfig;
     match profile.provision.as_slice() {
         [ProvisionTask::Mitamae(mitamae)] => {
             assert_eq!(
-                mitamae.resolved_isolation_config(),
+                mitamae.task_isolation().resolve(&IsolationConfig::chroot()),
                 None,
                 "isolation: false on mitamae task should resolve to None"
             );
@@ -1360,19 +1361,19 @@ provision:
 
     match &profile.provision[0] {
         ProvisionTask::Shell(task) => {
-            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
+            assert_eq!(task.task_isolation().resolve(&IsolationConfig::chroot()), Some(IsolationConfig::chroot()));
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
     match &profile.provision[1] {
         ProvisionTask::Shell(task) => {
-            assert_eq!(task.resolved_isolation_config(), None);
+            assert_eq!(task.task_isolation().resolve(&IsolationConfig::chroot()), None);
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
     match &profile.provision[2] {
         ProvisionTask::Shell(task) => {
-            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
+            assert_eq!(task.task_isolation().resolve(&IsolationConfig::chroot()), Some(IsolationConfig::chroot()));
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }

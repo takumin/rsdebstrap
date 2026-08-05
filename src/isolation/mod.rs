@@ -19,18 +19,12 @@ use camino::Utf8Path;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use crate::config::IsolationConfig;
 use crate::executor::{CommandExecutor, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
 use crate::rootfs::RootfsOps;
-
-/// Fallback isolation config for unresolved states.
-/// Used by `resolved_config()` to fail-closed (use isolation) rather than
-/// fail-open (bypass isolation) when called before resolution.
-static DEFAULT_ISOLATION_CONFIG: LazyLock<IsolationConfig> =
-    LazyLock::new(IsolationConfig::default);
 
 pub mod chroot;
 pub mod direct;
@@ -190,43 +184,6 @@ pub enum TaskIsolation {
 }
 
 impl TaskIsolation {
-    /// Returns the resolved isolation config.
-    ///
-    /// Should only be called after [`resolve_in_place()`](Self::resolve_in_place).
-    ///
-    /// Returns `Some(&config)` for `Config`, `None` for `Disabled`.
-    /// If called on `Inherit` or `UseDefault`, logs a warning and returns
-    /// the default isolation config as a safe fallback (fail-closed).
-    pub fn resolved_config(&self) -> Option<&IsolationConfig> {
-        debug_assert!(
-            !matches!(self, Self::Inherit | Self::UseDefault),
-            "resolved_config() called on an unresolved TaskIsolation state. This is a logic error."
-        );
-        match self {
-            Self::Config(c) => Some(c),
-            Self::Disabled => None,
-            unresolved @ (Self::Inherit | Self::UseDefault) => {
-                tracing::warn!(
-                    "resolved_config() called on unresolved state ({:?}); this likely indicates \
-                    a logic error where resolve was not called. \
-                    Falling back to default isolation config (fail-closed).",
-                    unresolved
-                );
-                Some(&*DEFAULT_ISOLATION_CONFIG)
-            }
-        }
-    }
-
-    /// Resolves the isolation setting in place, replacing `self` with the
-    /// resolved variant (`Config` or `Disabled`).
-    pub fn resolve_in_place(&mut self, defaults: &IsolationConfig) {
-        let resolved = self.resolve(defaults);
-        *self = match resolved {
-            Some(config) => Self::Config(config),
-            None => Self::Disabled,
-        };
-    }
-
     /// Resolves the isolation setting against the profile defaults.
     ///
     /// Returns `Some(config)` if isolation should be applied,
@@ -378,39 +335,6 @@ mod tests {
         let defaults = IsolationConfig::chroot();
         let result = TaskIsolation::Disabled.resolve(&defaults);
         assert_eq!(result, None);
-    }
-
-    #[test]
-    fn resolve_in_place_inherit() {
-        let mut iso = TaskIsolation::Inherit;
-        iso.resolve_in_place(&IsolationConfig::chroot());
-        assert_eq!(iso, TaskIsolation::Config(IsolationConfig::chroot()));
-    }
-
-    #[test]
-    fn resolve_in_place_disabled() {
-        let mut iso = TaskIsolation::Disabled;
-        iso.resolve_in_place(&IsolationConfig::chroot());
-        assert_eq!(iso, TaskIsolation::Disabled);
-    }
-
-    #[test]
-    fn resolve_in_place_use_default() {
-        let mut iso = TaskIsolation::UseDefault;
-        iso.resolve_in_place(&IsolationConfig::chroot());
-        assert_eq!(iso, TaskIsolation::Config(IsolationConfig::chroot()));
-    }
-
-    #[test]
-    fn resolved_config_returns_some_for_config() {
-        let iso = TaskIsolation::Config(IsolationConfig::chroot());
-        assert_eq!(iso.resolved_config(), Some(&IsolationConfig::chroot()));
-    }
-
-    #[test]
-    fn resolved_config_returns_none_for_disabled() {
-        let iso = TaskIsolation::Disabled;
-        assert_eq!(iso.resolved_config(), None);
     }
 
     fn roundtrip(original: &TaskIsolation) -> TaskIsolation {

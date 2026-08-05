@@ -1,33 +1,25 @@
 mod helpers;
 
 use rsdebstrap::RsdebstrapError;
-use rsdebstrap::config::Bootstrap;
-use rsdebstrap::phase::{ProvisionTask, ScriptSource, ShellTask};
-use rsdebstrap::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
+use rsdebstrap::config::Profile;
+use rsdebstrap::phase::{ScriptSource, ShellTask};
+use rsdebstrap::privilege::{PrivilegeDefaults, PrivilegeMethod};
 use tempfile::tempdir;
 
-// Runs a loaded provision task against a `MockContext` and returns the privilege
-// it handed to the isolation layer.
-//
-// A task's resolved privilege is private, so the only way to observe what
-// `load_profile` resolved is to execute the task and record what reaches
-// `IsolationContext::execute`.
-fn executed_privilege(task: &ProvisionTask) -> Option<PrivilegeMethod> {
-    let temp_dir = tempdir().expect("failed to create temp dir");
-    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
-        .expect("path should be valid UTF-8");
-    setup_valid_rootfs(&temp_dir);
+// The privilege a provision task resolves to under the profile's defaults.
+fn task_privilege(profile: &Profile, index: usize) -> Option<PrivilegeMethod> {
+    profile.provision[index]
+        .privilege()
+        .resolve(profile.defaults.privilege.as_ref())
+        .expect("resolve should succeed")
+}
 
-    let ProvisionTask::Shell(shell) = task else {
-        panic!("expected Shell task, got: {:?}", task);
-    };
-
-    let context = helpers::MockContext::new(&rootfs);
-    shell.execute(&context).expect("execute should succeed");
-
-    let privileges = context.executed_privileges();
-    assert_eq!(privileges.len(), 1, "expected exactly one execution");
-    privileges[0]
+// The privilege the bootstrap backend resolves to under the profile's defaults.
+fn bootstrap_privilege(profile: &Profile) -> Option<PrivilegeMethod> {
+    profile
+        .bootstrap
+        .resolve_privilege(profile.defaults.privilege.as_ref())
+        .expect("resolve should succeed")
 }
 
 #[test]
@@ -52,15 +44,10 @@ fn test_default_privilege_sudo_inherited_by_bootstrap_and_tasks() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    match &profile.bootstrap {
-        Bootstrap::Mmdebstrap(cfg) => {
-            assert_eq!(cfg.privilege, Privilege::Method(PrivilegeMethod::Sudo));
-        }
-        other => panic!("expected mmdebstrap, got: {:?}", other),
-    }
+    assert_eq!(bootstrap_privilege(&profile), Some(PrivilegeMethod::Sudo));
 
     assert_eq!(
-        executed_privilege(&profile.provision[0]),
+        task_privilege(&profile, 0),
         Some(PrivilegeMethod::Sudo),
         "task should inherit Sudo from defaults"
     );
@@ -90,15 +77,10 @@ fn test_task_level_privilege_overrides_default() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    match &profile.bootstrap {
-        Bootstrap::Mmdebstrap(cfg) => {
-            assert_eq!(cfg.privilege, Privilege::Method(PrivilegeMethod::Sudo));
-        }
-        other => panic!("expected mmdebstrap, got: {:?}", other),
-    }
+    assert_eq!(bootstrap_privilege(&profile), Some(PrivilegeMethod::Sudo));
 
     assert_eq!(
-        executed_privilege(&profile.provision[0]),
+        task_privilege(&profile, 0),
         Some(PrivilegeMethod::Doas),
         "task-level method should win over defaults.privilege.method"
     );
@@ -128,15 +110,10 @@ fn test_privilege_false_disables_escalation() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    match &profile.bootstrap {
-        Bootstrap::Mmdebstrap(cfg) => {
-            assert_eq!(cfg.privilege, Privilege::Disabled);
-        }
-        other => panic!("expected mmdebstrap, got: {:?}", other),
-    }
+    assert_eq!(bootstrap_privilege(&profile), None);
 
     assert_eq!(
-        executed_privilege(&profile.provision[0]),
+        task_privilege(&profile, 0),
         None,
         "privilege: false on the task must suppress the inherited method"
     );
@@ -222,19 +199,14 @@ fn test_no_defaults_no_privilege_results_in_none() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    match &profile.bootstrap {
-        Bootstrap::Mmdebstrap(cfg) => {
-            assert_eq!(
-                cfg.privilege,
-                Privilege::Disabled,
-                "Inherit with no defaults should resolve to Disabled"
-            );
-        }
-        other => panic!("expected mmdebstrap, got: {:?}", other),
-    }
+    assert_eq!(
+        bootstrap_privilege(&profile),
+        None,
+        "Inherit with no defaults should resolve to no escalation"
+    );
 
     assert_eq!(
-        executed_privilege(&profile.provision[0]),
+        task_privilege(&profile, 0),
         None,
         "Inherit with no defaults should resolve to no escalation"
     );
@@ -261,12 +233,7 @@ fn test_default_privilege_doas_inherited() {
     .expect("profile should load");
     // editorconfig-checker-enable
 
-    match &profile.bootstrap {
-        Bootstrap::Debootstrap(cfg) => {
-            assert_eq!(cfg.privilege, Privilege::Method(PrivilegeMethod::Doas));
-        }
-        other => panic!("expected debootstrap, got: {:?}", other),
-    }
+    assert_eq!(bootstrap_privilege(&profile), Some(PrivilegeMethod::Doas));
 }
 
 // Helper to set up a valid rootfs with /tmp and /bin/sh
@@ -285,15 +252,17 @@ fn test_shell_task_propagates_sudo_privilege_to_mock_context() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
+    let task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
     let defaults = PrivilegeDefaults {
         method: PrivilegeMethod::Sudo,
     };
-    task.resolve_privilege(Some(&defaults))
-        .expect("resolve_privilege should succeed");
+    let privilege = task
+        .privilege()
+        .resolve(Some(&defaults))
+        .expect("resolve should succeed");
 
     let context = helpers::MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, privilege);
     assert!(result.is_ok(), "execute should succeed, got: {:?}", result);
 
     let privileges = context.executed_privileges();
@@ -313,12 +282,11 @@ fn test_shell_task_propagates_none_privilege_to_mock_context() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
-    task.resolve_privilege(None)
-        .expect("resolve_privilege should succeed");
+    let task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
+    let privilege = task.privilege().resolve(None).expect("resolve should succeed");
 
     let context = helpers::MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, privilege);
     assert!(result.is_ok(), "execute should succeed, got: {:?}", result);
 
     let privileges = context.executed_privileges();

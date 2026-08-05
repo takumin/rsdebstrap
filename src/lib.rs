@@ -54,7 +54,7 @@ fn run_bootstrap_phase(
         .build_args(&profile.dir)
         .with_context(|| format!("failed to build arguments for {}", command_name))?;
 
-    let privilege = profile.bootstrap.resolved_privilege_method();
+    let privilege = profile.bootstrap.resolve_privilege(profile.defaults.privilege.as_ref())?;
     let spec = executor::CommandSpec::privileged(
         executor::PrivilegedProgram::Bootstrap(program),
         args,
@@ -87,7 +87,7 @@ fn run_pipeline_phase_with(
     ops: Option<Arc<dyn rootfs::RootfsOps>>,
     dry_run: bool,
 ) -> Result<()> {
-    let pipeline = profile.pipeline();
+    let pipeline = profile.pipeline()?;
 
     if pipeline.is_empty() {
         return Ok(());
