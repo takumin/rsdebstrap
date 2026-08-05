@@ -16,6 +16,7 @@ use tracing::{debug, info};
 
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
+use crate::isolation::mount::Unmounted;
 use crate::isolation::resolv_conf::Restored;
 use crate::isolation::{DirectProvider, IsolationProvider, PlainRootfsContext};
 use crate::phase::{AssembleConfig, PhaseItem, PrepareConfig, ProvisionItem, ProvisionTask};
@@ -85,9 +86,9 @@ impl<'a> Pipeline<'a> {
     ) -> Result<()> {
         let provisioned = self.run_prepare_and_provision(rootfs, &executor, &ops, dry_run)?;
         // No prepare guard runs here, so nothing detached the rootfs's own
-        // resolv.conf and there is nothing to put back.
+        // resolv.conf and nothing was mounted over it.
         let restored = Restored::nothing_was_detached(provisioned);
-        self.run_assemble(restored, rootfs, &ops, dry_run)
+        self.run_assemble(Unmounted::nothing_was_mounted(restored), rootfs, &ops, dry_run)
     }
 
     /// Executes the prepare and provision phases (the first pipeline stage)
@@ -127,7 +128,7 @@ impl<'a> Pipeline<'a> {
     /// Returns immediately if the pipeline has no tasks.
     pub fn run_assemble(
         &self,
-        _restored: Restored,
+        _unmounted: Unmounted,
         rootfs: &Utf8Path,
         ops: &Arc<dyn RootfsOps>,
         dry_run: bool,

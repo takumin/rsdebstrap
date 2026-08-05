@@ -18,7 +18,27 @@ use tracing::info;
 use crate::config::MountEntry;
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
+use crate::isolation::resolv_conf::Restored;
 use crate::privilege::PrivilegeMethod;
+
+/// Evidence that the pipeline's mounts have been released.
+///
+/// [`Pipeline::run_assemble`](crate::pipeline::Pipeline::run_assemble) requires
+/// one. Assemble writes the rootfs's final state — the state the image is built
+/// from — so it must see the rootfs the way the image will: without `/proc`,
+/// `/sys` and `/dev` bound over it.
+#[must_use]
+pub struct Unmounted(());
+
+impl Unmounted {
+    /// For a run with no mount guard, where nothing was ever mounted.
+    ///
+    /// The only way to obtain an `Unmounted` without unmounting anything, and it
+    /// still requires the resolv.conf restore to have happened first.
+    pub(crate) fn nothing_was_mounted(_restored: Restored) -> Self {
+        Self(())
+    }
+}
 
 /// Opens a directory without following symlinks.
 ///
@@ -237,6 +257,18 @@ impl RootfsMounts {
             self.torn_down = true;
         }
         result
+    }
+
+    /// Unmounts everything in exchange for the token the assemble phase requires.
+    ///
+    /// Taking [`Restored`] and yielding [`Unmounted`] is what places this between
+    /// the resolv.conf restore and assembly: assembly cannot be called without the
+    /// token, and the token cannot exist before the mounts are gone. A run that
+    /// fails to unmount therefore never assembles, because the rootfs is not in
+    /// the state assembly is defined against.
+    pub fn unmount_before_assembly(&mut self, _restored: Restored) -> Result<Unmounted> {
+        self.unmount()?;
+        Ok(Unmounted(()))
     }
 
     /// Shared unmount logic called by both `unmount()` and `mount()` (for cleanup

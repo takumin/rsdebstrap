@@ -140,11 +140,12 @@ fn run_pipeline_phase_with(
         .setup()
         .context("failed to set up resolv.conf in rootfs")?;
 
-    // The ordering below is carried by `Provisioned`/`Restored`: assembly takes
-    // a token only `restore` can produce, so it cannot run before the guard has
-    // put the rootfs's own resolv.conf back — which matters because an assemble
-    // resolv_conf task installs the permanent one, and a restore afterwards
-    // would overwrite it. Mounts bracket everything, so unmount runs last.
+    // The ordering below is carried by `Provisioned`/`Restored`/`Unmounted`: each
+    // stage takes a token only the previous one can produce. The restore has to
+    // land before assembly because an assemble resolv_conf task installs the
+    // permanent entry and a restore afterwards would overwrite it; the unmount
+    // has to land before assembly because assemble writes the rootfs's final
+    // state, which is the state without `/proc`, `/sys` and `/dev` bound over it.
     let restored = match pipeline.run_prepare_and_provision(&rootfs, &executor, &ops, dry_run) {
         Ok(provisioned) => resolv_conf.restore(provisioned).context(
             "failed to restore resolv.conf after provisioning; any assemble tasks were skipped",
@@ -159,22 +160,27 @@ fn run_pipeline_phase_with(
         }
     };
 
-    let assemble_result =
-        restored.and_then(|token| pipeline.run_assemble(token, &rootfs, &ops, dry_run));
-    let unmount_result = mounts.unmount();
-
-    if let Err(e) = assemble_result {
-        if let Err(u) = unmount_result {
-            tracing::error!(
-                "unmount also failed after pipeline error: {:#}. \
-                Drop guard will attempt cleanup.",
-                u
-            );
+    // Unmounting is attempted whichever way the stages above went; only the
+    // token it yields is gated on their success.
+    match restored {
+        Ok(token) => match mounts.unmount_before_assembly(token) {
+            Ok(unmounted) => pipeline.run_assemble(unmounted, &rootfs, &ops, dry_run),
+            Err(e) => Err(e).context(
+                "failed to unmount filesystems after provisioning; \
+                any assemble tasks were skipped",
+            ),
+        },
+        Err(pipeline_err) => {
+            if let Err(u) = mounts.unmount() {
+                tracing::error!(
+                    "unmount also failed after pipeline error: {:#}. \
+                    Drop guard will attempt cleanup.",
+                    u
+                );
+            }
+            Err(pipeline_err)
         }
-        return Err(e);
     }
-
-    unmount_result.context("failed to unmount filesystems after pipeline completed successfully")
 }
 
 pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
@@ -464,6 +470,109 @@ mod tests {
         ) -> std::result::Result<Option<rootfs::TakenEntry>, RsdebstrapError> {
             self.inner.take(path)
         }
+    }
+
+    // Timeline shared by the executor and the ops below, so the mount lifecycle
+    // (commands) and the assemble writes (syscalls) can be ordered against each
+    // other. Neither layer touches the real system: mount/umount are recorded
+    // rather than run.
+    type Timeline = Arc<Mutex<Vec<String>>>;
+
+    struct TimelineExecutor {
+        timeline: Timeline,
+    }
+
+    impl CommandExecutor for TimelineExecutor {
+        fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
+            self.timeline
+                .lock()
+                .unwrap()
+                .push(spec.command().to_string());
+            Ok(ExecutionResult { status: None })
+        }
+    }
+
+    struct TimelineOps {
+        inner: rootfs::LocalRootfsOps,
+        timeline: Timeline,
+    }
+
+    impl rootfs::RootfsOps for TimelineOps {
+        fn write_file(
+            &self,
+            path: &rootfs::RelPath,
+            content: &[u8],
+            mode: u32,
+        ) -> std::result::Result<(), RsdebstrapError> {
+            self.timeline.lock().unwrap().push("write_file".to_string());
+            self.inner.write_file(path, content, mode)
+        }
+
+        fn write_symlink(
+            &self,
+            path: &rootfs::RelPath,
+            target: &str,
+        ) -> std::result::Result<(), RsdebstrapError> {
+            self.timeline
+                .lock()
+                .unwrap()
+                .push("write_symlink".to_string());
+            self.inner.write_symlink(path, target)
+        }
+
+        fn import_file(
+            &self,
+            host_src: &Utf8Path,
+            path: &rootfs::RelPath,
+            mode: u32,
+        ) -> std::result::Result<(), RsdebstrapError> {
+            self.inner.import_file(host_src, path, mode)
+        }
+
+        fn remove(&self, path: &rootfs::RelPath) -> std::result::Result<(), RsdebstrapError> {
+            self.inner.remove(path)
+        }
+
+        fn take(
+            &self,
+            path: &rootfs::RelPath,
+        ) -> std::result::Result<Option<rootfs::TakenEntry>, RsdebstrapError> {
+            self.inner.take(path)
+        }
+    }
+
+    // Assemble writes the rootfs's final state — what the image is built from —
+    // so it has to see the rootfs the way the image will, with nothing bound
+    // over it. The mounts therefore close before assemble opens, not after.
+    #[test]
+    fn assemble_runs_after_the_mounts_are_released() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        let mut yaml = profile_yaml(dir, false, None, true);
+        // Mounts require a configured privilege method; nothing escalates here,
+        // because both the executor and the ops are the recorders above.
+        yaml.push_str("defaults:\n  privilege:\n    method: sudo\n");
+        yaml.push_str("prepare:\n  mount:\n    mounts:\n      - source: /dev\n");
+        yaml.push_str("        target: /dev\n        options: [bind]\n");
+        let profile = load_profile_from(&yaml);
+
+        let timeline: Timeline = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(TimelineExecutor {
+            timeline: timeline.clone(),
+        });
+        let ops = Arc::new(TimelineOps {
+            inner: rootfs::LocalRootfsOps::open(&rootfs).unwrap(),
+            timeline: timeline.clone(),
+        });
+
+        run_pipeline_phase_with(&profile, executor, Some(ops), false).unwrap();
+
+        assert_eq!(
+            *timeline.lock().unwrap(),
+            ["mount", "umount", "write_symlink"],
+            "assemble must run after the mounts are released"
+        );
     }
 
     #[test]
