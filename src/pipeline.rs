@@ -19,7 +19,11 @@ use crate::executor::CommandExecutor;
 use crate::isolation::mount::Unmounted;
 use crate::isolation::resolv_conf::Restored;
 use crate::isolation::{DirectProvider, IsolationProvider, PlainRootfsContext};
-use crate::phase::{AssembleConfig, PhaseItem, PrepareConfig, ProvisionItem, ProvisionTask};
+use crate::config::IsolationConfig;
+use crate::phase::{
+    AssembleConfig, PhaseItem, PrepareConfig, ProvisionItem, ProvisionTask, ResolvedProvisionTask,
+};
+use crate::privilege::PrivilegeDefaults;
 use crate::rootfs::RootfsOps;
 
 const PHASE_PREPARE: &str = "prepare";
@@ -35,22 +39,34 @@ const PHASE_ASSEMBLE: &str = "assemble";
 /// - Error handling with guaranteed teardown per task
 pub struct Pipeline<'a> {
     prepare: &'a PrepareConfig,
-    provision: &'a [ProvisionTask],
+    provision: Vec<ResolvedProvisionTask<'a>>,
     assemble: &'a AssembleConfig,
 }
 
 impl<'a> Pipeline<'a> {
-    /// Creates a new pipeline with the given task phases.
+    /// Creates a new pipeline with the given task phases, resolving each provision
+    /// task's privilege and isolation settings against the profile defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if a task declares `privilege: true` but
+    /// the profile configures no `defaults.privilege.method`.
     pub fn new(
         prepare: &'a PrepareConfig,
         provision: &'a [ProvisionTask],
         assemble: &'a AssembleConfig,
-    ) -> Self {
-        Self {
+        privilege_defaults: Option<&PrivilegeDefaults>,
+        isolation_defaults: &IsolationConfig,
+    ) -> Result<Self, RsdebstrapError> {
+        let provision = provision
+            .iter()
+            .map(|task| task.resolve(privilege_defaults, isolation_defaults))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
             prepare,
             provision,
             assemble,
-        }
+        })
     }
 
     /// Returns true if the pipeline has no tasks to execute.
@@ -66,7 +82,7 @@ impl<'a> Pipeline<'a> {
     /// Validates all tasks in the pipeline.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
         validate_phase_items(PHASE_PREPARE, &self.prepare.items())?;
-        validate_phase_items(PHASE_PROVISION, &provision_items(self.provision))?;
+        validate_phase_items(PHASE_PROVISION, &provision_items(&self.provision))?;
         validate_phase_items(PHASE_ASSEMBLE, &self.assemble.items())?;
         Ok(())
     }
@@ -115,7 +131,7 @@ impl<'a> Pipeline<'a> {
         // are driven by RAII guards that bracket the whole pipeline. Iterating is
         // still what reports them as the tasks they are.
         run_phase_items(PHASE_PREPARE, &self.prepare.items(), |_| Ok(()))?;
-        run_phase_items(PHASE_PROVISION, &provision_items(self.provision), |task| {
+        run_phase_items(PHASE_PROVISION, &provision_items(&self.provision), |task| {
             run_provision_item(task, rootfs, executor, ops, dry_run)
         })?;
         Ok(Provisioned::new())
@@ -161,7 +177,7 @@ impl Provisioned {
 
 /// Borrows the provision tasks as `ProvisionItem` trait objects for uniform
 /// handling with the named-field prepare/assemble phases.
-fn provision_items(tasks: &[ProvisionTask]) -> Vec<&dyn ProvisionItem> {
+fn provision_items<'t>(tasks: &'t [ResolvedProvisionTask<'_>]) -> Vec<&'t dyn ProvisionItem> {
     tasks.iter().map(|t| t as &dyn ProvisionItem).collect()
 }
 

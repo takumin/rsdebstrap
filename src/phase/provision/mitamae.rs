@@ -15,11 +15,10 @@ use std::borrow::Cow;
 use std::fs;
 use tracing::{debug, info};
 
-use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::phase::{ScriptSource, TempFileGuard};
-use crate::privilege::{Privilege, PrivilegeDefaults};
+use crate::privilege::{Privilege, PrivilegeMethod};
 
 /// Mitamae task data and execution logic.
 ///
@@ -41,9 +40,9 @@ pub struct MitamaeTask {
     source: ScriptSource,
     /// Host-side mitamae binary path (None when relying on defaults)
     binary: Option<Utf8PathBuf>,
-    /// Privilege escalation setting (resolved during defaults application)
+    /// Privilege escalation setting as declared in the profile
     privilege: Privilege,
-    /// Isolation setting (resolved during defaults application)
+    /// Isolation setting as declared in the profile
     isolation: TaskIsolation,
 }
 
@@ -151,34 +150,14 @@ impl MitamaeTask {
         self.source.resolve_paths(base_dir);
     }
 
-    /// Resolves the privilege setting against profile defaults.
-    ///
-    /// # Errors
-    ///
-    /// Returns `RsdebstrapError::Validation` if `privilege: true` is specified
-    /// but no `defaults.privilege.method` is configured in the profile.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        self.privilege.resolve_in_place(defaults)
+    /// Returns the privilege setting as written in the profile.
+    pub fn privilege(&self) -> &Privilege {
+        &self.privilege
     }
 
-    /// Returns a reference to the task's isolation setting.
+    /// Returns the isolation setting as written in the profile.
     pub fn task_isolation(&self) -> &TaskIsolation {
         &self.isolation
-    }
-
-    /// Resolves the isolation setting against profile defaults.
-    pub fn resolve_isolation(&mut self, defaults: &IsolationConfig) {
-        self.isolation.resolve_in_place(defaults);
-    }
-
-    /// Returns the resolved isolation config.
-    ///
-    /// Should only be called after [`resolve_isolation()`](Self::resolve_isolation).
-    pub fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        self.isolation.resolved_config()
     }
 
     /// Validates the task configuration.
@@ -223,7 +202,11 @@ impl MitamaeTask {
     /// 5. Copies or writes the recipe to rootfs /tmp with 0o600 permissions
     /// 6. Executes `mitamae local <recipe>` via the isolation context
     /// 7. Returns an error if the process fails or exits without status
-    pub fn execute(&self, context: &dyn IsolationContext) -> Result<()> {
+    pub fn execute(
+        &self,
+        context: &dyn IsolationContext,
+        privilege: Option<PrivilegeMethod>,
+    ) -> Result<()> {
         let rootfs = context.rootfs();
         let dry_run = context.dry_run();
 
@@ -266,12 +249,7 @@ impl MitamaeTask {
             recipe_path_in_isolation,
         ];
 
-        let result = crate::phase::execute_in_context(
-            context,
-            &command,
-            "mitamae",
-            self.privilege.resolved_method(),
-        )?;
+        let result = crate::phase::execute_in_context(context, &command, "mitamae", privilege)?;
         crate::phase::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("mitamae recipe completed successfully");

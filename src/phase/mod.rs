@@ -36,6 +36,7 @@ pub use prepare::PrepareConfig;
 pub use prepare::ResolvConfTask;
 pub use provision::MitamaeTask;
 pub use provision::ProvisionTask;
+pub use provision::ResolvedProvisionTask;
 pub use provision::ShellTask;
 
 use crate::config::IsolationConfig;
