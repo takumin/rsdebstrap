@@ -1,0 +1,106 @@
+// Guards the one thing the privilege boundary cannot express in types: *which argv* reaches
+// `CommandSpec::for_task_command`.
+//
+// Who may call it is settled by the compiler. It takes a `TaskCommandToken` whose field is
+// private to `isolation`, so `isolation::direct` is the only module that can build one; every
+// other caller fails to compile. What it may be handed is not, because the program name comes
+// from the profile and so cannot be a `PrivilegedProgram`. A `["cp", …]` argv assembled inside
+// `isolation` would still type-check — this scan is what rejects it.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+// Commands that mutate the filesystem and therefore belong to `RootfsOps`.
+const FILESYSTEM_COMMANDS: &[&str] = &["cp", "mv", "rm", "ln", "chmod", "chown", "mkdir", "touch"];
+
+const TASK_CONSTRUCTOR: &str = "for_task_command";
+
+fn rust_sources(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("cannot read directory entry").path();
+        if path.is_dir() {
+            found.extend(rust_sources(&path));
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            found.push(path);
+        }
+    }
+    found.sort();
+    found
+}
+
+// Line index where test code starts, or `None` when the file has no test module. Every
+// `#[cfg(test)]` in `src/` is a trailing module at column 0, so anything below the first
+// one is test code.
+fn test_region_start(contents: &str) -> Option<usize> {
+    contents
+        .lines()
+        .position(|line| line.trim_start().starts_with("#[cfg(test)]"))
+}
+
+#[test]
+fn the_task_command_constructor_is_not_used_to_mutate_the_rootfs() {
+    let mut offenders = Vec::new();
+
+    for path in rust_sources(Path::new("src")) {
+        let contents = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let production_ends = test_region_start(&contents).unwrap_or(usize::MAX);
+        let lines: Vec<&str> = contents.lines().collect();
+
+        for (index, line) in lines.iter().enumerate() {
+            if index >= production_ends || !line.contains(TASK_CONSTRUCTOR) {
+                continue;
+            }
+            // The argv may be built across several lines, so look at a window: a call is
+            // suspicious if a coreutils name appears near the constructor.
+            let window = lines[index..lines.len().min(index + 6)].join(" ");
+            for command in FILESYSTEM_COMMANDS {
+                if window.contains(&format!("\"{command}\"")) {
+                    offenders.push(format!("{}:{}: {}", path.display(), index + 1, line.trim()));
+                }
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "a filesystem command reached `{TASK_CONSTRUCTOR}` ({} occurrence(s)):\n{}\n\n\
+        That constructor is for the program a provision task declared. To modify the \
+        rootfs, use `RootfsOps` (`src/rootfs/`): it resolves each path component with \
+        `O_NOFOLLOW` against a directory descriptor, so a planted symlink cannot redirect \
+        the write — which a path string handed to `cp` under `sudo` can. See the Privilege \
+        boundary section of docs/ARCHITECTURE.md.",
+        offenders.len(),
+        offenders.join("\n"),
+    );
+}
+
+// The check above is vacuous if the scan cannot see production code, and it would stay
+// green forever if the constructor were renamed. Pin both.
+#[test]
+fn the_scan_reaches_production_code_and_the_constructor_still_exists() {
+    let sources = rust_sources(Path::new("src"));
+    assert!(sources.len() > 10, "only found {} sources under src/", sources.len());
+
+    let direct = sources
+        .iter()
+        .find(|p| p.ends_with("isolation/direct.rs"))
+        .expect("expected src/isolation/direct.rs to exist");
+    let contents = fs::read_to_string(direct).unwrap();
+    let production_ends = test_region_start(&contents).unwrap_or(usize::MAX);
+
+    let reached = contents
+        .lines()
+        .take(production_ends)
+        .any(|l| l.contains(TASK_CONSTRUCTOR));
+    assert!(
+        reached,
+        "`{TASK_CONSTRUCTOR}` is not called in the production half of {} — either the scan \
+        is not reaching production code, or the constructor was renamed and this guard is \
+        now checking for a name that no longer exists",
+        direct.display()
+    );
+}

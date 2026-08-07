@@ -3,7 +3,6 @@
 mod helpers;
 
 use rsdebstrap::RsdebstrapError;
-use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::phase::{MitamaeTask, ScriptSource};
 use tempfile::tempdir;
 
@@ -31,15 +30,13 @@ fn test_execute_inline_recipe_success() {
     setup_rootfs_with_tmp(&temp_dir);
     let binary = create_fake_binary(&temp_dir);
 
-    let mut task = MitamaeTask::new(
+    let task = MitamaeTask::new(
         ScriptSource::Content("package 'vim' do\n  action :install\nend\n".to_string()),
         binary,
     );
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_ok(), "inline recipe should succeed, got: {:?}", result);
 
@@ -76,12 +73,10 @@ fn test_execute_external_recipe_success() {
     let recipe_utf8 =
         camino::Utf8PathBuf::from_path_buf(recipe_path).expect("path should be valid UTF-8");
 
-    let mut task = MitamaeTask::new(ScriptSource::Script(recipe_utf8), binary);
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = MitamaeTask::new(ScriptSource::Script(recipe_utf8), binary);
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_ok(), "external recipe should succeed, got: {:?}", result);
 
@@ -98,15 +93,13 @@ fn test_execute_dry_run_skips_file_operations() {
         .expect("path should be valid UTF-8");
 
     // Do NOT create /tmp - dry_run should skip validation
-    let mut task = MitamaeTask::new(
+    let task = MitamaeTask::new(
         ScriptSource::Content("package 'vim'".to_string()),
         "/usr/local/bin/mitamae".into(),
     );
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new_dry_run(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_ok(), "dry_run should skip validation, got: {:?}", result);
 
@@ -131,12 +124,10 @@ fn test_execute_failure_returns_error() {
     setup_rootfs_with_tmp(&temp_dir);
     let binary = create_fake_binary(&temp_dir);
 
-    let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
 
     let context = MockContext::with_failure(&rootfs, 1);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let anyhow_err = result.unwrap_err();
@@ -162,12 +153,11 @@ fn test_execute_cleans_up_files() {
     setup_rootfs_with_tmp(&temp_dir);
     let binary = create_fake_binary(&temp_dir);
 
-    let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
 
     let context = MockContext::new(&rootfs);
-    task.execute(&context).expect("execute should succeed");
+    task.execute(&context, None)
+        .expect("execute should succeed");
 
     // Verify temp files were cleaned up by TempFileGuard (RAII)
     let tmp_dir = temp_dir.path().join("tmp");
@@ -195,12 +185,10 @@ fn test_execute_fails_when_context_execute_errors() {
     setup_rootfs_with_tmp(&temp_dir);
     let binary = create_fake_binary(&temp_dir);
 
-    let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
 
     let context = MockContext::with_error(&rootfs, "connection to isolation backend lost");
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -222,12 +210,10 @@ fn test_execute_with_no_exit_status_returns_error() {
     setup_rootfs_with_tmp(&temp_dir);
     let binary = create_fake_binary(&temp_dir);
 
-    let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
 
     let context = MockContext::with_no_status(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err(), "status: None should be treated as error");
     let anyhow_err = result.unwrap_err();
@@ -259,12 +245,10 @@ fn test_execute_without_tmp_directory() {
     // Do NOT create /tmp
     let binary = create_fake_binary(&temp_dir);
 
-    let mut task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = MitamaeTask::new(ScriptSource::Content("package 'vim'".to_string()), binary);
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());

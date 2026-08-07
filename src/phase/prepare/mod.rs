@@ -13,14 +13,13 @@
 pub mod mount;
 pub mod resolv_conf;
 
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub use mount::MountTask;
 pub use resolv_conf::ResolvConfTask;
 
-use crate::phase::PhaseItem;
+use crate::phase::PrepareItem;
 
 /// Prepare phase configuration (named-field, schema-first).
 ///
@@ -28,8 +27,7 @@ use crate::phase::PhaseItem;
 /// entries) is rejected by `yaml_serde` at parse time, and an unknown key is
 /// rejected by `deny_unknown_fields` — so the "at most one" invariants hold
 /// structurally instead of being validated after parsing.
-#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PrepareConfig {
     /// Mount task declaring filesystem mounts for the rootfs.
@@ -43,8 +41,8 @@ pub struct PrepareConfig {
 impl PrepareConfig {
     /// Returns the present phase items in fixed execution order: `mount` then
     /// `resolv_conf`. The order is structural, independent of YAML key order.
-    pub(crate) fn items(&self) -> Vec<&dyn PhaseItem> {
-        let mut items: Vec<&dyn PhaseItem> = Vec::new();
+    pub(crate) fn items(&self) -> Vec<&dyn PrepareItem> {
+        let mut items: Vec<&dyn PrepareItem> = Vec::new();
         if let Some(mount) = &self.mount {
             items.push(mount);
         }

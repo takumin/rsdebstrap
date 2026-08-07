@@ -1,25 +1,18 @@
-//! resolv.conf lifecycle management for rootfs isolation.
+//! resolv.conf lifecycle within a rootfs.
 //!
-//! This module provides [`RootfsResolvConf`], an RAII guard that manages
-//! the resolv.conf file within a rootfs directory. It backs up the existing
-//! resolv.conf before setup and restores it on teardown, ensuring DNS
-//! resolution works inside chroot environments.
+//! [`RootfsResolvConf`] is an RAII guard that gives provisioning a working
+//! `/etc/resolv.conf` and puts back whatever was there when it is done.
 
-use std::fs;
 use std::sync::Arc;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use rustix::fs::{self as rfs, CWD, Mode, OFlags};
 use tracing::info;
 
 use crate::config::ResolvConfConfig;
 use crate::error::RsdebstrapError;
-use crate::executor::{CommandExecutor, CommandSpec};
-use crate::privilege::PrivilegeMethod;
-
-/// Backup suffix appended to the original resolv.conf during setup.
-const BACKUP_SUFFIX: &str = ".rsdebstrap-orig";
+use crate::pipeline::Provisioned;
+use crate::rootfs::{RelPath, RootfsOps, TakenEntry};
 
 /// Generates resolv.conf content from explicit configuration.
 pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
@@ -34,74 +27,82 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
     lines.join("\n") + "\n"
 }
 
-/// RAII guard for resolv.conf lifecycle within a rootfs.
+/// Evidence that the rootfs's own resolv.conf is back in place.
 ///
-/// Backs up the existing resolv.conf before writing new content, and restores
-/// the original on teardown. The `Drop` implementation ensures cleanup even
-/// on error paths.
+/// [`Pipeline::run_assemble`](crate::pipeline::Pipeline::run_assemble) requires
+/// one, and only this module can produce one. The restore has to land between
+/// provisioning and assembly — an assemble `resolv_conf` task installs the
+/// permanent `/etc/resolv.conf`, and a restore running afterwards would
+/// overwrite it — so the orchestration is not free to reorder the two.
+#[must_use]
+#[derive(Debug)]
+pub struct Restored(());
+
+impl Restored {
+    /// For a run with no prepare guard, where nothing was ever detached.
+    ///
+    /// The only way to obtain a `Restored` without restoring anything, and it
+    /// still requires having provisioned first.
+    pub(crate) fn nothing_was_detached(_provisioned: Provisioned) -> Self {
+        Self(())
+    }
+}
+
+/// The entry this guard replaces and restores.
+fn resolv_conf_path() -> RelPath {
+    RelPath::parse("/etc/resolv.conf").expect("literal path is valid")
+}
+
+/// RAII guard for resolv.conf within a rootfs.
 ///
-/// The `host_resolv_conf` parameter allows injecting a test-specific path
-/// instead of using the real `/etc/resolv.conf`.
+/// Detaches the rootfs's own `/etc/resolv.conf` on setup, installs a temporary
+/// one so provisioning can resolve names, and restores the original on teardown.
+/// `Drop` retries the restore if the caller never did.
+///
+/// The original is held in memory as a [`TakenEntry`] rather
+/// than moved to a backup path; that type documents why.
 pub struct RootfsResolvConf {
-    rootfs: Utf8PathBuf,
+    ops: Arc<dyn RootfsOps>,
     config: Option<ResolvConfConfig>,
     host_resolv_conf: Utf8PathBuf,
-    executor: Arc<dyn CommandExecutor>,
-    privilege: Option<PrivilegeMethod>,
+    /// For log lines only.
+    rootfs: Utf8PathBuf,
+    /// What setup detached, if anything was there.
+    original: Option<TakenEntry>,
     active: bool,
     dry_run: bool,
     torn_down: bool,
 }
 
 impl RootfsResolvConf {
-    /// Creates a new `RootfsResolvConf` instance.
-    ///
-    /// If `config` is `None`, setup and teardown are no-ops.
+    /// Creates a guard over `rootfs`. If `config` is `None`, setup and teardown
+    /// are no-ops.
     pub fn new(
         rootfs: &Utf8Path,
         config: Option<ResolvConfConfig>,
         host_resolv_conf: &Utf8Path,
-        executor: Arc<dyn CommandExecutor>,
-        privilege: Option<PrivilegeMethod>,
+        ops: Arc<dyn RootfsOps>,
         dry_run: bool,
     ) -> Self {
         Self {
-            rootfs: rootfs.to_owned(),
+            ops,
             config,
             host_resolv_conf: host_resolv_conf.to_owned(),
-            executor,
-            privilege,
+            rootfs: rootfs.to_owned(),
+            original: None,
             active: false,
             dry_run,
             torn_down: false,
         }
     }
 
-    /// Path to the rootfs resolv.conf.
-    fn resolv_conf_path(&self) -> Utf8PathBuf {
-        self.rootfs.join("etc/resolv.conf")
-    }
-
-    /// Path to the backup of the original resolv.conf.
-    fn backup_path(&self) -> Utf8PathBuf {
-        let mut path = self.resolv_conf_path().into_string();
-        path.push_str(BACKUP_SUFFIX);
-        Utf8PathBuf::from(path)
-    }
-
-    /// Path to the rootfs /etc directory.
-    fn etc_path(&self) -> Utf8PathBuf {
-        self.rootfs.join("etc")
-    }
-
-    /// Sets up resolv.conf in the rootfs.
+    /// Detaches the existing resolv.conf and installs the configured one.
     ///
-    /// 1. Validates that `<rootfs>/etc` exists and is not a symlink
-    /// 2. Determines content (copy from host or generate)
-    /// 3. Backs up existing resolv.conf
-    /// 4. Writes new resolv.conf with mode 0o644
+    /// # Errors
     ///
-    /// On write failure, rolls back the backup rename.
+    /// Returns an error if the entry cannot be detached or the replacement
+    /// cannot be written. On a write failure the detached entry is put back
+    /// before returning, so a failed setup leaves the rootfs as it was found.
     pub fn setup(&mut self) -> Result<()> {
         let Some(config) = &self.config else {
             return Ok(());
@@ -112,138 +113,84 @@ impl RootfsResolvConf {
             return Ok(());
         }
 
-        let etc = self.etc_path();
+        let path = resolv_conf_path();
+        let original = self.ops.take(&path)?;
 
-        // Validate /etc exists and is not a symlink (fd-based, avoids TOCTOU with symlink_metadata)
-        // Note: A TOCTOU window remains between this fd-based check and subsequent
-        // command execution via CommandExecutor, as external commands (mv, cp) operate
-        // on path strings. This is inherent when using privilege escalation commands.
-        let _etc_fd = rfs::openat(
-            CWD,
-            etc.as_str(),
-            OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(|e| match e {
-            rustix::io::Errno::LOOP | rustix::io::Errno::NOTDIR => {
-                RsdebstrapError::Isolation(format!(
-                    "{} is a symlink or not a directory, refusing to set up resolv.conf \
-                    (possible symlink attack)",
-                    etc
-                ))
-            }
-            _ => RsdebstrapError::io(format!("failed to open {}", etc), std::io::Error::from(e)),
-        })?;
-
-        let resolv_path = self.resolv_conf_path();
-        let backup_path = self.backup_path();
-
-        if backup_path.exists() {
-            return Err(RsdebstrapError::Isolation(format!(
-                "backup file {} already exists (possible leftover from a previous crash; \
-                please restore or remove it manually)",
-                backup_path
-            ))
-            .into());
-        }
-
-        // symlink_metadata: the original may be a regular file or a symlink.
-        let had_original = resolv_path.symlink_metadata().is_ok();
-        if had_original {
-            let spec =
-                CommandSpec::new("mv", vec![resolv_path.to_string(), backup_path.to_string()])
-                    .with_privilege(self.privilege);
-            self.executor.execute_checked(&spec)?;
-        }
-
-        let write_result = if config.copy {
-            let spec = CommandSpec::new(
-                "cp",
-                vec![self.host_resolv_conf.to_string(), resolv_path.to_string()],
-            )
-            .with_privilege(self.privilege);
-            self.executor.execute_checked(&spec)
-        } else {
-            let content = generate_resolv_conf(config);
-            let temp = tempfile::NamedTempFile::new().map_err(|e| {
-                RsdebstrapError::io(
-                    "failed to create temporary file for resolv.conf".to_string(),
-                    e,
-                )
-            })?;
-            fs::write(temp.path(), &content).map_err(|e| {
-                RsdebstrapError::io(
-                    format!("failed to write temporary resolv.conf: {}", temp.path().display()),
-                    e,
-                )
-            })?;
-            let temp_path = temp.path().to_string_lossy().to_string();
-            let spec = CommandSpec::new("cp", vec![temp_path, resolv_path.to_string()])
-                .with_privilege(self.privilege);
-            self.executor.execute_checked(&spec)
-        };
-
-        if let Err(write_err) = write_result {
-            if had_original {
-                let rollback_spec =
-                    CommandSpec::new("mv", vec![backup_path.to_string(), resolv_path.to_string()])
-                        .with_privilege(self.privilege);
-                if let Err(rollback_err) = self.executor.execute_checked(&rollback_spec) {
-                    tracing::error!(
-                        "failed to roll back resolv.conf backup after write failure: {}",
-                        rollback_err
-                    );
+        // Read the host's copy here rather than in `RootfsOps`: the ops may be served by
+        // the privileged helper, and there is no reason for root to be the one resolving a
+        // host path. What crosses the boundary is bytes.
+        let installed = if config.copy {
+            match std::fs::read(&self.host_resolv_conf) {
+                Ok(content) => self.ops.write_file(&path, &content, 0o644),
+                Err(e) => {
+                    Err(RsdebstrapError::io(format!("failed to read {}", self.host_resolv_conf), e))
                 }
             }
-            return Err(write_err);
-        }
+        } else {
+            self.ops
+                .write_file(&path, generate_resolv_conf(config).as_bytes(), 0o644)
+        };
 
-        let chmod_spec =
-            CommandSpec::new("chmod", vec!["644".to_string(), resolv_path.to_string()])
-                .with_privilege(self.privilege);
-        if let Err(e) = self.executor.execute_checked(&chmod_spec) {
-            tracing::warn!("failed to set permissions on {}: {}", resolv_path, e);
+        if let Err(write_err) = installed {
+            if let Some(entry) = &original
+                && let Err(rollback_err) = self.ops.put_back(&path, entry)
+            {
+                tracing::error!(
+                    "failed to restore the original resolv.conf after a failed setup: {}",
+                    rollback_err
+                );
+            }
+            return Err(write_err.into());
         }
 
         info!("set up resolv.conf in {}", self.rootfs);
+        self.original = original;
         self.active = true;
         Ok(())
     }
 
-    /// Tears down resolv.conf, restoring the original if it was backed up.
+    /// Restores the entry setup detached, in exchange for the token
+    /// [`Pipeline::run_assemble`](crate::pipeline::Pipeline::run_assemble)
+    /// requires.
     ///
-    /// This method is idempotent after a successful teardown.
+    /// Taking [`Provisioned`] and yielding [`Restored`] is what places this
+    /// between provisioning and assembly: assembly cannot be called without the
+    /// token, and the token cannot exist before this returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the original cannot be written back. `Drop` retries
+    /// the restore in that case.
+    pub fn restore(&mut self, _provisioned: Provisioned) -> Result<Restored> {
+        self.teardown()?;
+        Ok(Restored(()))
+    }
+
+    /// Restores the entry setup detached. Idempotent after a successful call.
     pub fn teardown(&mut self) -> Result<()> {
         if !self.active || self.torn_down {
             return Ok(());
         }
 
-        let resolv_path = self.resolv_conf_path();
-        let backup_path = self.backup_path();
-
-        let rm_spec = CommandSpec::new("rm", vec!["-f".to_string(), resolv_path.to_string()])
-            .with_privilege(self.privilege);
-        self.executor.execute_checked(&rm_spec)?;
-
-        // Restore the backup if present. try_exists() surfaces stat errors
-        // (e.g. permissions) so the teardown fails loudly instead of silently
-        // skipping the restore and stranding the backup.
-        let have_backup = backup_path.try_exists().map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to check for resolv.conf backup {}", backup_path),
-                e,
-            )
-        })?;
-        if have_backup {
-            let spec =
-                CommandSpec::new("mv", vec![backup_path.to_string(), resolv_path.to_string()])
-                    .with_privilege(self.privilege);
-            self.executor.execute_checked(&spec)?;
+        let path = resolv_conf_path();
+        match &self.original {
+            // Overwrites the temporary resolv.conf in one atomic rename; no
+            // window exists in which the rootfs has no resolv.conf at all.
+            Some(entry) => self.ops.put_back(&path, entry)?,
+            None => self.ops.remove(&path)?,
         }
 
         info!("restored resolv.conf in {}", self.rootfs);
         self.torn_down = true;
         Ok(())
+    }
+
+    /// Gives up ownership of the original without restoring it.
+    ///
+    /// Used when a later phase has taken responsibility for the final
+    /// `/etc/resolv.conf`, so the `Drop` backstop must not overwrite it.
+    pub fn disarm(&mut self) {
+        self.torn_down = true;
     }
 }
 
@@ -255,88 +202,130 @@ impl Drop for RootfsResolvConf {
         {
             tracing::error!(
                 "failed to restore resolv.conf during cleanup: {}. \
-                Manual cleanup may be required: check {}/etc/resolv.conf and \
-                {}/etc/resolv.conf{}",
+                {}/etc/resolv.conf may still hold the temporary configuration",
                 e,
-                self.rootfs,
-                self.rootfs,
-                BACKUP_SUFFIX
+                self.rootfs
             );
         }
+    }
+}
+
+// Deliberately omits `original`: a `TakenEntry::File` holds the detached file's bytes,
+// and dumping them says nothing about the guard. What a reader wants is whether setup
+// ran and whether the restore is still owed.
+impl std::fmt::Debug for RootfsResolvConf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RootfsResolvConf")
+            .field("rootfs", &self.rootfs)
+            .field("active", &self.active)
+            .field("detached", &self.original.is_some())
+            .field("dry_run", &self.dry_run)
+            .field("torn_down", &self.torn_down)
+            .finish_non_exhaustive()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::{CommandSpec, ExecutionResult};
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::ExitStatus;
-    use std::sync::Mutex;
+    use crate::rootfs::LocalRootfsOps;
+    use std::fs;
 
-    #[derive(Debug, Clone)]
-    struct RecordedCall {
-        args: Vec<String>,
-        privilege: Option<PrivilegeMethod>,
-    }
-
-    struct MockResolvConfExecutor {
-        calls: Mutex<Vec<RecordedCall>>,
-        fail_on_call: Option<usize>,
-    }
-
-    impl MockResolvConfExecutor {
-        fn new() -> Self {
-            Self {
-                calls: Mutex::new(Vec::new()),
-                fail_on_call: None,
-            }
-        }
-
-        fn failing_on(call_index: usize) -> Self {
-            Self {
-                fail_on_call: Some(call_index),
-                ..Self::new()
-            }
-        }
-
-        fn calls(&self) -> Vec<RecordedCall> {
-            self.calls.lock().unwrap().clone()
-        }
-    }
-
-    impl CommandExecutor for MockResolvConfExecutor {
-        fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
-            let mut calls = self.calls.lock().unwrap();
-            let index = calls.len();
-            let mut args = vec![spec.command.clone()];
-            args.extend(spec.args.iter().cloned());
-            calls.push(RecordedCall {
-                args,
-                privilege: spec.privilege,
-            });
-            drop(calls);
-
-            if self.fail_on_call == Some(index) {
-                Ok(ExecutionResult {
-                    status: Some(ExitStatus::from_raw(1 << 8)),
-                })
-            } else {
-                Ok(ExecutionResult {
-                    status: Some(ExitStatus::from_raw(0)),
-                })
-            }
-        }
-    }
-
-    fn create_rootfs_with_etc(dir: &std::path::Path) -> Utf8PathBuf {
-        let rootfs = Utf8PathBuf::from_path_buf(dir.to_path_buf()).unwrap();
+    fn rootfs_with_etc() -> (tempfile::TempDir, Utf8PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let rootfs = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
         fs::create_dir_all(rootfs.join("etc")).unwrap();
-        rootfs
+        (temp, rootfs)
     }
 
-    fn mock_executor() -> Arc<MockResolvConfExecutor> {
-        Arc::new(MockResolvConfExecutor::new())
+    fn guard(rootfs: &Utf8Path, config: Option<ResolvConfConfig>) -> RootfsResolvConf {
+        let ops = Arc::new(LocalRootfsOps::open(rootfs).unwrap());
+        RootfsResolvConf::new(rootfs, config, Utf8Path::new("/etc/resolv.conf"), ops, false)
+    }
+
+    fn generated(name_servers: &[&str]) -> ResolvConfConfig {
+        ResolvConfConfig {
+            copy: false,
+            name_servers: name_servers.iter().map(|s| s.parse().unwrap()).collect(),
+            search: vec![],
+        }
+    }
+
+    fn resolv_conf(rootfs: &Utf8Path) -> Utf8PathBuf {
+        rootfs.join("etc/resolv.conf")
+    }
+
+    // The `Debug` impl reports the guard's state, and the detached entry is not part of
+    // it: `TakenEntry::File` carries the bytes of whatever was replaced, and a reader
+    // asking about the guard is asking whether the restore is still owed, not what the
+    // old file said. `detached` answers that in one bool.
+    #[test]
+    fn debug_reports_state_without_the_detached_content() {
+        let (_tmp, rootfs) = rootfs_with_etc();
+        let secret = "nameserver 198.51.100.99\n";
+        fs::write(resolv_conf(&rootfs), secret).unwrap();
+
+        let mut g = guard(&rootfs, Some(generated(&["192.0.2.1"])));
+        g.setup().unwrap();
+        let rendered = format!("{g:?}");
+
+        assert!(rendered.contains("detached: true"), "state is missing: {rendered}");
+        assert!(rendered.contains("active: true"), "state is missing: {rendered}");
+        assert!(rendered.contains("torn_down: false"), "state is missing: {rendered}");
+        // The bytes render as a decimal array, so look for the first few of them.
+        let as_bytes = format!("{:?}", secret.as_bytes());
+        let head = &as_bytes[..as_bytes.len() / 2];
+        assert!(!rendered.contains(head), "the detached content leaked into Debug: {rendered}");
+        assert!(rendered.ends_with(".. }"), "omitted fields are not marked: {rendered}");
+    }
+
+    // Fails the *first* write only, so setup's install fails while the rollback
+    // that follows it succeeds. Failing every write would also break the
+    // rollback and the test could not tell the two apart.
+    struct FailFirstWrite {
+        inner: LocalRootfsOps,
+        failed: std::sync::atomic::AtomicBool,
+    }
+
+    impl FailFirstWrite {
+        fn new(inner: LocalRootfsOps) -> Self {
+            Self {
+                inner,
+                failed: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl RootfsOps for FailFirstWrite {
+        fn write_file(
+            &self,
+            path: &RelPath,
+            content: &[u8],
+            mode: u32,
+        ) -> std::result::Result<(), crate::error::RsdebstrapError> {
+            if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::error::RsdebstrapError::Isolation("write refused".into()));
+            }
+            self.inner.write_file(path, content, mode)
+        }
+        fn write_symlink(
+            &self,
+            path: &RelPath,
+            target: &str,
+        ) -> std::result::Result<(), crate::error::RsdebstrapError> {
+            self.inner.write_symlink(path, target)
+        }
+
+        fn remove(&self, path: &RelPath) -> std::result::Result<(), crate::error::RsdebstrapError> {
+            self.inner.remove(path)
+        }
+
+        fn take(
+            &self,
+            path: &RelPath,
+        ) -> std::result::Result<Option<TakenEntry>, crate::error::RsdebstrapError> {
+            self.inner.take(path)
+        }
     }
 
     #[test]
@@ -387,500 +376,208 @@ mod tests {
     }
 
     #[test]
-    fn setup_with_none_config_is_noop() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            None,
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        rc.setup().unwrap();
-        assert!(!rc.active);
-        assert_eq!(executor.calls().len(), 0);
-        rc.teardown().unwrap();
+    fn no_config_leaves_the_rootfs_untouched() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
+
+        let mut g = guard(&rootfs, None);
+        g.setup().unwrap();
+        g.teardown().unwrap();
+
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
     }
 
     #[test]
-    fn setup_dry_run_does_not_touch_filesystem() {
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            Utf8Path::new("/nonexistent/rootfs"),
-            Some(ResolvConfConfig {
-                copy: false,
-                name_servers: vec!["8.8.8.8".parse().unwrap()],
-                search: vec![],
-            }),
+    fn dry_run_leaves_the_rootfs_untouched() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
+
+        let ops = Arc::new(LocalRootfsOps::open(&rootfs).unwrap());
+        let mut g = RootfsResolvConf::new(
+            &rootfs,
+            Some(generated(&["8.8.8.8"])),
             Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
+            ops,
             true,
         );
-        rc.setup().unwrap();
-        assert!(!rc.active);
-        assert_eq!(executor.calls().len(), 0);
+        g.setup().unwrap();
+
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
     }
 
     #[test]
-    fn setup_copy_mode_issues_correct_commands() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
+    fn setup_installs_the_generated_config() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
 
-        let host_resolv = temp.path().join("host_resolv.conf");
-        fs::write(&host_resolv, "nameserver 1.2.3.4\n").unwrap();
-        let host_path = Utf8PathBuf::from_path_buf(host_resolv).unwrap();
+        g.setup().unwrap();
 
+        assert_eq!(
+            fs::read_to_string(resolv_conf(&rootfs)).unwrap(),
+            "# Generated by rsdebstrap\nnameserver 1.1.1.1\n"
+        );
+    }
+
+    #[test]
+    fn setup_copies_the_host_file_in_copy_mode() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        let host = rootfs.join("host-resolv.conf");
+        fs::write(&host, "nameserver 10.0.0.1\n").unwrap();
+
+        let ops = Arc::new(LocalRootfsOps::open(&rootfs).unwrap());
         let config = ResolvConfConfig {
             copy: true,
             name_servers: vec![],
             search: vec![],
         };
+        let mut g = RootfsResolvConf::new(&rootfs, Some(config), &host, ops, false);
+        g.setup().unwrap();
 
-        let executor = mock_executor();
-        let mut rc =
-            RootfsResolvConf::new(&rootfs, Some(config), &host_path, executor.clone(), None, false);
-        rc.setup().unwrap();
-        assert!(rc.active);
-
-        let calls = executor.calls();
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].args[0], "cp");
-        assert_eq!(calls[0].args[1], host_path.as_str());
-        assert_eq!(calls[0].args[2], rootfs.join("etc/resolv.conf").as_str());
-        assert_eq!(calls[1].args[0], "chmod");
-        assert_eq!(calls[1].args[1], "644");
-        assert_eq!(calls[1].args[2], rootfs.join("etc/resolv.conf").as_str());
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "nameserver 10.0.0.1\n");
     }
 
     #[test]
-    fn setup_generate_mode_issues_correct_commands() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
+    fn teardown_restores_a_regular_file_original() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
 
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec!["example.com".to_string()],
-        };
+        let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+        g.setup().unwrap();
+        assert_ne!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
 
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
+        g.teardown().unwrap();
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
+    }
+
+    // A fresh systemd rootfs ships /etc/resolv.conf as a symlink into /run whose
+    // target does not exist yet. The old guard checked for its backup with
+    // `try_exists()`, which follows the link and reports a dangling one as
+    // absent, so the restore was skipped and the original was lost. Nothing is
+    // stat'd through a link now: the entry is held as a symlink value.
+    #[test]
+    fn teardown_restores_a_dangling_symlink_original() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        let target = "../run/systemd/resolve/stub-resolv.conf";
+        std::os::unix::fs::symlink(target, resolv_conf(&rootfs)).unwrap();
+
+        let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+        g.setup().unwrap();
+        assert!(
+            fs::symlink_metadata(resolv_conf(&rootfs))
+                .unwrap()
+                .file_type()
+                .is_file()
+        );
+
+        g.teardown().unwrap();
+
+        let restored = fs::symlink_metadata(resolv_conf(&rootfs)).unwrap();
+        assert!(restored.file_type().is_symlink(), "original was not restored as a symlink");
+        assert_eq!(
+            fs::read_link(resolv_conf(&rootfs))
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            target
+        );
+    }
+
+    #[test]
+    fn teardown_removes_the_temporary_file_when_there_was_no_original() {
+        let (_temp, rootfs) = rootfs_with_etc();
+
+        let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+        g.setup().unwrap();
+        g.teardown().unwrap();
+
+        assert!(!resolv_conf(&rootfs).exists());
+    }
+
+    #[test]
+    fn a_failed_setup_puts_the_original_back() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
+
+        let ops = Arc::new(FailFirstWrite::new(LocalRootfsOps::open(&rootfs).unwrap()));
+        let mut g = RootfsResolvConf::new(
             &rootfs,
-            Some(config),
+            Some(generated(&["1.1.1.1"])),
             Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
+            ops,
             false,
         );
-        rc.setup().unwrap();
-        assert!(rc.active);
 
-        let calls = executor.calls();
-        assert_eq!(calls.len(), 2);
-        // cp temp→resolv (temp file path is random)
-        assert_eq!(calls[0].args[0], "cp");
-        assert_eq!(calls[0].args[2], rootfs.join("etc/resolv.conf").as_str());
-        assert_eq!(calls[1].args[0], "chmod");
-        assert_eq!(calls[1].args[1], "644");
+        assert!(g.setup().is_err());
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
     }
 
     #[test]
-    fn setup_backs_up_existing_resolv_conf() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
-        fs::write(rootfs.join("etc/resolv.conf"), "original\n").unwrap();
+    fn setup_refuses_a_symlinked_etc() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        let outside = rootfs.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::remove_dir(rootfs.join("etc")).unwrap();
+        std::os::unix::fs::symlink(&outside, rootfs.join("etc")).unwrap();
 
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
+        let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+        let err = g.setup().unwrap_err();
 
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        rc.setup().unwrap();
-
-        let calls = executor.calls();
-        assert_eq!(calls.len(), 3);
-        assert_eq!(calls[0].args[0], "mv");
-        assert_eq!(calls[0].args[1], rootfs.join("etc/resolv.conf").as_str());
-        assert!(calls[0].args[2].contains(BACKUP_SUFFIX));
-        assert_eq!(calls[1].args[0], "cp");
-        assert_eq!(calls[2].args[0], "chmod");
+        assert!(err.to_string().contains("symlink"), "unexpected error: {err}");
+        assert!(!outside.join("resolv.conf").exists(), "wrote through the symlink");
     }
 
     #[test]
-    fn setup_with_privilege_adds_privilege_to_commands() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
-
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            Some(PrivilegeMethod::Sudo),
-            false,
-        );
-        rc.setup().unwrap();
-
-        let calls = executor.calls();
-        for call in &calls {
-            assert_eq!(
-                call.privilege,
-                Some(PrivilegeMethod::Sudo),
-                "command {:?} should have sudo privilege",
-                call.args[0]
-            );
-        }
-    }
-
-    #[test]
-    fn teardown_issues_rm_command() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
-        let resolv_path = rootfs.join("etc/resolv.conf");
-
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        rc.setup().unwrap();
-
-        let setup_call_count = executor.calls().len();
-        rc.teardown().unwrap();
-        assert!(rc.torn_down);
-
-        let calls = executor.calls();
-        let teardown_calls = &calls[setup_call_count..];
-        // Only rm -f (no backup exists since mock executor didn't actually mv)
-        assert_eq!(teardown_calls.len(), 1);
-        assert_eq!(teardown_calls[0].args[0], "rm");
-        assert_eq!(teardown_calls[0].args[1], "-f");
-        assert_eq!(teardown_calls[0].args[2], resolv_path.as_str());
-    }
-
-    #[test]
-    fn teardown_restores_backup_when_exists() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
-        let resolv_path = rootfs.join("etc/resolv.conf");
-        let backup_path = Utf8PathBuf::from(format!("{}{}", resolv_path, BACKUP_SUFFIX));
-
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        rc.setup().unwrap();
-
-        // Manually create backup file to simulate what `mv` would have done
-        fs::write(&backup_path, "original\n").unwrap();
-
-        let setup_call_count = executor.calls().len();
-        rc.teardown().unwrap();
-
-        let calls = executor.calls();
-        let teardown_calls = &calls[setup_call_count..];
-        assert_eq!(teardown_calls.len(), 2);
-        assert_eq!(teardown_calls[0].args[0], "rm");
-        assert_eq!(teardown_calls[0].args[1], "-f");
-        assert_eq!(teardown_calls[0].args[2], resolv_path.as_str());
-        assert_eq!(teardown_calls[1].args[0], "mv");
-        assert_eq!(teardown_calls[1].args[1], backup_path.as_str());
-        assert_eq!(teardown_calls[1].args[2], resolv_path.as_str());
-    }
-
-    #[test]
-    fn setup_write_failure_triggers_rollback() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
-        fs::write(rootfs.join("etc/resolv.conf"), "original\n").unwrap();
-
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        // mv backup succeeds (index 0), cp write fails (index 1)
-        let executor = Arc::new(MockResolvConfExecutor::failing_on(1));
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        let err = rc.setup().unwrap_err();
-        assert!(err.to_string().contains("command execution failed"));
-        assert!(!rc.active);
-
-        let calls = executor.calls();
-        assert_eq!(calls.len(), 3);
-        assert_eq!(calls[0].args[0], "mv"); // backup
-        assert_eq!(calls[1].args[0], "cp"); // write (failed)
-        assert_eq!(calls[2].args[0], "mv"); // rollback
-        let backup_path = format!("{}{}", rootfs.join("etc/resolv.conf"), BACKUP_SUFFIX);
-        assert_eq!(calls[2].args[1], backup_path);
-        assert_eq!(calls[2].args[2], rootfs.join("etc/resolv.conf").as_str());
-    }
-
-    #[test]
-    fn setup_write_failure_without_original_skips_rollback() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
-        // No existing resolv.conf
-
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        // cp write fails (index 0, no backup mv since no original)
-        let executor = Arc::new(MockResolvConfExecutor::failing_on(0));
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        let err = rc.setup().unwrap_err();
-        assert!(err.to_string().contains("command execution failed"));
-        assert!(!rc.active);
-
-        let calls = executor.calls();
-        // Only cp (fails), no rollback
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].args[0], "cp");
-    }
-
-    // =========================================================================
-    // Validation tests (pre-executor, filesystem-based)
-    // =========================================================================
-
-    #[test]
-    fn setup_errors_when_etc_missing() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
-        // No /etc created
-
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        let err = rc.setup().unwrap_err();
-        assert!(err.to_string().contains("I/O error"));
-        assert_eq!(executor.calls().len(), 0);
-    }
-
-    #[test]
-    fn setup_errors_when_etc_is_symlink() {
+    fn setup_errors_when_etc_is_missing() {
         let temp = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
 
-        let real_etc = rootfs.join("real_etc");
-        fs::create_dir_all(&real_etc).unwrap();
-        std::os::unix::fs::symlink(&real_etc, rootfs.join("etc")).unwrap();
-
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        let err = rc.setup().unwrap_err();
-        assert!(err.to_string().contains("symlink"));
-        assert_eq!(executor.calls().len(), 0);
+        let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+        assert!(g.setup().is_err());
     }
 
     #[test]
-    fn setup_errors_when_backup_exists() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
+    fn drop_restores_the_original_when_teardown_was_not_called() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
 
-        fs::write(rootfs.join(format!("etc/resolv.conf{}", BACKUP_SUFFIX)), "leftover").unwrap();
-
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        let err = rc.setup().unwrap_err();
-        assert!(err.to_string().contains("already exists"));
-        assert_eq!(executor.calls().len(), 0);
-    }
-
-    #[test]
-    fn drop_triggers_teardown() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
-
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        let executor = mock_executor();
         {
-            let mut rc = RootfsResolvConf::new(
-                &rootfs,
-                Some(config),
-                Utf8Path::new("/etc/resolv.conf"),
-                executor.clone(),
-                None,
-                false,
-            );
-            rc.setup().unwrap();
-            // Drop without calling teardown
+            let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+            g.setup().unwrap();
         }
 
-        let calls = executor.calls();
-        let last = calls.last().unwrap();
-        assert_eq!(last.args[0], "rm");
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
+    }
+
+    // Disarming hands the final state to a later phase, so the Drop backstop
+    // must not overwrite what that phase installed.
+    #[test]
+    fn drop_does_nothing_after_disarm() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
+
+        {
+            let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+            g.setup().unwrap();
+            g.disarm();
+        }
+
+        assert_eq!(
+            fs::read_to_string(resolv_conf(&rootfs)).unwrap(),
+            "# Generated by rsdebstrap\nnameserver 1.1.1.1\n"
+        );
     }
 
     #[test]
     fn teardown_is_idempotent() {
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
 
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
+        let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+        g.setup().unwrap();
+        g.teardown().unwrap();
+        fs::write(resolv_conf(&rootfs), "written after teardown\n").unwrap();
+        g.teardown().unwrap();
 
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        rc.setup().unwrap();
-        let after_setup = executor.calls().len();
-        rc.teardown().unwrap();
-        let after_first_teardown = executor.calls().len();
-        rc.teardown().unwrap();
-        assert_eq!(executor.calls().len(), after_first_teardown);
-        assert!(after_first_teardown > after_setup);
-    }
-
-    #[test]
-    fn teardown_surfaces_stat_error_checking_backup() {
-        // A stat error while checking for the backup — here ELOOP from a
-        // self-referential symlink at the backup path — must fail the teardown
-        // loudly via try_exists(), not be silently swallowed as "no backup" the
-        // way Path::exists() would (which would strand the backup).
-        let temp = tempfile::tempdir().unwrap();
-        let rootfs = create_rootfs_with_etc(temp.path());
-        let config = ResolvConfConfig {
-            copy: false,
-            name_servers: vec!["8.8.8.8".parse().unwrap()],
-            search: vec![],
-        };
-
-        let executor = mock_executor();
-        let mut rc = RootfsResolvConf::new(
-            &rootfs,
-            Some(config),
-            Utf8Path::new("/etc/resolv.conf"),
-            executor.clone(),
-            None,
-            false,
-        );
-        rc.setup().unwrap();
-
-        // Plant a self-referential symlink at the backup path so try_exists()
-        // hits ELOOP. The mock executor never touched the real filesystem, so
-        // nothing else occupies this path.
-        let backup = rootfs.join(format!("etc/resolv.conf{}", BACKUP_SUFFIX));
-        std::os::unix::fs::symlink("resolv.conf.rsdebstrap-orig", &backup).unwrap();
-
-        let err = rc.teardown().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("failed to check for resolv.conf backup"),
-            "unexpected error: {err}"
-        );
-        // Teardown did not complete; the Drop backstop still owns the cleanup.
-        assert!(!rc.torn_down);
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "written after teardown\n");
     }
 }

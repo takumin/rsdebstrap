@@ -18,11 +18,17 @@ struct RecordingExecutor {
 }
 
 impl CommandExecutor for RecordingExecutor {
+    // Every `run_apply` case here passes `dry_run: true`, and the executor is now what says
+    // so: `main` builds it from the flag, and the rest of the run derives from the executor.
+    fn dry_run(&self) -> bool {
+        true
+    }
+
     fn execute(&self, spec: &CommandSpec) -> anyhow::Result<ExecutionResult> {
         self.calls
             .lock()
             .unwrap()
-            .push((spec.command.clone(), spec.args.clone()));
+            .push((spec.command().to_string(), spec.args().to_vec()));
         Ok(ExecutionResult { status: None })
     }
 }
@@ -230,7 +236,7 @@ impl CommandExecutor for FailingExecutor {
         self.calls
             .lock()
             .unwrap()
-            .push((spec.command.clone(), spec.args.clone()));
+            .push((spec.command().to_string(), spec.args().to_vec()));
 
         if current >= self.fail_on_call {
             anyhow::bail!("simulated failure on call {}", current)

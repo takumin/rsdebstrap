@@ -1,8 +1,9 @@
 //! Chroot isolation implementation.
 
-use super::{IsolationContext, IsolationProvider};
-use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
+use super::{IsolationContext, IsolationProvider, RootfsContext};
+use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult, PrivilegedProgram};
 use crate::privilege::PrivilegeMethod;
+use crate::rootfs::RootfsOps;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use std::sync::Arc;
@@ -26,12 +27,12 @@ impl IsolationProvider for ChrootProvider {
         &self,
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
-        dry_run: bool,
+        ops: Arc<dyn RootfsOps>,
     ) -> Result<Box<dyn IsolationContext>> {
         Ok(Box::new(ChrootContext {
             rootfs: rootfs.to_owned(),
             executor,
-            dry_run,
+            ops,
             torn_down: false,
         }))
     }
@@ -44,25 +45,27 @@ impl IsolationProvider for ChrootProvider {
 pub struct ChrootContext {
     rootfs: Utf8PathBuf,
     executor: Arc<dyn CommandExecutor>,
-    dry_run: bool,
+    ops: Arc<dyn RootfsOps>,
     torn_down: bool,
 }
 
-impl IsolationContext for ChrootContext {
-    fn name(&self) -> &'static str {
-        "chroot"
-    }
-
+impl RootfsContext for ChrootContext {
     fn rootfs(&self) -> &Utf8Path {
         &self.rootfs
     }
 
     fn dry_run(&self) -> bool {
-        self.dry_run
+        self.executor.dry_run()
     }
 
-    fn executor(&self) -> &dyn CommandExecutor {
-        &*self.executor
+    fn rootfs_ops(&self) -> &dyn RootfsOps {
+        &*self.ops
+    }
+}
+
+impl IsolationContext for ChrootContext {
+    fn name(&self) -> &'static str {
+        "chroot"
     }
 
     fn execute(
@@ -81,13 +84,22 @@ impl IsolationContext for ChrootContext {
         args.push(self.rootfs.to_string());
         args.extend(command.iter().cloned());
 
-        let spec = CommandSpec::new("chroot", args).with_privilege(privilege);
+        let spec = CommandSpec::privileged(PrivilegedProgram::Chroot, args, privilege);
         self.executor.execute(&spec)
     }
 
     fn teardown(&mut self) -> Result<()> {
         self.torn_down = true;
         Ok(())
+    }
+}
+
+impl std::fmt::Debug for ChrootContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChrootContext")
+            .field("rootfs", &self.rootfs)
+            .field("torn_down", &self.torn_down)
+            .finish_non_exhaustive()
     }
 }
 

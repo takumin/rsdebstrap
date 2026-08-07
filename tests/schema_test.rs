@@ -1,27 +1,15 @@
 // Regression tests for the generated JSON Schema (`rsdebstrap schema`).
 //
-// The schema is derived from the Rust config types via `schemars`. Its whole value is that it
-// keeps matching what `apply`/`validate` accept. These tests guard that contract so schema
-// drift cannot slip through unnoticed:
+// The schema is derived from the Rust config types via `schemars`, and its whole value is that
+// it keeps matching what `apply`/`validate` accept. The differential check below compares the
+// schema's verdict on a table of YAML documents against the *structural* deserializer's
+// (`yaml_serde::from_str::<Profile>`), guarding the invariant stated at
+// `schema_divergences_are_pinned`: the schema must never reject a document the deserializer
+// accepts.
 //
-// 1. The schema generates without panicking and has the expected top-level shape.
-// 2. The shipped example profile validates against it.
-// 3. Differential check: for a table of YAML documents, the schema's verdict is compared with
-//    the *structural* deserializer's verdict (`yaml_serde::from_str::<Profile>`). The critical
-//    safety invariant is that the schema must never reject a document the deserializer accepts
-//    (a false rejection would make editor tooling flag valid configs). Semantic-only checks
-//    (e.g. mitamae binary resolution, mount/privilege cross-checks) live in `Profile::validate`
-//    and are intentionally out of scope here — JSON Schema cannot express them.
-// 4. The known divergences (schema accepts, deserializer rejects) are pinned with per-side
-//    expectations in `schema_divergences_are_pinned`. The invariant is one-directional, so a
-//    new false-accept is not a test failure — add a row there when one is discovered.
-
-// The whole crate is compiled out without the default-on `schema` feature: it exercises the
-// generated schema, which does not exist in a schema-less build. Gated in-file rather than
-// via a Cargo `[[test]]` stanza with `required-features` because an explicit test target
-// makes manifest parsing require the file to exist, breaking CI's sparse checkouts (the
-// fetch/build jobs check out the manifest without `tests/`).
-#![cfg(feature = "schema")]
+// Semantic checks (mitamae binary resolution, mount/privilege cross-checks) live in
+// `Profile::validate` and are out of scope — JSON Schema cannot express them, so a document
+// this file calls "accepted" may still fail `validate`.
 
 use jsonschema::Validator;
 use rsdebstrap::config::Profile;
@@ -221,6 +209,18 @@ fn schema_matches_structural_deserializer() {
             true,
         ),
         ("null script only", with_provision("{type: shell, script: null}"), false),
+        // Both provisioners share one `oneOf` (`schema::script_or_content`), so
+        // the mitamae side is checked too rather than assumed.
+        (
+            "mitamae null script, content set",
+            with_provision("{type: mitamae, script: null, content: hi}"),
+            true,
+        ),
+        (
+            "mitamae null script only",
+            with_provision("{type: mitamae, script: null}"),
+            false,
+        ),
         (
             "both sources null",
             with_provision("{type: shell, script: null, content: null}"),
@@ -444,14 +444,36 @@ fn schema_matches_structural_deserializer() {
 fn schema_divergences_are_pinned() {
     let v = validator();
 
-    // Documented, intentional divergences between the schema and the deserializer. The
-    // safety invariant still holds for every row — divergence is only ever allowed in the
-    // schema-accepts-more direction (the schema stays annotational where JSON Schema cannot
-    // express the check, or where the YAML text carries information the JSON data model
-    // cannot: duplicate keys, non-finite floats). Pinning both verdicts documents each known
-    // divergence exactly — but only the enumerated rows: the invariant is one-directional,
-    // so a new false-accept fails no test. Extend this table whenever one is discovered.
+    // The invariant, stated once for both this table and the differential check above: the
+    // schema may accept more than the deserializer, never less. A false *reject* would make
+    // editor tooling flag a config that builds; a false *accept* only means tooling is
+    // quieter than the parser.
+    //
+    // The rows below are the known false-accepts — the schema staying annotational where
+    // JSON Schema cannot express a check, or where the YAML text carries what the JSON data
+    // model cannot (duplicate keys, non-finite floats). Pinning both verdicts documents each
+    // exactly. An *unlisted* false-accept is a finding, not a free pass:
+    // `assert_no_false_reject` in `tests/schema_proptest.rs` asserts the reverse direction
+    // too, allowing only the classes listed here.
     let cases: &[(&str, String, bool, bool)] = &[
+        // `mount.target` is a `RelPath` spelled absolutely, so the deserializer rejects a
+        // relative spelling, a bare `/`, and any `..` component. The schema types it as a
+        // plain string: only the leading `/` is expressible as a regex, and a regex for the
+        // rest is the fragile kind `IpAddrSchema` warns against.
+        (
+            "mount target escaping the rootfs",
+            format!(
+                "{BASE}prepare: {{mount: {{mounts: [{{source: proc, target: /a/../../b}}]}}}}\n"
+            ),
+            false,
+            true,
+        ),
+        (
+            "mount target spelled relatively",
+            format!("{BASE}prepare: {{mount: {{mounts: [{{source: proc, target: proc}}]}}}}\n"),
+            false,
+            true,
+        ),
         // `format: ipv4/ipv6` is annotational (non-asserting) by design — see IpAddrSchema:
         // a hard pattern that is slightly wrong would false-reject valid configs. The
         // deserializer rejects non-IP strings at parse time.

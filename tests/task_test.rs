@@ -710,10 +710,11 @@ isolation: false
     let task: ShellTask =
         yaml_serde::from_str(yaml).expect("should parse ShellTask with isolation: false");
     use rsdebstrap::config::IsolationConfig;
-    let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::chroot());
+    let task_mut = task;
     assert_eq!(
-        task_mut.resolved_isolation_config(),
+        task_mut
+            .task_isolation()
+            .resolve(&IsolationConfig::chroot()),
         None,
         "isolation: false should resolve to None (Disabled)"
     );
@@ -730,10 +731,11 @@ isolation: false
     let task: MitamaeTask =
         yaml_serde::from_str(yaml).expect("should parse MitamaeTask with isolation: false");
     use rsdebstrap::config::IsolationConfig;
-    let mut task_mut = task;
-    task_mut.resolve_isolation(&IsolationConfig::chroot());
+    let task_mut = task;
     assert_eq!(
-        task_mut.resolved_isolation_config(),
+        task_mut
+            .task_isolation()
+            .resolve(&IsolationConfig::chroot()),
         None,
         "isolation: false on MitamaeTask should resolve to None"
     );
@@ -742,19 +744,22 @@ isolation: false
 #[test]
 fn test_task_definition_resolve_isolation_dispatches_to_shell() {
     use rsdebstrap::config::IsolationConfig;
-    let mut task =
-        ProvisionTask::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
-    task.resolve_isolation(&IsolationConfig::chroot());
-    assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
+    let task = ProvisionTask::Shell(ShellTask::new(ScriptSource::Content("echo test".to_string())));
+    assert_eq!(
+        task.task_isolation().resolve(&IsolationConfig::chroot()),
+        Some(IsolationConfig::chroot())
+    );
 }
 
 #[test]
 fn test_task_definition_resolve_isolation_dispatches_to_mitamae() {
     use rsdebstrap::config::IsolationConfig;
-    let mut task = ProvisionTask::Mitamae(MitamaeTask::new(
+    let task = ProvisionTask::Mitamae(MitamaeTask::new(
         ScriptSource::Content("package 'vim'".to_string()),
         "/usr/local/bin/mitamae".into(),
     ));
-    task.resolve_isolation(&IsolationConfig::chroot());
-    assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
+    assert_eq!(
+        task.task_isolation().resolve(&IsolationConfig::chroot()),
+        Some(IsolationConfig::chroot())
+    );
 }

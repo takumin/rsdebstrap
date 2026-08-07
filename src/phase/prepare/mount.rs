@@ -9,14 +9,13 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use camino::Utf8Path;
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{IsolationConfig, MountEntry, MountPreset};
+use crate::config::{MountEntry, MountPreset};
 use crate::error::RsdebstrapError;
-use crate::isolation::IsolationContext;
-use crate::phase::PhaseItem;
+use crate::phase::{PhaseItem, PrepareItem};
+use crate::rootfs::RelPath;
 
 /// Mount task for declaring filesystem mounts in the prepare phase.
 ///
@@ -25,8 +24,7 @@ use crate::phase::PhaseItem;
 /// managed at the pipeline level, not by the task's `execute()` method.
 ///
 /// At most one `MountTask` may appear in the prepare phase.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MountTask {
     /// Optional preset for predefined mount sets.
@@ -38,7 +36,7 @@ pub struct MountTask {
         deserialize_with = "crate::de::null_to_default",
         skip_serializing_if = "Vec::is_empty"
     )]
-    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<MountEntry>>"))]
+    #[schemars(with = "Option<Vec<MountEntry>>")]
     pub mounts: Vec<MountEntry>,
 }
 
@@ -78,21 +76,18 @@ impl MountTask {
             return self.mounts.clone();
         }
 
-        let mut custom_by_target: HashMap<&Utf8Path, &MountEntry> = self
-            .mounts
-            .iter()
-            .map(|m| (m.target.as_path(), m))
-            .collect();
+        let mut custom_by_target: HashMap<&RelPath, &MountEntry> =
+            self.mounts.iter().map(|m| (&m.target, m)).collect();
 
         for entry in &mut preset_entries {
-            if let Some(custom) = custom_by_target.remove(entry.target.as_path()) {
+            if let Some(custom) = custom_by_target.remove(&entry.target) {
                 *entry = custom.clone();
             }
         }
 
         // Append non-overlapping custom mounts in YAML definition order
         for m in &self.mounts {
-            if custom_by_target.contains_key(m.target.as_path()) {
+            if custom_by_target.contains_key(&m.target) {
                 preset_entries.push(m.clone());
             }
         }
@@ -146,16 +141,9 @@ impl PhaseItem for MountTask {
     fn validate(&self) -> Result<(), RsdebstrapError> {
         MountTask::validate(self)
     }
-
-    fn execute(&self, _ctx: &dyn IsolationContext) -> anyhow::Result<()> {
-        // Mount lifecycle is managed at the pipeline level, not per-task.
-        Ok(())
-    }
-
-    fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        None
-    }
 }
+
+impl PrepareItem for MountTask {}
 
 #[cfg(test)]
 mod tests {
@@ -176,7 +164,7 @@ mod tests {
             preset: None,
             mounts: vec![MountEntry {
                 source: "proc".to_string(),
-                target: "/proc".into(),
+                target: crate::config::rootfs_path("/proc"),
                 options: vec![],
             }],
         };
@@ -189,7 +177,7 @@ mod tests {
             preset: Some(MountPreset::Recommends),
             mounts: vec![MountEntry {
                 source: "proc".to_string(),
-                target: "/proc".into(),
+                target: crate::config::rootfs_path("/proc"),
                 options: vec![],
             }],
         };
@@ -229,7 +217,7 @@ mod tests {
             preset: None,
             mounts: vec![MountEntry {
                 source: "proc".to_string(),
-                target: "/proc".into(),
+                target: crate::config::rootfs_path("/proc"),
                 options: vec![],
             }],
         };
@@ -261,7 +249,7 @@ mod tests {
             preset: None,
             mounts: vec![MountEntry {
                 source: "proc".to_string(),
-                target: "/proc".into(),
+                target: crate::config::rootfs_path("/proc"),
                 options: vec![],
             }],
         };
@@ -275,24 +263,27 @@ mod tests {
             preset: Some(MountPreset::Recommends),
             mounts: vec![MountEntry {
                 source: "/dev".to_string(),
-                target: "/dev".into(),
+                target: crate::config::rootfs_path("/dev"),
                 options: vec!["bind".to_string()],
             }],
         };
         let mounts = task.resolved_mounts();
         assert_eq!(mounts.len(), 6, "the custom /dev entry replaces the preset's, not appends");
 
-        let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
+        let dev_entry = mounts
+            .iter()
+            .find(|m| m.target.to_string() == "/dev")
+            .unwrap();
         assert_eq!(dev_entry.source, "/dev");
         assert!(dev_entry.is_bind_mount());
 
         let dev_pos = mounts
             .iter()
-            .position(|m| m.target.as_str() == "/dev")
+            .position(|m| m.target.to_string() == "/dev")
             .unwrap();
         let devpts_pos = mounts
             .iter()
-            .position(|m| m.target.as_str() == "/dev/pts")
+            .position(|m| m.target.to_string() == "/dev/pts")
             .unwrap();
         assert!(
             dev_pos < devpts_pos,
@@ -311,12 +302,12 @@ mod tests {
             mounts: vec![
                 MountEntry {
                     source: "tmpfs".to_string(),
-                    target: "/tmp".into(),
+                    target: crate::config::rootfs_path("/tmp"),
                     options: vec!["size=2G".to_string()],
                 },
                 MountEntry {
                     source: "/dev".to_string(),
-                    target: "/dev".into(),
+                    target: crate::config::rootfs_path("/dev"),
                     options: vec!["bind".to_string()],
                 },
             ],
@@ -324,10 +315,16 @@ mod tests {
         let mounts = task.resolved_mounts();
         assert_eq!(mounts.len(), 6);
 
-        let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
+        let dev_entry = mounts
+            .iter()
+            .find(|m| m.target.to_string() == "/dev")
+            .unwrap();
         assert!(dev_entry.is_bind_mount());
 
-        let tmp_entry = mounts.iter().find(|m| m.target.as_str() == "/tmp").unwrap();
+        let tmp_entry = mounts
+            .iter()
+            .find(|m| m.target.to_string() == "/tmp")
+            .unwrap();
         assert!(tmp_entry.options.contains(&"size=2G".to_string()));
 
         crate::config::validate_mount_order(&mounts).unwrap();
@@ -339,7 +336,7 @@ mod tests {
             preset: Some(MountPreset::Recommends),
             mounts: vec![MountEntry {
                 source: "tmpfs".to_string(),
-                target: "/var/tmp".into(),
+                target: crate::config::rootfs_path("/var/tmp"),
                 options: vec![],
             }],
         };
@@ -347,15 +344,15 @@ mod tests {
         assert_eq!(mounts.len(), 7);
 
         let last = mounts.last().unwrap();
-        assert_eq!(last.target.as_str(), "/var/tmp");
+        assert_eq!(last.target.to_string(), "/var/tmp");
         assert_eq!(last.source, "tmpfs");
 
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/proc"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/sys"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/dev"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/dev/pts"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/tmp"));
-        assert!(mounts.iter().any(|m| m.target.as_str() == "/run"));
+        assert!(mounts.iter().any(|m| m.target.to_string() == "/proc"));
+        assert!(mounts.iter().any(|m| m.target.to_string() == "/sys"));
+        assert!(mounts.iter().any(|m| m.target.to_string() == "/dev"));
+        assert!(mounts.iter().any(|m| m.target.to_string() == "/dev/pts"));
+        assert!(mounts.iter().any(|m| m.target.to_string() == "/tmp"));
+        assert!(mounts.iter().any(|m| m.target.to_string() == "/run"));
     }
 
     #[test]
@@ -365,12 +362,12 @@ mod tests {
             mounts: vec![
                 MountEntry {
                     source: "proc".to_string(),
-                    target: "/proc".into(),
+                    target: crate::config::rootfs_path("/proc"),
                     options: vec![],
                 },
                 MountEntry {
                     source: "proc".to_string(),
-                    target: "/proc".into(),
+                    target: crate::config::rootfs_path("/proc"),
                     options: vec!["nosuid".to_string()],
                 },
             ],
@@ -391,7 +388,7 @@ mod tests {
             preset: Some(MountPreset::Recommends),
             mounts: vec![MountEntry {
                 source: "/dev".to_string(),
-                target: "/dev".into(),
+                target: crate::config::rootfs_path("/dev"),
                 options: vec!["bind".to_string()],
             }],
         };

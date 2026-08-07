@@ -4,18 +4,15 @@
 //! on a per-command basis. Tasks and bootstrap backends can declare their own
 //! privilege settings, inheriting from profile-level defaults when unspecified.
 
-#[cfg(feature = "schema")]
 use std::borrow::Cow;
 
-#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 use crate::error::RsdebstrapError;
 
 /// Privilege escalation method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum PrivilegeMethod {
     /// Use `sudo` for privilege escalation.
@@ -41,8 +38,7 @@ impl std::fmt::Display for PrivilegeMethod {
 }
 
 /// Default privilege settings for the profile.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PrivilegeDefaults {
     /// The default privilege escalation method.
@@ -70,56 +66,6 @@ pub enum Privilege {
 }
 
 impl Privilege {
-    /// Returns the resolved privilege method.
-    ///
-    /// Should only be called after [`resolve()`](Self::resolve) or
-    /// [`resolve_in_place()`](Self::resolve_in_place) has been used to
-    /// collapse the privilege setting into `Method` or `Disabled`.
-    ///
-    /// Returns `Some(method)` for `Method`, `None` for `Disabled`.
-    /// If called on `Inherit` or `UseDefault`, logs a warning and returns `None`
-    /// as a safe fallback.
-    pub fn resolved_method(&self) -> Option<PrivilegeMethod> {
-        debug_assert!(
-            !matches!(self, Self::Inherit | Self::UseDefault),
-            "resolved_method() called on an unresolved Privilege state. This is a logic error."
-        );
-        match self {
-            Self::Method(m) => Some(*m),
-            Self::Disabled => None,
-            unresolved @ (Self::Inherit | Self::UseDefault) => {
-                tracing::warn!(
-                    "resolved_method() called on unresolved state ({:?}); this likely indicates \
-                    a logic error where resolve() was not called. Returning None as fallback.",
-                    unresolved
-                );
-                None
-            }
-        }
-    }
-
-    /// Resolves the privilege setting in place, replacing `self` with the
-    /// resolved variant (`Method` or `Disabled`).
-    ///
-    /// This is a convenience wrapper around [`resolve()`](Self::resolve)
-    /// that mutates `self` directly.
-    ///
-    /// # Errors
-    ///
-    /// Returns `RsdebstrapError::Validation` if `UseDefault` is specified
-    /// but no defaults are configured.
-    pub fn resolve_in_place(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        let resolved = self.resolve(defaults)?;
-        *self = match resolved {
-            Some(method) => Self::Method(method),
-            None => Self::Disabled,
-        };
-        Ok(())
-    }
-
     /// Resolves the privilege setting against the profile defaults.
     ///
     /// Returns `Some(method)` if privilege escalation should be applied,
@@ -148,51 +94,43 @@ impl Privilege {
     }
 }
 
-// Wire shape of the `{ method: <method> }` map form.
-//
-// Single source of truth for the map form's fields, shared by both deserialization
-// (via `Privilege`'s strict dispatch) and schema generation (via `PrivilegeWire`).
-// `deny_unknown_fields` keeps typo'd keys rejected, and schemars mirrors that as
-// `additionalProperties: false`. The `///` docs below are user-facing on purpose: they
-// become the `$defs/PrivilegeConfig` descriptions (which editors show), keeping it on
-// par with `PrivilegeDefaults`; maintainer notes stay in `//` comments.
-//
-// The schemars rename fixes the schema-facing `$defs` name (`PrivilegeConfig`, symmetric
-// with `IsolationConfig` on the isolation branch) so this private type's Rust name is not
-// part of the published schema contract and stays free to change.
+// The schemars rename keeps this private type's Rust name out of the published schema
+// contract (`$defs/PrivilegeConfig`, symmetric with the isolation branch).
 /// Explicit privilege escalation configuration for a task or bootstrap backend.
-#[derive(Debug, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(JsonSchema),
-    schemars(rename = "PrivilegeConfig")
-)]
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(rename = "PrivilegeConfig")]
 #[serde(deny_unknown_fields)]
 struct PrivilegeMethodMap {
     /// The privilege escalation method to use.
     method: PrivilegeMethod,
 }
 
-// Schema-only mirror of the accepted YAML shapes: `true`/`false`, `{ method: ... }`, or an
-// explicit null (which — like field absence — resolves to `Inherit`).
-// Not on the production parse path — `Privilege`'s `Deserialize` performs the strict
-// dispatch. `Deserialize` is derived here solely so the `wire_parity` tests can prove this
-// enum accepts exactly what `PrivilegeVisitor` accepts: the variants below and the
-// visitor's `visit_*` methods must change in lockstep, and those tests fail on any drift.
-// Exists so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
-#[cfg(feature = "schema")]
+// The accepted YAML shapes: `true`/`false`, `{ method: ... }`, or an explicit null (which
+// — like field absence — resolves to `Inherit`). This one type drives both deserialization
+// and schema generation, so the two cannot describe different acceptance sets.
+//
+// Untagged rather than a hand-written visitor: the visitor's `expecting` string is a nicer
+// message than untagged's "did not match any variant", but keeping it meant maintaining a
+// second enum for schemars and a parity test to pin them together. `load_profile` wraps
+// deserialization in `serde_path_to_error`, so the field path recovers the lost context.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum PrivilegeWire {
-    // The payloads are written by the derived `Deserialize` and read only as *types* by
-    // schema generation, never as values — hence the field-level allows. Unlike the
-    // previous enum-level allow, these keep "variant is never constructed" armed, so
-    // dropping the `Deserialize` derive that ties this enum to the tests is a warning.
-    Toggle(#[allow(dead_code)] bool),
-    Method(#[allow(dead_code)] PrivilegeMethodMap),
-    // Unit variant → `{ "type": "null" }` in the generated `anyOf`, mirroring that an
-    // explicit null deserializes to `Inherit` (see `visit_unit`).
+    Toggle(bool),
+    Method(PrivilegeMethodMap),
+    // Unit variant → `{ "type": "null" }` in the generated `anyOf`.
     Inherit,
+}
+
+impl From<PrivilegeWire> for Privilege {
+    fn from(wire: PrivilegeWire) -> Self {
+        match wire {
+            PrivilegeWire::Toggle(true) => Self::UseDefault,
+            PrivilegeWire::Toggle(false) => Self::Disabled,
+            PrivilegeWire::Method(m) => Self::Method(m.method),
+            PrivilegeWire::Inherit => Self::Inherit,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for Privilege {
@@ -200,56 +138,10 @@ impl<'de> Deserialize<'de> for Privilege {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de;
-
-        // The set of `visit_*` methods below must stay in lockstep with `PrivilegeWire`'s
-        // variants (the schema mirror); the `wire_parity` tests enforce the equivalence.
-        struct PrivilegeVisitor;
-
-        impl<'de> de::Visitor<'de> for PrivilegeVisitor {
-            type Value = Privilege;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a boolean or a map with a 'method' field")
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(Privilege::Inherit)
-            }
-
-            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if v {
-                    Ok(Privilege::UseDefault)
-                } else {
-                    Ok(Privilege::Disabled)
-                }
-            }
-
-            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::MapAccess<'de>,
-            {
-                // Reuse the shared strict map shape so unknown keys stay rejected.
-                let pm =
-                    PrivilegeMethodMap::deserialize(de::value::MapAccessDeserializer::new(map))?;
-                Ok(Privilege::Method(pm.method))
-            }
-        }
-
-        // Field absence is handled by `#[serde(default)]` (→ Inherit); an explicit null
-        // also maps to Inherit (via `visit_unit`). Any other present value must be a boolean
-        // or a `{ method }` map — anything else is a parse error.
-        deserializer.deserialize_any(PrivilegeVisitor)
+        PrivilegeWire::deserialize(deserializer).map(Into::into)
     }
 }
 
-#[cfg(feature = "schema")]
 impl JsonSchema for Privilege {
     fn schema_name() -> Cow<'static, str> {
         "Privilege".into()
@@ -398,49 +290,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_in_place_inherit_with_defaults() {
-        let defaults = PrivilegeDefaults {
-            method: PrivilegeMethod::Sudo,
-        };
-        let mut p = Privilege::Inherit;
-        p.resolve_in_place(Some(&defaults)).unwrap();
-        assert_eq!(p, Privilege::Method(PrivilegeMethod::Sudo));
-    }
-
-    #[test]
-    fn resolve_in_place_inherit_without_defaults() {
-        let mut p = Privilege::Inherit;
-        p.resolve_in_place(None).unwrap();
-        assert_eq!(p, Privilege::Disabled);
-    }
-
-    #[test]
-    fn resolve_in_place_use_default_without_defaults_errors() {
-        let mut p = Privilege::UseDefault;
-        let result = p.resolve_in_place(None);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, RsdebstrapError::Validation(_)));
-    }
-
-    #[test]
-    fn resolved_method_returns_some_for_method() {
-        assert_eq!(
-            Privilege::Method(PrivilegeMethod::Sudo).resolved_method(),
-            Some(PrivilegeMethod::Sudo)
-        );
-        assert_eq!(
-            Privilege::Method(PrivilegeMethod::Doas).resolved_method(),
-            Some(PrivilegeMethod::Doas)
-        );
-    }
-
-    #[test]
-    fn resolved_method_returns_none_for_disabled() {
-        assert_eq!(Privilege::Disabled.resolved_method(), None);
-    }
-
-    #[test]
     fn privilege_method_rejects_invalid_value() {
         let result: Result<PrivilegeMethod, _> = yaml_serde::from_str("pkexec");
         assert!(result.is_err(), "pkexec should not be a valid PrivilegeMethod");
@@ -491,44 +340,27 @@ mod tests {
         }
     }
 
-    // `PrivilegeWire` is the schema-side mirror of the hand-written visitor. These
-    // tests pin the two acceptance sets together: adding or removing a `visit_*`
-    // method without the matching wire-variant change (or vice versa) makes a
-    // battery value below diverge and fail.
-    #[cfg(feature = "schema")]
-    mod wire_parity {
-        use super::super::{Privilege, PrivilegeWire};
-        use serde_json::{Value, json};
-
-        fn battery() -> Vec<Value> {
-            vec![
-                json!(null),
-                json!(true),
-                json!(false),
-                json!({"method": "sudo"}),
-                json!({"method": "doas"}),
-                json!({"method": "pkexec"}),
-                json!({"methd": "sudo"}),
-                json!({"method": "sudo", "extra": 1}),
-                json!({}),
-                json!("sudo"),
-                json!([]),
-                json!(42),
-                json!(42.5),
-            ]
-        }
-
-        #[test]
-        fn wire_accepts_exactly_what_the_visitor_accepts() {
-            for value in battery() {
-                let wire = serde_json::from_value::<PrivilegeWire>(value.clone()).is_ok();
-                let visitor = serde_json::from_value::<Privilege>(value.clone()).is_ok();
-                assert_eq!(
-                    wire, visitor,
-                    "PrivilegeWire and Privilege's visitor disagree on {value}: \
-                    wire accepts = {wire}, visitor accepts = {visitor}"
-                );
-            }
+    // The acceptance set is now a property of one type, so this pins the boundary itself
+    // rather than the agreement between two definitions.
+    #[test]
+    fn privilege_acceptance_set() {
+        for (yaml, accepted) in [
+            ("~", true),
+            ("true", true),
+            ("false", true),
+            ("method: sudo", true),
+            ("method: doas", true),
+            ("method: pkexec", false),
+            ("methd: sudo", false),
+            ("{method: sudo, extra: 1}", false),
+            ("{}", false),
+            ("sudo", false),
+            ("[]", false),
+            ("42", false),
+            ("42.5", false),
+        ] {
+            let got = yaml_serde::from_str::<Privilege>(yaml).is_ok();
+            assert_eq!(got, accepted, "{yaml:?}: accepted = {got}, expected {accepted}");
         }
     }
 }

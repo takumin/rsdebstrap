@@ -33,11 +33,34 @@ one deliberate 4-state pattern, resolved against profile `defaults`:
 - The custom `Serialize`/`Deserialize` impls encode this mapping (`true` → `UseDefault`,
   `false` → `Disabled`, mapping → explicit, absent → `Inherit`). Keeping the scalar
   `true`/`false` shorthand in YAML is the reason these are hand-written rather than derived.
-- `resolve()` collapses a state against the profile default into a concrete
-  `Option<...>` (`None` == disabled/no-op). `resolve_in_place()` mutates ahead of execution.
+- **Both types describe only what the profile *declared*.** `resolve()` collapses a state
+  against the profile default into a concrete `Option<...>` (`None` == disabled/no-op) and
+  returns it; neither type has a resolved variant to be in, and neither is mutated in place.
 - **Non-obvious:** for `TaskIsolation`, `UseDefault` and `Inherit` behave identically
   because `IsolationConfig` always has a default (chroot). Both variants exist only for
   API symmetry with `Privilege`, where the distinction is real.
+
+The declared/resolved split is the point. These enums used to span both: `resolve_in_place()`
+rewrote `Inherit`/`UseDefault` into `Method`/`Config`, and the readers took the unresolved
+states as a case to defend against — a `debug_assert!`, a `tracing::warn!`, and a fallback
+each. The two fallbacks pointed opposite ways (privilege fell back to *no* escalation,
+isolation to chroot), so which direction counted as safe lived only in a comment. Resolution
+now produces a separate value, `ResolvedProvisionTask` (`src/phase/provision/mod.rs`), which
+pairs a task with the settings it resolves to and is what implements `ProvisionItem`. An
+unresolved setting has no path to a reader at all, and all of that runtime defence is gone.
+
+`ProvisionTask::resolve` also rejects one combination outright: a task that resolves to *no
+isolation* and *some privilege method*. `isolation: false` runs the program the task names —
+a path inside the rootfs — directly on the host, so escalating it hands root to whatever the
+half-built rootfs contains. Each setting is reasonable alone, so neither one can reject it;
+the check belongs where both are known. It fires during `load_profile`, not mid-run.
+
+`Profile::validate` returns a `Validated` token and `Profile::pipeline` requires one. The
+semantic checks — a mount target that must be a reachable directory, a declared script that
+must be a regular file, a backend output that must be a directory when there are pipeline
+tasks — cannot be stated in the config types, so "this profile was validated" is carried as a
+value rather than as a convention `run_apply` happens to follow. (`Pipeline::new` remains
+public as the unvalidated low-level constructor, and says so.)
 
 `mount` and `resolv_conf` used to live under `IsolationConfig`; they were moved out to
 the `prepare` phase. `IsolationConfig` is now just the backend selector: an internally
@@ -52,35 +75,63 @@ backend (bwrap, nspawn, …) means adding a variant with its own payload struct.
 ## Phases & the pipeline
 
 `Pipeline` (`src/pipeline.rs`) borrows `prepare: &PrepareConfig`, `provision: &[ProvisionTask]`,
-and `assemble: &AssembleConfig`, and drives them uniformly through the `PhaseItem` trait
-(`src/phase/mod.rs`, `pub(crate)`) — `name`/`validate`/`execute`/`resolved_isolation_config`.
-Each phase is flattened to a `&[&dyn PhaseItem]` before running: `PrepareConfig::items()` and
+and `assemble: &AssembleConfig`. `PhaseItem` (`src/phase/mod.rs`, `pub(crate)`) carries only
+what all three share — `name` and `validate`. What an item can *do* differs per phase, and
+three sub-traits say so:
+
+| trait           | adds                                            |
+| --------------- | ----------------------------------------------- |
+| `PrepareItem`   | nothing                                         |
+| `ProvisionItem` | `resolved_isolation_config`, `execute(&dyn IsolationContext)` |
+| `AssembleItem`  | `execute(&dyn RootfsContext)`                   |
+
+`ProvisionItem` is implemented by `ResolvedProvisionTask`, not by `ProvisionTask`: a task
+cannot be run until its settings have been resolved, because the type the pipeline runs is
+the one resolution produces.
+
+Each phase is flattened to a `&[&dyn <phase>Item]` before running: `PrepareConfig::items()` and
 `AssembleConfig::items()` emit their present `Option` fields in a **fixed execution order**
-(`mount → resolv_conf`), and provision maps its `Vec` to trait objects. Generic
-`run_phase_items`/`validate_phase_items` avoid per-phase duplication.
+(`mount → resolv_conf`), and provision maps its `Vec` to trait objects. `run_phase_items` and
+`validate_phase_items` are generic over `T: PhaseItem + ?Sized`, so the shared logging and
+error-context wrapping are written once; only the per-item action differs.
 
 Key invariants:
 
-- **Per-task isolation lifecycle.** Each task independently runs
+- **Per-task isolation lifecycle.** Each *provision* task independently runs
   provider → setup → execute → teardown. Teardown is guaranteed even when execute
   errors. Failure-injection for teardown paths is currently impractical (see
-  [Known test gaps](#known-test-gaps)).
+  [Known test gaps](#known-test-gaps)). Provision is the only phase that does this;
+  the other two have no isolation to set up.
 - **Prepare tasks are declarative.** `MountTask` and (prepare) `ResolvConfTask` implement
-  `PhaseItem` with a no-op `execute()`; their real effect comes from the RAII managers below,
-  set up in `run_pipeline_phase()`. The brackets differ: mounts wrap all three phases, but the
-  temporary resolv.conf wraps only prepare + provision — it is torn down (the original
-  restored) before assemble, so an assemble `resolv_conf` task's permanent file/symlink
-  survives. Assemble is additionally gated on that restore succeeding: after a failed teardown
-  the guard's `Drop` backstop retries the restore at scope end, which would otherwise clobber
-  assemble's output. The assemble task itself replaces `/etc/resolv.conf` atomically — it
-  stages the new file/symlink at `/etc/resolv.conf.rsdebstrap-tmp` (clearing any stale staging
-  entry first, so `cp`/`ln` cannot follow a leftover symlink) and promotes it with a plain
-  same-directory `mv` rename (no GNU-only `-T`, so it stays portable to busybox/musl hosts) — so
-  a mid-assemble failure leaves the just-restored original in place even though the guard is
-  already disarmed and could no longer recover it.
-- **Assemble operates on the final rootfs directly.** `AssembleResolvConfTask::resolved_isolation_config()`
-  returns `None`, so it runs via `DirectProvider` on the rootfs filesystem rather than
-  inside an isolation context.
+  `PrepareItem`, which has no `execute` at all — there is nothing to run, rather than
+  something that runs and does nothing. Their real effect comes from the RAII managers below,
+  set up in `run_pipeline_phase()`. Both brackets close before assemble: the temporary
+  resolv.conf is torn down (the original restored) so an assemble `resolv_conf` task's
+  permanent file/symlink survives, and the mounts are released so assemble sees the rootfs
+  the way the image will — without `/proc`, `/sys` and `/dev` bound over it. Assemble writes
+  the rootfs's *final* state, so anything still bound over it is not part of that state.
+
+  That ordering is carried by three token types rather than by comment and convention.
+  `Pipeline::run_prepare_and_provision` yields a `Provisioned`; `RootfsResolvConf::restore`
+  consumes one and yields a `Restored`; `RootfsMounts::unmount_before_assembly` consumes that
+  and yields an `Unmounted`; `Pipeline::run_assemble` requires an `Unmounted`. Assembling
+  before either teardown is therefore a compile error, not a review finding. Each token is
+  declared in the module of the guard that produces it, so its constructor is private *there*
+  — declared in `pipeline` they would be `pub(crate)` and the orchestration could mint one,
+  which is exactly the mistake being prevented. `Pipeline::run` (no guards, so nothing was
+  detached and nothing was mounted) is the one exemption, via named functions that still
+  demand the preceding token.
+
+  A failed unmount consequently skips assemble, the same way a failed restore does: the
+  rootfs is not in the state assemble is defined against. Unmounting itself is still
+  attempted on every path, including after a provision failure.
+- **Assemble operates on the final rootfs directly, and cannot run a program.** An
+  `AssembleItem` receives a `RootfsContext` — `rootfs()`, `dry_run()`, `rootfs_ops()` — so
+  every write goes through the descriptor-anchored operations and there is no `execute` to
+  reach for. The phase takes no isolation provider either: it used to go through one, which
+  always resolved to `DirectProvider` and whose only used capability was `rootfs_ops`, so
+  `PlainRootfsContext` (built from the `rootfs`/`ops`/`dry_run` the pipeline already holds)
+  replaced that setup/teardown round trip.
 
 `prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, resolv_conf }`,
 `AssembleConfig { resolv_conf }`), not lists. This makes the singleton invariants structural:
@@ -106,18 +157,59 @@ patterns run throughout `src/isolation/`:
   path string: it opens the rootfs with `O_NOFOLLOW`, then walks each component with
   `openat(O_NOFOLLOW)` / `mkdirat`, treating `ELOOP`/`ENOTDIR` as a symlink attack
   (`RsdebstrapError::Isolation`). Verified absolute paths are cached and reused for the
-  matching `umount` to avoid re-traversal. The assemble `resolv_conf` `/etc` handling
-  applies a narrower fd-based check — a single `openat(O_NOFOLLOW)` on `<rootfs>/etc` to
-  reject a symlinked `/etc` — but a TOCTOU window remains before the subsequent
-  `mv`/`cp`/`ln` path-string commands, inherent to privilege escalation via external
-  commands. Implemented with the `rustix` crate for memory-safe syscall wrappers.
+  matching `umount` to avoid re-traversal. Implemented with the `rustix` crate for
+  memory-safe syscall wrappers.
+
+  The target it walks is a `RelPath`, not a `Utf8PathBuf`. That matters: camino yields `..`
+  as a component, so a target of `/sub/../../x` used to walk *out* of the rootfs, create the
+  directory there, and return that path to a privileged `mount` as "verified". Only
+  `MountEntry::validate` stood in the way, and nothing in the types required it to have run.
+  `RelPath` cannot express `..`, `.`, or an empty path, so the walk is now safe by
+  construction; deserialization additionally requires the leading `/`, keeping the profile
+  contract that a target is spelled absolutely.
+- **All rootfs mutation goes through `RootfsOps`** (`src/rootfs/`), which applies the same
+  traversal to every write. Paths are `RelPath` values — absolute forms are accepted and
+  normalized, `..` is rejected at construction — so no combination of them names anything
+  outside the rootfs. Only the *final* component may be a symlink, and it is replaced rather
+  than followed, which is what Debian's symlinked `/etc/resolv.conf` requires.
+
+  This replaced `sudo mv` / `sudo cp` / `sudo chmod` per operation. Those took path *strings*,
+  so an `openat(O_NOFOLLOW)` check could only prove a path was safe at one instant and the
+  command then resolved the name again — the window was real and previously documented here as
+  unavoidable. It is not: see *Privilege boundary* below.
+  `RelPath` has exactly one constructor, `parse`, which splits on `/`. That is what keeps
+  every component separator-free, which the walk depends on: `openat`/`unlinkat` read a
+  separator as another level of path and apply `O_NOFOLLOW` only to the last one. A
+  `with_suffix` helper that appended to the final component could put `/..` inside a single
+  component and so escape; it was unused and has been removed.
+- **Provision staging is inside the boundary too.** A task's script, and the mitamae binary
+  and recipe, are written with `RootfsOps::write_file` and removed with `RootfsOps::remove`.
+  They used to be host-path `fs::write`/`fs::copy`/`chmod`/`remove_file` guarded by a
+  `symlink_metadata` on `<rootfs>/tmp` that ran once at validation and once more just before
+  the write — check-then-use, twice over, in the one place the rest of the crate had stopped
+  doing it. The anchored write also carries its mode from creation, so a staged binary never
+  exists in the rootfs with permissions other than the ones asked for.
+
+  The host side of that copy stays in the parent and goes through `read_host_file`, which
+  opens with `O_NOFOLLOW`, `fstat`s the *opened* descriptor, and reads from it. The earlier
+  `validate_host_file_exists` resolves a path string, so it can only report what was true
+  then; repointing the name in between used to make execution stage whatever it pointed at
+  under a path validation had approved. It remains as the pre-flight check that gives a
+  readable error, and its doc says it is not the control.
 - **RAII lifecycle managers.** `RootfsMounts` and `RootfsResolvConf` (plus
-  `TempFileGuard` in `src/phase/mod.rs`, which cleans up scripts and binaries staged
+  `StagedFileGuard` in `src/phase/mod.rs`, which removes scripts and binaries staged
   into the rootfs) all guarantee cleanup via `Drop`, including on error paths. Mounts
   unmount in reverse order and `unmount()` is idempotent, collecting errors across entries.
-  `RootfsResolvConf` backs up the existing file and rolls back via rename on write
-  failure to avoid destroying the host/rootfs resolv.conf. Atomic writes go through a
-  temp file + `cp`.
+  `RootfsResolvConf` detaches the rootfs's own resolv.conf with `RootfsOps::take`, which
+  returns it as a value (file content + mode, or symlink target) rather than moving it to a
+  backup path, and puts it back on teardown or `Drop`.
+
+  Holding it in memory removes two failure modes a backup file had. A crash left the backup
+  as an orphan the operator had to move back by hand, and an attacker who could pre-create the
+  backup path as a *dangling* symlink defeated both the leftover check and the restore —
+  `exists()` and `try_exists()` both follow links, so a dangling backup read as absent and the
+  original was silently lost. The trade is that the original only survives as long as the
+  process does.
 
 ## Isolation & command execution
 
@@ -125,13 +217,86 @@ patterns run throughout `src/isolation/`:
   `ChrootProvider` runs inside a chroot; `DirectProvider` (`src/isolation/direct.rs`)
   executes on the host, translating absolute paths to rootfs-prefixed paths
   (`/bin/sh` → `<rootfs>/bin/sh`) and guarding against empty or post-teardown commands.
-- Privilege is threaded through execution as `Option<PrivilegeMethod>` — both
-  `IsolationContext::execute()` and the `CommandExecutor` obtained via `ctx.executor()`
-  take it, so escalation is uniform whether a task runs a script or issues raw
-  `cp`/`chmod`/`ln`/`mv` commands (as assemble `resolv_conf` does).
+
+  That translation is a string join, and the kernel resolves the result when it execs — so a
+  rootfs whose `/bin/sh` is a symlink pointing outward used to run a host binary. The program
+  (only the program: it is the one argument the kernel resolves on our behalf) is now walked
+  component by component with `O_NOFOLLOW` first, with the final component checked by
+  `statat` rather than an open, because `O_NOFOLLOW | O_PATH` opens the *link itself* and
+  succeeds. See also the escalation ban in
+  [Configuration & resolution model](#configuration--resolution-model).
+- `IsolationContext` is split so that the two capabilities can be handed out separately.
+  `RootfsContext` is the rootfs view — `rootfs()`, `dry_run()`, `rootfs_ops()` — and
+  `IsolationContext: RootfsContext` adds `name()`, `execute()` and `teardown()`. Only
+  provision tasks are given the latter.
+- **One answer to "is this a dry run".** `CommandExecutor::dry_run()` is it; contexts,
+  `RootfsMounts` and `rootfs::open` all derive from there, and `IsolationProvider::setup`
+  takes no such flag. The value existed four times over before, passed independently, so a
+  dry-run executor paired with a live context was constructible and wrote for real. `main`
+  builds the executor from `--dry-run` and nothing downstream re-reads the CLI flag.
+- Privilege is threaded through *command* execution as `Option<PrivilegeMethod>`, so
+  escalation is uniform across the commands that genuinely are external programs
+  (`mount`, `umount`, `chroot`, the bootstrap backend, provision scripts).
+
+### Privilege boundary
+
+Rootfs *mutation* does not use that path. `rootfs::open()` is called once per run in
+`run_pipeline_phase`, and when `defaults.privilege` is set it spawns one helper —
+`sudo <self> __rootfs-helper --rootfs <path>`, a hidden subcommand of this same binary — which
+opens the rootfs descriptor and serves typed `Request`s over a pipe (`src/rootfs/helper.rs`).
+Every path in a `Request` is a `RelPath`, and no variant carries a host path — host files are
+read by the parent, so only bytes cross the boundary. The anchor itself is the exception that
+cannot be typed away: it is a path argument from the unprivileged parent, so a `sudo` rule
+permitting the helper permits root writes under any directory the invoking user can name.
+`check_anchor` refuses the live system's own hierarchy; grant the rule accordingly.
+
+Privilege cannot be attached to an arbitrary command any more. `CommandSpec`'s fields are
+private, and the only constructor that sets `privilege` for a fixed program takes the closed
+`PrivilegedProgram` enum (`mount`, `umount`, `chroot`, the bootstrap backends — programs with
+no syscall equivalent in this crate). `CommandSpec::for_task_command` is the exception, since
+a provision task names its own program. It is `pub(crate)` and takes a `TaskCommandToken`
+whose field is private to `isolation`, so only `isolation::direct` can build one and every
+other caller fails to compile. The token cannot bound *which argv* is handed to it, which is
+what `tests/privilege_boundary_test.rs` scans for.
+
+`IsolationContext` no longer exposes the executor either — that accessor existed so the
+assemble task could issue `cp`/`ln`/`mv`, and nothing needed it once `RootfsOps` replaced
+them. A `CommandSpec` built inside a phase is therefore inert; what a task can do is bounded
+by the context trait it is handed.
+
+Which context that is now depends on the phase. An `AssembleItem` gets a `RootfsContext`,
+which has no `execute`, so `ctx.execute(["cp", "/etc/shadow", …], Some(Sudo))` from an
+assemble task is a compile error rather than a reviewer's job to catch. Only `ProvisionItem`
+gets the full `IsolationContext`, where running a declared program is the point.
+
+This makes "assemble cannot run a program" a permanent property, deliberately: assemble
+writes the rootfs's final state, and anything that wants to run a program is provision's
+work. A future assemble task that genuinely needed one would also have to answer *under what
+isolation* — `AssembleConfig` has no `isolation` key — so it would be a profile-format change,
+not just a widening of this trait.
+
+Two things follow that per-command escalation could not give:
+
+- **Root's authority is bounded by an enum, not by what a command can be argued into.** Every
+  request carries a `RelPath`, which cannot express a path outside the rootfs, so the escape is
+  refused while *decoding* — before any operation runs, and regardless of what root could
+  otherwise reach.
+- **No coreutils binary runs as root.** `which`-resolved `cp`/`mv` no longer execute with
+  elevated privilege at all.
+
+Because the boundary is crossed once for the whole run, privilege for rootfs mutation is a
+property of the run rather than of a task. `assemble.resolv_conf` therefore has no `privilege`
+key; it was removed rather than left as a silent no-op (`deny_unknown_fields` makes setting it
+a parse error).
+
+`tests/privileged_helper_test.rs` exercises this against a root-owned rootfs under real `sudo`,
+including that the helper exits when its parent drops the channel — otherwise a root process
+would outlive the build holding a descriptor into the rootfs. It is `#[ignore]`d and skips
+itself when passwordless sudo is unavailable.
 - `CommandSpec` (`src/executor/mod.rs`) is the command value object (command/args/cwd/
-  env/privilege) with a builder API. `RealCommandExecutor` supports dry-run; tests use
-  mock executors to assert on constructed commands without running anything.
+  env/privilege) with a builder API. `RealCommandExecutor` implements dry-run and is what
+  `dry_run()` answers for; tests use mock executors to assert on constructed commands without
+  running anything.
 
 ## Bootstrap backends
 
@@ -145,20 +310,17 @@ profile defaults like any other task.
 `rsdebstrap schema` prints a JSON Schema for the YAML profile, generated **directly from the
 Rust config types** via `schemars` (`profile_json_schema()` / `profile_json_schema_pretty()` in
 `src/lib.rs`). There is no hand-written schema JSON: the Rust types are the single source of
-truth, so the schema cannot describe a shape that `apply`/`validate` would not accept. All of it
-is compiled behind the **default-on `schema` cargo feature**: `schemars`/`serde_json` are
-optional dependencies enabled by it, every `JsonSchema` derive and `#[schemars(...)]` attribute
-is `cfg_attr`-gated, and the `schema` subcommand plus `profile_json_schema*()` do not exist
-under `--no-default-features` (for size-constrained `apply`/`validate`-only builds). The schema
-test suites carry a crate-level `#![cfg(feature = "schema")]`, so a default `cargo test` — which
-is exactly what CI's test job runs — still exercises every drift guard, while
-`--no-default-features` compiles them to empty crates instead of failing. (In-file gating, not a
-Cargo `[[test]]` stanza with `required-features`: an explicit test target makes manifest parsing
-require the file, which breaks CI's sparse checkouts that fetch/build without `tests/`.) A missed
-`cfg_attr` on a new field only surfaces in the schema-less build, which is why
-`cargo check --all-targets --no-default-features` is part of the routine command set in AGENTS.md
-**and runs in CI's test task** — the gate design is only real if that feature graph actually
-compiles somewhere.
+truth, so the schema cannot describe a shape that `apply`/`validate` would not accept. Schema
+generation is unconditional: `schemars`/`serde_json` are ordinary dependencies and every
+`JsonSchema` derive is a plain derive.
+
+This was once behind a default-on `schema` cargo feature, so `apply`/`validate`-only builds
+could drop schemars. The feature cost 82 `cfg`/`cfg_attr` sites, a second feature graph CI had
+to compile, and a crate-level gate on the schema test suites that took the drift guards with
+it — all to save 460 KB of binary (measured: 3.42 MB vs 3.89 MB, release).
+Removing it made the whole `Deserialize`/`JsonSchema` alignment problem smaller: with one
+feature graph, a type either carries both derives or neither, and there is no build in which
+the drift guards silently do not run.
 
 The non-obvious parts are all about keeping the schema faithful to the *deserializer*:
 
@@ -180,18 +342,21 @@ The non-obvious parts are all about keeping the schema faithful to the *deserial
   impl, so path fields point at the `Utf8PathSchema` proxy (`src/schema.rs`) via
   `#[schemars(with = "...")]`. Forgetting it on a new path field is a **compile error** (the
   derive requires `Utf8PathBuf: JsonSchema`, which does not hold), so this cannot drift silently.
-- **Custom-`Deserialize` types forward their schema to the real wire shape.** `Privilege` /
-  `TaskIsolation` hand-write `Deserialize` for the `true`/`false`/map/null shorthand, so their
-  `JsonSchema` forwards to a `#[serde(untagged)]` wire enum (`PrivilegeWire` / `TaskIsolationWire`)
-  that carries the same map type plus a null unit variant — the schema's `anyOf[bool, map, null]`
-  then mirrors deserialization. The map branch genuinely shares one definition with the visitor
-  (`PrivilegeMethodMap` / `IsolationConfig`), but the *outer* acceptance set (bool/map/null) exists
-  twice — as the wire enum's variants and as the visitor's `visit_*` methods — with no compile-time
-  tie; the in-file `wire_parity` tests pin the two sets together by asserting acceptance
-  equivalence over a battery of shapes. `ShellTask` / `MitamaeTask` have no such split: they
-  forward to their hoisted `Raw*` DTOs, which *are* the actual deserialize path.
+- **Custom-`Deserialize` types deserialize *through* their wire shape.** `Privilege` /
+  `TaskIsolation` accept a `true`/`false`/map/null shorthand via a `#[serde(untagged)]` wire enum
+  (`PrivilegeWire` / `TaskIsolationWire`) that drives both `Deserialize` and `JsonSchema`, so the
+  schema's `anyOf[bool, map, null]` cannot describe a different acceptance set from the parser.
+
+  These once had a hand-written visitor for production and the wire enum for schemars only. The
+  outer acceptance set then existed twice with no compile-time tie, held together by
+  `wire_parity` tests. Collapsing them cost the visitor's `expecting` message ("a boolean or a
+  map with a 'method' field") in favor of untagged's "did not match any variant"; `load_profile`
+  wraps deserialization in `serde_path_to_error`, so errors carry the field path
+  (`provision[2].privilege`) instead. `ShellTask` / `MitamaeTask` never had the split: they
+  forward to their hoisted `Raw*` DTOs, which *are* the deserialize path.
 - **`script` xor `content`** is enforced at runtime by `resolve_script_source`; the schema mirrors
-  it as a `oneOf` on the `Raw*` DTO. Each branch constrains the source to a *string*, not mere key
+  it as a `oneOf` on the `Raw*` DTO, shared by both provisioners via
+  `schema::script_or_content()`. Each branch constrains the source to a *string*, not mere key
   presence, because `serde` treats an explicit `null` on an `Option` field as absent — so
   `{ script: null, content: hi }` is accepted and `{ script: null }` rejected, matching serde.
   This is the *only* mutual exclusion mirrored in the schema, because it is the only one enforced
@@ -239,13 +404,17 @@ Drift guards (all in `cargo test`, so CI fails on drift):
   property test asserts this twice per generated document — once on the `serde_json::Value` and
   once through a YAML text round-trip, because production parses YAML and `yaml_serde`'s
   acceptance surface is not identical to the JSON value model. The known divergences in the
-  other direction (annotational `ipv4`/`ipv6` formats; duplicate mapping keys, which serde
-  rejects but the YAML→JSON conversion resolves last-wins before the schema can see them; and
+  other direction (annotational `ipv4`/`ipv6` formats; mount targets, whose `RelPath` shape
+  JSON Schema can only approximate with a regex; duplicate mapping keys, which serde rejects
+  but the YAML→JSON conversion resolves last-wins before the schema can see them; and
   non-finite floats like `.nan`, which that conversion collapses to `null`, so nullable fields
   schema-accept them) are pinned with per-side expectations in `schema_divergences_are_pinned`.
-  The pinning documents each known divergence exactly, but constrains only the enumerated rows:
-  the invariant is deliberately one-directional, so a newly discovered false-accept fails no
-  test and should be added to that table. Semantic checks that JSON Schema cannot express (mount
+
+  That direction is checked, not merely documented: the property test asserts the converse too,
+  allowing only those classes. A schema that accepts what the parser rejects is not a safety
+  violation, but an unlisted one means the schema drifted looser than the parser with nothing
+  saying so. Typing `mount.target` as a `RelPath` produced exactly such a divergence, and this
+  assertion is what surfaced it. Semantic checks that JSON Schema cannot express (mount
   `name_servers` exclusivity, mitamae binary resolution) stay in `Profile::validate_*` and are out
   of scope here.
 
@@ -273,20 +442,25 @@ Mock-executor pattern (`tests/helpers/mod.rs`):
 
 ### Known test gaps
 
-- **`run_task_item()` teardown failure paths** (execute `Ok`/teardown `Err`, and
+- **`run_provision_item()` teardown failure paths** (execute `Ok`/teardown `Err`, and
   `Err`/`Err`) are untestable today: the pipeline builds providers from
   `task.resolved_isolation_config()`, so failure injection is impractical, and both
   `ChrootProvider` and `DirectProvider` have infallible teardown — these paths are
   unreachable with current backends. Add tests when a backend with fallible teardown
   (bwrap, systemd-nspawn) lands.
+- **Escalation is only exercised for filesystem operations.** `tests/privileged_helper_test.rs`
+  runs the helper under real `sudo`, but the per-command escalation path
+  (`mount`/`umount`/`chroot`/bootstrap) is still only asserted at the argv level. A full
+  privileged `apply` has been run by hand; nothing runs it automatically.
 - **`run_pipeline_phase()` sequencing and gating** are covered by in-crate tests in
-  `src/lib.rs`, using a recording executor that really runs `mv`/`cp`/`rm`/`ln` and a
-  shell provision task against a temp rootfs: the temporary resolv.conf is restored
-  after provision (a real provision command sits between the setup and restore
-  sequences) and before assemble; assemble is gated on both the prepare/provision
-  result and the restore result (including a real restore-`mv` failure, which strands
-  the backup and skips assemble); an assemble failure propagates while the
-  atomically-staged replace leaves the restored original in place; and both link- and
-  generate-mode assemble tasks are exercised end-to-end. The remaining gap is the
-  interplay with real mount/unmount failures — `RootfsMounts` unit tests cover those
-  error paths independently via `MockMountExecutor`.
+  `src/lib.rs`, using a recording executor that really runs the provision command and
+  `RootfsOps` failure injection against a temp rootfs: the temporary resolv.conf is
+  restored after provision (a real provision command sits between setup and restore)
+  and before assemble; assemble is gated on both the prepare/provision result and the
+  restore result; assemble runs only after the mounts are released (an executor and an
+  ops wrapper sharing one timeline pin `mount` → `umount` → the assemble write); an
+  assemble failure propagates while the atomically-staged replace leaves the restored
+  original in place; and both link- and generate-mode assemble tasks are exercised
+  end-to-end. The remaining gap is the interplay with real mount/unmount failures —
+  `RootfsMounts` unit tests cover those error paths independently via
+  `MockMountExecutor`.

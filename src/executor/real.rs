@@ -87,11 +87,27 @@ fn spawn_reader_threads(
 ///
 /// When `dry_run` is true, commands are logged but not executed,
 /// and `execute()` returns `Ok(ExecutionResult { status: None })`.
+// The field is private because whether a run is a dry run is fixed when the executor
+// is built: `CommandExecutor::dry_run()` is the single answer every layer derives from,
+// and a `pub` field would let a holder flip it between two commands of the same run.
+#[derive(Debug)]
 pub struct RealCommandExecutor {
-    pub dry_run: bool,
+    dry_run: bool,
+}
+
+impl RealCommandExecutor {
+    /// Creates an executor that runs commands, or only logs them when `dry_run` is set.
+    #[must_use]
+    pub fn new(dry_run: bool) -> Self {
+        Self { dry_run }
+    }
 }
 
 impl CommandExecutor for RealCommandExecutor {
+    fn dry_run(&self) -> bool {
+        self.dry_run
+    }
+
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
         if self.dry_run {
             let privilege_prefix = spec
@@ -99,17 +115,17 @@ impl CommandExecutor for RealCommandExecutor {
                 .as_ref()
                 .map(|m| format!("{} ", m.command_name()))
                 .unwrap_or_default();
-            if spec.args.is_empty() {
-                tracing::info!("dry run: {}{}", privilege_prefix, spec.command);
+            if spec.args().is_empty() {
+                tracing::info!("dry run: {}{}", privilege_prefix, spec.command());
             } else {
                 tracing::info!(
                     "dry run: {}{} {}",
                     privilege_prefix,
-                    spec.command,
-                    super::format_command_args(&spec.args)
+                    spec.command(),
+                    super::format_command_args(spec.args())
                 );
             }
-            if let Some(ref cwd) = spec.cwd {
+            if let Some(cwd) = spec.cwd() {
                 tracing::info!("dry run cwd: {}", cwd);
             }
             return Ok(ExecutionResult { status: None });
@@ -122,10 +138,10 @@ impl CommandExecutor for RealCommandExecutor {
             })
         };
 
-        let (resolved_program, resolved_args) = if let Some(method) = &spec.privilege {
+        let (resolved_program, resolved_args) = if let Some(method) = spec.privilege().as_ref() {
             let privilege_cmd =
                 find_command(method.command_name(), "privilege escalation command")?;
-            let actual_cmd = find_command(&spec.command, "command")?;
+            let actual_cmd = find_command(spec.command(), "command")?;
 
             tracing::trace!(
                 "privilege escalation: {} {}",
@@ -133,25 +149,25 @@ impl CommandExecutor for RealCommandExecutor {
                 actual_cmd.display()
             );
 
-            let mut args: Vec<String> = Vec::with_capacity(spec.args.len() + 1);
+            let mut args: Vec<String> = Vec::with_capacity(spec.args().len() + 1);
             args.push(actual_cmd.display().to_string());
-            args.extend(spec.args.iter().cloned());
+            args.extend(spec.args().iter().cloned());
 
             (privilege_cmd, args)
         } else {
-            let cmd = find_command(&spec.command, "command")?;
-            tracing::trace!("command found: {}: {}", spec.command, cmd.display());
-            (cmd, spec.args.clone())
+            let cmd = find_command(spec.command(), "command")?;
+            tracing::trace!("command found: {}: {}", spec.command(), cmd.display());
+            (cmd, spec.args().to_vec())
         };
 
         let mut command = Command::new(&resolved_program);
         command.args(&resolved_args);
 
-        if let Some(ref cwd) = spec.cwd {
+        if let Some(cwd) = spec.cwd() {
             command.current_dir(cwd.as_std_path());
         }
 
-        for (key, value) in &spec.env {
+        for (key, value) in spec.env() {
             command.env(key, value);
         }
 
@@ -169,7 +185,7 @@ impl CommandExecutor for RealCommandExecutor {
             }
         };
 
-        tracing::trace!("spawned command: {}: pid={}", spec.command, child.id());
+        tracing::trace!("spawned command: {}: pid={}", spec.command(), child.id());
 
         let (stdout_handle, stderr_handle) = spawn_reader_threads(&mut child, spec)?;
 
@@ -208,7 +224,7 @@ impl CommandExecutor for RealCommandExecutor {
             .into());
         }
 
-        tracing::trace!("executed command: {}: success={}", spec.command, status.success());
+        tracing::trace!("executed command: {}: success={}", spec.command(), status.success());
 
         Ok(ExecutionResult {
             status: Some(status),

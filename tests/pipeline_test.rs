@@ -10,6 +10,12 @@ use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use rsdebstrap::phase::{AssembleConfig, PrepareConfig, ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::pipeline::Pipeline;
 
+// These tests drive the pipeline in dry-run mode, where no filesystem operation
+// is meant to reach a real rootfs.
+fn dry_run_ops() -> std::sync::Arc<dyn rsdebstrap::rootfs::RootfsOps> {
+    std::sync::Arc::new(rsdebstrap::rootfs::DryRunRootfsOps::new(Utf8Path::new("/tmp/rootfs")))
+}
+
 // Empty prepare/assemble phases shared by the provision-focused pipeline tests.
 static EMPTY_PREPARE: PrepareConfig = PrepareConfig {
     mount: None,
@@ -19,7 +25,8 @@ static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig { resolv_conf: None };
 
 // Builds a pipeline with only provision tasks (empty prepare/assemble phases).
 fn provision_pipeline(tasks: &[ProvisionTask]) -> Pipeline<'_> {
-    Pipeline::new(&EMPTY_PREPARE, tasks, &EMPTY_ASSEMBLE)
+    Pipeline::new(&EMPTY_PREPARE, tasks, &EMPTY_ASSEMBLE, None, &IsolationConfig::default())
+        .expect("no task declares `privilege: true`, so resolution cannot fail")
 }
 
 // Records executed commands in order, optionally failing on specific calls.
@@ -54,11 +61,17 @@ impl MockExecutor {
 }
 
 impl CommandExecutor for MockExecutor {
+    // These tests drive the pipeline against a fixture rootfs that does not exist on disk,
+    // so every layer has to agree the run is a dry run. It now derives that from here.
+    fn dry_run(&self) -> bool {
+        true
+    }
+
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
         let mut calls = self.calls.lock().unwrap();
         let index = calls.len();
-        let mut args = vec![spec.command.clone()];
-        args.extend(spec.args.iter().cloned());
+        let mut args = vec![spec.command().to_string()];
+        args.extend(spec.args().iter().cloned());
         calls.push(args);
         drop(calls);
 
@@ -69,21 +82,15 @@ impl CommandExecutor for MockExecutor {
     }
 }
 
-// Helper to create a simple inline shell task with privilege and isolation resolved.
+// Helper to create a simple inline shell task.
 fn inline_task(content: &str) -> ProvisionTask {
-    let mut task = ShellTask::new(ScriptSource::Content(content.to_string()));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
-    ProvisionTask::Shell(task)
+    ProvisionTask::Shell(ShellTask::new(ScriptSource::Content(content.to_string())))
 }
 
 // Helper to create an inline shell task with isolation disabled (direct execution).
 fn inline_task_direct(content: &str) -> ProvisionTask {
     let yaml = format!("content: \"{}\"\nisolation: false\n", content);
-    let mut task: ShellTask = yaml_serde::from_str(&yaml).unwrap();
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::chroot()); // Disabled stays Disabled
-    ProvisionTask::Shell(task)
+    ProvisionTask::Shell(yaml_serde::from_str(&yaml).unwrap())
 }
 
 #[test]
@@ -150,7 +157,7 @@ fn test_pipeline_run_empty_returns_ok_without_setup() {
     let pipeline = provision_pipeline(&[]);
     let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops());
     assert!(result.is_ok());
 }
 
@@ -166,7 +173,7 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops());
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     assert_eq!(mock_executor.call_count(), 3);
@@ -183,18 +190,9 @@ fn test_pipeline_run_executes_tasks_in_phase_order() {
 
 #[test]
 fn test_pipeline_run_tasks_execute_in_order_within_phase() {
-    let mut task1 =
-        ShellTask::with_shell(ScriptSource::Content("echo t1".to_string()), "/bin/sh-1");
-    task1.resolve_privilege(None).unwrap();
-    task1.resolve_isolation(&IsolationConfig::default());
-    let mut task2 =
-        ShellTask::with_shell(ScriptSource::Content("echo t2".to_string()), "/bin/sh-2");
-    task2.resolve_privilege(None).unwrap();
-    task2.resolve_isolation(&IsolationConfig::default());
-    let mut task3 =
-        ShellTask::with_shell(ScriptSource::Content("echo t3".to_string()), "/bin/sh-3");
-    task3.resolve_privilege(None).unwrap();
-    task3.resolve_isolation(&IsolationConfig::default());
+    let task1 = ShellTask::with_shell(ScriptSource::Content("echo t1".to_string()), "/bin/sh-1");
+    let task2 = ShellTask::with_shell(ScriptSource::Content("echo t2".to_string()), "/bin/sh-2");
+    let task3 = ShellTask::with_shell(ScriptSource::Content("echo t3".to_string()), "/bin/sh-3");
     let tasks = [
         ProvisionTask::Shell(task1),
         ProvisionTask::Shell(task2),
@@ -205,7 +203,7 @@ fn test_pipeline_run_tasks_execute_in_order_within_phase() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops());
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     let calls = mock_executor.calls();
@@ -231,7 +229,7 @@ fn test_pipeline_run_error_stops_remaining_tasks() {
     let mock_executor = Arc::new(MockExecutor::failing_on(1));
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops());
     assert!(result.is_err());
 
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -252,7 +250,7 @@ fn test_pipeline_run_task_isolation_disabled_uses_direct() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops());
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     let calls = mock_executor.calls();
@@ -281,7 +279,7 @@ fn test_pipeline_run_task_isolation_enabled_uses_chroot() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops());
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     let calls = mock_executor.calls();
@@ -301,18 +299,14 @@ fn test_pipeline_run_task_isolation_enabled_uses_chroot() {
 #[test]
 fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
     // Use custom shell paths to distinguish each call
-    let mut chroot1 =
+    let chroot1 =
         ShellTask::with_shell(ScriptSource::Content("echo chroot1".to_string()), "/bin/sh-chroot1");
-    chroot1.resolve_privilege(None).unwrap();
-    chroot1.resolve_isolation(&IsolationConfig::default());
     let task1 = ProvisionTask::Shell(chroot1);
 
     let task2 = inline_task_direct("echo direct");
 
-    let mut chroot2 =
+    let chroot2 =
         ShellTask::with_shell(ScriptSource::Content("echo chroot2".to_string()), "/bin/sh-chroot2");
-    chroot2.resolve_privilege(None).unwrap();
-    chroot2.resolve_isolation(&IsolationConfig::default());
     let task3 = ProvisionTask::Shell(chroot2);
 
     let tasks = [task1, task2, task3];
@@ -321,7 +315,7 @@ fn test_pipeline_run_mixed_isolation_chroot_and_direct() {
     let mock_executor = Arc::new(MockExecutor::new());
     let executor: Arc<dyn CommandExecutor> = Arc::clone(&mock_executor) as Arc<dyn CommandExecutor>;
 
-    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, true);
+    let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops());
     assert!(result.is_ok(), "pipeline run failed: {:?}", result);
 
     let calls = mock_executor.calls();

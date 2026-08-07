@@ -44,6 +44,22 @@ pub enum RsdebstrapError {
     #[error("validation error: {0}")]
     Validation(String),
 
+    /// An error from a boundary that returns [`anyhow::Error`], carried with its cause
+    /// chain rather than flattened into text.
+    ///
+    /// Renders like [`Validation`](Self::Validation) — these reach the user from the same
+    /// places — but the original is still reachable through
+    /// [`Error::source`](std::error::Error::source), so a caller can walk the chain or
+    /// downcast to whatever the boundary actually returned.
+    #[error("validation error: {message}")]
+    Untyped {
+        /// The boundary error's own message, without its causes.
+        message: String,
+        /// The error as it arrived, chain intact.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+
     /// A command execution failed (non-zero exit, spawn failure, wait failure, thread panic, etc.).
     #[error("command execution failed: {command}: {status}")]
     Execution {
@@ -113,11 +129,19 @@ impl RsdebstrapError {
 
     /// Converts an `anyhow::Error` into a `RsdebstrapError`, preserving the typed
     /// variant if the error is already a `RsdebstrapError`, or wrapping it as
-    /// `Validation` otherwise.
+    /// [`Untyped`](Self::Untyped) otherwise.
+    ///
+    /// The wrapping keeps the error itself rather than `format!("{:#}", e)`: rendering
+    /// the chain into a `String` is a one-way trip, leaving `source()` empty and the
+    /// underlying error impossible to downcast. Anything that walks the chain — including
+    /// `main`'s own reporting — reads the causes from `source` instead.
     pub(crate) fn from_anyhow_or_validation(e: anyhow::Error) -> Self {
         match e.downcast::<RsdebstrapError>() {
             Ok(typed) => typed,
-            Err(e) => Self::Validation(format!("{:#}", e)),
+            Err(e) => Self::Untyped {
+                message: e.to_string(),
+                source: e.into(),
+            },
         }
     }
 
@@ -130,21 +154,21 @@ impl RsdebstrapError {
         spec: &crate::executor::CommandSpec,
         status: impl Into<String>,
     ) -> Self {
-        let command = if let Some(method) = &spec.privilege {
-            if spec.args.is_empty() {
-                format!("{} {}", method.command_name(), spec.command)
+        let command = if let Some(method) = spec.privilege().as_ref() {
+            if spec.args().is_empty() {
+                format!("{} {}", method.command_name(), spec.command())
             } else {
                 format!(
                     "{} {} {}",
                     method.command_name(),
-                    spec.command,
-                    format_command_args(&spec.args)
+                    spec.command(),
+                    format_command_args(spec.args())
                 )
             }
-        } else if spec.args.is_empty() {
-            spec.command.clone()
+        } else if spec.args().is_empty() {
+            spec.command().to_string()
         } else {
-            format!("{} {}", spec.command, format_command_args(&spec.args))
+            format!("{} {}", spec.command(), format_command_args(spec.args()))
         };
         Self::Execution {
             command,
@@ -210,10 +234,13 @@ mod tests {
 
     #[test]
     fn test_execution_constructor_with_privilege_and_args() {
-        use crate::executor::CommandSpec;
+        use crate::executor::{CommandSpec, PrivilegedProgram};
         use crate::privilege::PrivilegeMethod;
-        let spec = CommandSpec::new("chroot", vec!["/tmp/rootfs".into(), "/bin/sh".into()])
-            .with_privilege(Some(PrivilegeMethod::Sudo));
+        let spec = CommandSpec::privileged(
+            PrivilegedProgram::Chroot,
+            vec!["/tmp/rootfs".into(), "/bin/sh".into()],
+            Some(PrivilegeMethod::Sudo),
+        );
         let err = RsdebstrapError::execution(&spec, "exit status: 1");
         assert_eq!(
             err.to_string(),
@@ -223,9 +250,10 @@ mod tests {
 
     #[test]
     fn test_execution_constructor_with_privilege_without_args() {
-        use crate::executor::CommandSpec;
+        use crate::executor::{CommandSpec, PrivilegedProgram};
         use crate::privilege::PrivilegeMethod;
-        let spec = CommandSpec::new("chroot", vec![]).with_privilege(Some(PrivilegeMethod::Doas));
+        let spec =
+            CommandSpec::privileged(PrivilegedProgram::Chroot, vec![], Some(PrivilegeMethod::Doas));
         let err = RsdebstrapError::execution(&spec, "exit status: 1");
         assert_eq!(err.to_string(), "command execution failed: doas chroot: exit status: 1");
     }
@@ -317,6 +345,7 @@ mod tests {
             RsdebstrapError::Config("test".to_string()),
             RsdebstrapError::io("/path", io::Error::new(io::ErrorKind::NotFound, "test")),
             RsdebstrapError::command_not_found("doas", "privilege escalation command"),
+            RsdebstrapError::from_anyhow_or_validation(anyhow::anyhow!("untyped")),
         ];
 
         for original in cases {
@@ -352,10 +381,37 @@ mod tests {
         assert!(
             matches!(
                 &result,
-                RsdebstrapError::Validation(msg) if msg.contains("some generic error")
+                RsdebstrapError::Untyped { message, .. } if message == "some generic error"
             ),
-            "expected Validation variant, got: {:?}",
+            "expected Untyped variant, got: {:?}",
             result
         );
+        assert_eq!(result.to_string(), "validation error: some generic error");
+    }
+
+    // The point of `Untyped`: a boundary error's causes survive as errors rather than as
+    // text, so callers can walk the chain and downcast to what was actually thrown.
+    #[test]
+    fn test_from_anyhow_or_validation_keeps_the_cause_chain() {
+        use std::error::Error;
+
+        let anyhow_err =
+            anyhow::Error::new(io::Error::new(io::ErrorKind::NotFound, "no such file"))
+                .context("reading the backend manifest");
+        let result = RsdebstrapError::from_anyhow_or_validation(anyhow_err);
+
+        assert_eq!(result.to_string(), "validation error: reading the backend manifest");
+
+        let cause = result
+            .source()
+            .expect("the boundary error must be preserved");
+        assert_eq!(cause.to_string(), "reading the backend manifest");
+
+        let io_cause = cause
+            .source()
+            .expect("the chain must reach the original I/O error")
+            .downcast_ref::<io::Error>()
+            .expect("the original error is still an io::Error");
+        assert_eq!(io_cause.kind(), io::ErrorKind::NotFound);
     }
 }

@@ -8,19 +8,16 @@
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
-#[cfg(feature = "schema")]
 use std::borrow::Cow;
 use std::fs;
 use tracing::{debug, info};
 
-use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
-use crate::phase::{ScriptSource, TempFileGuard};
-use crate::privilege::{Privilege, PrivilegeDefaults};
+use crate::phase::{ScriptSource, StagedFileGuard};
+use crate::privilege::{Privilege, PrivilegeMethod};
 
 /// Shell task data and execution logic.
 ///
@@ -47,10 +44,10 @@ pub struct ShellTask {
     /// Shell interpreter to use (default: /bin/sh)
     shell: String,
 
-    /// Privilege escalation setting (resolved during defaults application)
+    /// Privilege escalation setting as declared in the profile
     privilege: Privilege,
 
-    /// Isolation setting (resolved during defaults application)
+    /// Isolation setting as declared in the profile
     isolation: TaskIsolation,
 }
 
@@ -58,29 +55,15 @@ fn default_shell() -> String {
     "/bin/sh".to_string()
 }
 
-// Wire shape of a shell task.
+// Wire shape of a shell task: one type drives both deserialization and schema
+// generation, so the two cannot describe different shapes.
 //
-// Single source of truth for the YAML shape, shared by both deserialization (via
-// `ShellTask`'s `Deserialize`) and schema generation (via `ShellTask`'s `JsonSchema`).
-// `deny_unknown_fields` keeps typo'd keys rejected. The `script`/`content` mutual-exclusion is
-// enforced at runtime by `resolve_script_source`, and mirrored in the schema by the `oneOf`
-// below (exactly one of `script`/`content` must be set). Each branch also constrains the field
-// to a string, not just presence: serde treats an explicit `null` on an `Option` field as
-// absent (`None`), so a bare `required` would diverge from deserialization for e.g.
-// `{ script: null, content: hi }`. Plain `//` (not `///`) so the note does not leak into the
-// schema's `description`.
-#[derive(Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+// Plain `//` (not `///`) so this note does not leak into the schema's `description`.
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[cfg_attr(feature = "schema", schemars(extend("oneOf" = serde_json::json!([
-    { "required": ["script"], "properties": { "script": { "type": "string" } } },
-    { "required": ["content"], "properties": { "content": { "type": "string" } } },
-]))))]
+#[schemars(extend("oneOf" = crate::schema::script_or_content()))]
 struct RawShellTask {
-    #[cfg_attr(
-        feature = "schema",
-        schemars(with = "Option<crate::schema::Utf8PathSchema>")
-    )]
+    #[schemars(with = "Option<crate::schema::Utf8PathSchema>")]
     script: Option<Utf8PathBuf>,
     content: Option<String>,
     #[serde(default = "default_shell")]
@@ -107,7 +90,6 @@ impl<'de> Deserialize<'de> for ShellTask {
     }
 }
 
-#[cfg(feature = "schema")]
 impl JsonSchema for ShellTask {
     fn schema_name() -> Cow<'static, str> {
         "ShellTask".into()
@@ -170,34 +152,14 @@ impl ShellTask {
         self.source.resolve_paths(base_dir);
     }
 
-    /// Resolves the privilege setting against profile defaults.
-    ///
-    /// # Errors
-    ///
-    /// Returns `RsdebstrapError::Validation` if `privilege: true` is specified
-    /// but no `defaults.privilege.method` is configured in the profile.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        self.privilege.resolve_in_place(defaults)
+    /// Returns the privilege setting as written in the profile.
+    pub fn privilege(&self) -> &Privilege {
+        &self.privilege
     }
 
-    /// Returns a reference to the task's isolation setting.
+    /// Returns the isolation setting as written in the profile.
     pub fn task_isolation(&self) -> &TaskIsolation {
         &self.isolation
-    }
-
-    /// Resolves the isolation setting against profile defaults.
-    pub fn resolve_isolation(&mut self, defaults: &IsolationConfig) {
-        self.isolation.resolve_in_place(defaults);
-    }
-
-    /// Returns the resolved isolation config.
-    ///
-    /// Should only be called after [`resolve_isolation()`](Self::resolve_isolation).
-    pub fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        self.isolation.resolved_config()
     }
 
     /// Validates the task configuration.
@@ -235,15 +197,18 @@ impl ShellTask {
     /// This method:
     /// 1. Validates the rootfs (unless dry_run)
     /// 2. Sets up an RAII guard for cleanup of the temp script file
-    /// 3. Re-validates /tmp to mitigate TOCTOU race conditions (unless dry_run)
-    /// 4. Copies or writes the script to rootfs /tmp
-    /// 5. Executes the script via the isolation context
-    /// 6. Returns an error if the process fails or exits without status
+    /// 3. Stages the script under rootfs /tmp through `RootfsOps`
+    /// 4. Executes the script via the isolation context
+    /// 5. Returns an error if the process fails or exits without status
     ///
     /// In dry-run mode, skips file I/O (rootfs validation, script copy/write,
     /// permission changes, cleanup) while still constructing and delegating
     /// commands to the executor.
-    pub fn execute(&self, context: &dyn IsolationContext) -> Result<()> {
+    pub fn execute(
+        &self,
+        context: &dyn IsolationContext,
+        privilege: Option<PrivilegeMethod>,
+    ) -> Result<()> {
         let rootfs = context.rootfs();
         let dry_run = context.dry_run();
 
@@ -256,22 +221,23 @@ impl ShellTask {
         debug!("rootfs: {}, shell: {}, dry_run: {}", rootfs, self.shell, dry_run);
 
         let script_name = format!("task-{}.sh", uuid::Uuid::new_v4());
-        let target_script = rootfs.join("tmp").join(&script_name);
-        let _guard = TempFileGuard::new(target_script.clone(), dry_run);
-
-        crate::phase::prepare_files_with_toctou_check(rootfs, dry_run, || {
-            crate::phase::prepare_source_file(&self.source, &target_script, 0o700, "script")
-        })?;
-
         let script_path_in_isolation = format!("/tmp/{}", script_name);
+        let staged = crate::rootfs::RelPath::parse(&script_path_in_isolation)?;
+        let _guard = StagedFileGuard::new(context.rootfs_ops(), staged.clone(), dry_run);
+
+        if !dry_run {
+            crate::phase::stage_source_file(
+                context.rootfs_ops(),
+                &self.source,
+                &staged,
+                0o700,
+                "script",
+            )?;
+        }
+
         let command: Vec<String> = vec![self.shell.clone(), script_path_in_isolation];
 
-        let result = crate::phase::execute_in_context(
-            context,
-            &command,
-            "script",
-            self.privilege.resolved_method(),
-        )?;
+        let result = crate::phase::execute_in_context(context, &command, "script", privilege)?;
         crate::phase::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("shell script completed successfully");

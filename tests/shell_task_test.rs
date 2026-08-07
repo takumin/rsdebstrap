@@ -9,7 +9,6 @@ use std::process::ExitStatus;
 use anyhow::Result;
 use camino::Utf8Path;
 use rsdebstrap::RsdebstrapError;
-use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::executor::ExecutionResult;
 use rsdebstrap::isolation::IsolationContext;
 use rsdebstrap::phase::{ScriptSource, ShellTask};
@@ -34,7 +33,7 @@ fn test_run_fails_when_tmp_missing() {
     let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -59,7 +58,7 @@ fn test_run_fails_when_tmp_is_symlink() {
     let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -78,7 +77,7 @@ fn test_run_fails_when_tmp_is_file() {
     let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -101,7 +100,7 @@ fn test_run_fails_when_shell_has_path_traversal() {
         ShellTask::with_shell(ScriptSource::Content("echo test".to_string()), "/bin/../etc/passwd");
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -119,7 +118,7 @@ fn test_run_fails_when_shell_not_exists() {
     let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -142,7 +141,7 @@ fn test_run_fails_when_shell_is_directory() {
     let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -157,12 +156,10 @@ fn test_run_dry_run_skips_rootfs_validation() {
 
     // Do NOT create /tmp or /bin/sh - this would fail without dry_run
 
-    let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
 
     let context = MockContext::new_dry_run(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_ok(), "dry_run should skip validation, got: {:?}", result);
 
@@ -182,12 +179,10 @@ fn test_run_with_external_script_dry_run() {
     let script_path_utf8 =
         camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
 
-    let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
 
     let context = MockContext::new_dry_run(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_ok(), "dry_run with external script should succeed, got: {:?}", result);
 
@@ -210,12 +205,10 @@ fn test_run_fails_when_context_execute_errors() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
 
     let context = MockContext::with_error(&rootfs, "connection to isolation backend lost");
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
@@ -242,7 +235,7 @@ fn test_run_fails_when_script_copy_fails() {
     let script_path_utf8 =
         camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
 
-    // Make /tmp read-only to cause copy failure
+    // Make the rootfs's /tmp read-only so staging the script fails there
     let tmp_path = temp_dir.path().join("tmp");
     let mut perms = std::fs::metadata(&tmp_path)
         .expect("failed to get tmp metadata")
@@ -250,12 +243,10 @@ fn test_run_fails_when_script_copy_fails() {
     perms.set_mode(0o555);
     std::fs::set_permissions(&tmp_path, perms).expect("failed to set tmp permissions");
 
-    let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     let mut perms = std::fs::metadata(&tmp_path)
         .expect("failed to get tmp metadata")
@@ -266,8 +257,8 @@ fn test_run_fails_when_script_copy_fails() {
     assert!(result.is_err());
     let err_msg = format!("{:#}", result.unwrap_err());
     assert!(
-        err_msg.contains("failed to copy script"),
-        "Expected 'failed to copy script' in error, got: {}",
+        err_msg.contains("failed to stage script"),
+        "Expected 'failed to stage script' in error, got: {}",
         err_msg
     );
 }
@@ -280,12 +271,10 @@ fn test_execute_inline_script_success() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let mut task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Content("echo hello".to_string()));
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_ok(), "non-dry_run inline script should succeed, got: {:?}", result);
 
@@ -329,12 +318,10 @@ fn test_execute_external_script_success() {
     let script_path_utf8 =
         camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
 
-    let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_ok(), "non-dry_run external script should succeed, got: {:?}", result);
 
@@ -377,31 +364,36 @@ fn test_execute_inline_script_verifies_file_written() {
     setup_valid_rootfs(&temp_dir);
 
     let script_content = "#!/bin/sh\necho hello world\n";
-    let mut task = ShellTask::new(ScriptSource::Content(script_content.to_string()));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Content(script_content.to_string()));
 
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured_content);
 
     struct CapturingContext {
         rootfs: camino::Utf8PathBuf,
+        // These tests capture the script content the task hands to the shell,
+        // so no rootfs mutation is exercised.
+        ops: rsdebstrap::rootfs::LocalRootfsOps,
         captured_content: Arc<Mutex<Option<String>>>,
         executed_commands: RefCell<Vec<Vec<String>>>,
     }
 
-    impl IsolationContext for CapturingContext {
-        fn name(&self) -> &'static str {
-            "capturing-mock"
+    impl rsdebstrap::isolation::RootfsContext for CapturingContext {
+        fn rootfs_ops(&self) -> &dyn rsdebstrap::rootfs::RootfsOps {
+            &self.ops
         }
+
         fn rootfs(&self) -> &Utf8Path {
             &self.rootfs
         }
         fn dry_run(&self) -> bool {
             false
         }
-        fn executor(&self) -> &dyn rsdebstrap::executor::CommandExecutor {
-            unimplemented!("CapturingContext does not provide a real executor")
+    }
+
+    impl IsolationContext for CapturingContext {
+        fn name(&self) -> &'static str {
+            "capturing-mock"
         }
         fn execute(
             &self,
@@ -437,11 +429,12 @@ fn test_execute_inline_script_verifies_file_written() {
 
     let context = CapturingContext {
         rootfs: rootfs.clone(),
+        ops: rsdebstrap::rootfs::LocalRootfsOps::open(&rootfs).expect("rootfs should open"),
         captured_content: captured_clone,
         executed_commands: RefCell::new(Vec::new()),
     };
 
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
     assert!(result.is_ok(), "execute should succeed, got: {:?}", result);
 
     let captured = captured_content.lock().unwrap();
@@ -469,31 +462,36 @@ fn test_execute_external_script_verifies_file_copied() {
     let script_path_utf8 =
         camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
 
-    let mut task = ShellTask::new(ScriptSource::Script(script_path_utf8));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
 
     let captured_content: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured_content);
 
     struct CapturingContext {
         rootfs: camino::Utf8PathBuf,
+        // These tests capture the script content the task hands to the shell,
+        // so no rootfs mutation is exercised.
+        ops: rsdebstrap::rootfs::LocalRootfsOps,
         captured_content: Arc<Mutex<Option<String>>>,
         executed_commands: RefCell<Vec<Vec<String>>>,
     }
 
-    impl IsolationContext for CapturingContext {
-        fn name(&self) -> &'static str {
-            "capturing-mock"
+    impl rsdebstrap::isolation::RootfsContext for CapturingContext {
+        fn rootfs_ops(&self) -> &dyn rsdebstrap::rootfs::RootfsOps {
+            &self.ops
         }
+
         fn rootfs(&self) -> &Utf8Path {
             &self.rootfs
         }
         fn dry_run(&self) -> bool {
             false
         }
-        fn executor(&self) -> &dyn rsdebstrap::executor::CommandExecutor {
-            unimplemented!("CapturingContext does not provide a real executor")
+    }
+
+    impl IsolationContext for CapturingContext {
+        fn name(&self) -> &'static str {
+            "capturing-mock"
         }
         fn execute(
             &self,
@@ -521,11 +519,12 @@ fn test_execute_external_script_verifies_file_copied() {
 
     let context = CapturingContext {
         rootfs: rootfs.clone(),
+        ops: rsdebstrap::rootfs::LocalRootfsOps::open(&rootfs).expect("rootfs should open"),
         captured_content: captured_clone,
         executed_commands: RefCell::new(Vec::new()),
     };
 
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
     assert!(result.is_ok(), "execute should succeed, got: {:?}", result);
 
     let captured = captured_content.lock().unwrap();
@@ -547,13 +546,11 @@ fn test_execute_with_custom_shell() {
     std::fs::write(temp_dir.path().join("bin/bash"), "#!/bin/bash\n")
         .expect("failed to write /bin/bash");
 
-    let mut task =
+    let task =
         ShellTask::with_shell(ScriptSource::Content("echo custom shell".to_string()), "/bin/bash");
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
 
     let context = MockContext::new(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_ok(), "execute with custom shell should succeed, got: {:?}", result);
 
@@ -582,12 +579,10 @@ fn test_execute_with_no_exit_status_returns_error() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let mut task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Content("echo test".to_string()));
 
     let context = MockContext::with_no_status(&rootfs);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err(), "status: None should be treated as error");
     let anyhow_err = result.unwrap_err();
@@ -618,11 +613,9 @@ fn test_execute_nonzero_exit_returns_execution_error() {
 
     setup_valid_rootfs(&temp_dir);
 
-    let mut task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
-    task.resolve_privilege(None).unwrap();
-    task.resolve_isolation(&IsolationConfig::default());
+    let task = ShellTask::new(ScriptSource::Content("exit 1".to_string()));
     let context = MockContext::with_failure(&rootfs, 1);
-    let result = task.execute(&context);
+    let result = task.execute(&context, None);
 
     assert!(result.is_err());
     let anyhow_err = result.unwrap_err();
@@ -649,4 +642,32 @@ fn test_execute_nonzero_exit_returns_execution_error() {
             status,
         );
     }
+}
+
+// `validate()` rejects a symlinked script, but execution re-reads the path later. If the
+// name is repointed in between, the read must fail rather than follow it: the check and the
+// use have to land on the same inode.
+#[test]
+fn execute_refuses_a_script_that_became_a_symlink_after_validation() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    setup_valid_rootfs(&temp_dir);
+
+    let work = tempdir().expect("failed to create work dir");
+    let script = camino::Utf8PathBuf::from_path_buf(work.path().join("task.sh")).unwrap();
+    std::fs::write(&script, "echo benign\n").unwrap();
+    let elsewhere = work.path().join("attacker-target");
+    std::fs::write(&elsewhere, "echo malicious\n").unwrap();
+
+    let task = ShellTask::new(ScriptSource::Script(script.clone()));
+    task.validate().expect("a regular file passes validation");
+
+    std::fs::remove_file(&script).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &script).unwrap();
+
+    let context = MockContext::new(&rootfs);
+    let err = task
+        .execute(&context, None)
+        .expect_err("the repointed script must be refused");
+    assert!(format!("{err:#}").contains("is a symlink"), "unexpected error: {err:#}");
 }

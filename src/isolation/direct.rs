@@ -4,12 +4,69 @@
 //! directly on the host filesystem, translating absolute paths to be relative
 //! to the rootfs directory. Used when a task has `isolation: false`.
 
-use super::{IsolationContext, IsolationProvider};
+use super::{IsolationContext, IsolationProvider, RootfsContext};
 use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
+use crate::rootfs::{RelPath, RootfsOps};
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
+use rustix::fs::{self as rfs, AtFlags, CWD, FileType, Mode, OFlags};
 use std::sync::Arc;
+
+/// Walks `program` inside `rootfs` with `O_NOFOLLOW`, refusing a symlink at any component.
+///
+/// The caller hands the joined path to the executor, and the kernel resolves it when it
+/// execs — following any symlink in it, including one that leaves the rootfs. This is what
+/// makes that an error instead.
+fn verify_program_stays_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<()> {
+    let path = RelPath::parse(program)?;
+    let mut dir = rfs::openat(
+        CWD,
+        rootfs.as_str(),
+        OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|e| symlink_error(e, rootfs.as_str()))?;
+
+    let components = path.components();
+    let (last, parents) = components.split_last().expect("RelPath is never empty");
+    for component in parents {
+        dir = rfs::openat(
+            &dir,
+            component.as_str(),
+            OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| symlink_error(e, &format!("{}/{}", rootfs, component)))?;
+    }
+    // `statat` rather than an `openat`: `O_NOFOLLOW | O_PATH` opens the *link itself* and
+    // succeeds, and a plain `O_NOFOLLOW` open needs read permission the program may not
+    // grant. What matters is only whether the final component is a symlink.
+    let stat = rfs::statat(&dir, last.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|e| symlink_error(e, &format!("{}{}", rootfs, path)))?;
+    if FileType::from_raw_mode(stat.st_mode) == FileType::Symlink {
+        return Err(symlink_error(rustix::io::Errno::LOOP, &format!("{}{}", rootfs, path)));
+    }
+    Ok(())
+}
+
+fn symlink_error(e: rustix::io::Errno, what: &str) -> anyhow::Error {
+    match e {
+        rustix::io::Errno::LOOP | rustix::io::Errno::NOTDIR => {
+            crate::error::RsdebstrapError::Isolation(format!(
+                "{} is a symlink or not a directory; refusing to run it without isolation, \
+                because the kernel would resolve it and could leave the rootfs",
+                what
+            ))
+            .into()
+        }
+        _ => crate::error::RsdebstrapError::io(
+            format!("failed to open {}", what),
+            std::io::Error::from(e),
+        )
+        .into(),
+    }
+}
 
 /// Direct execution provider (no isolation).
 ///
@@ -27,12 +84,12 @@ impl IsolationProvider for DirectProvider {
         &self,
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
-        dry_run: bool,
+        ops: Arc<dyn RootfsOps>,
     ) -> Result<Box<dyn IsolationContext>> {
         Ok(Box::new(DirectContext {
             rootfs: rootfs.to_owned(),
             executor,
-            dry_run,
+            ops,
             torn_down: false,
         }))
     }
@@ -45,25 +102,27 @@ impl IsolationProvider for DirectProvider {
 pub struct DirectContext {
     rootfs: Utf8PathBuf,
     executor: Arc<dyn CommandExecutor>,
-    dry_run: bool,
+    ops: Arc<dyn RootfsOps>,
     torn_down: bool,
 }
 
-impl IsolationContext for DirectContext {
-    fn name(&self) -> &'static str {
-        "direct"
-    }
-
+impl RootfsContext for DirectContext {
     fn rootfs(&self) -> &Utf8Path {
         &self.rootfs
     }
 
     fn dry_run(&self) -> bool {
-        self.dry_run
+        self.executor.dry_run()
     }
 
-    fn executor(&self) -> &dyn CommandExecutor {
-        &*self.executor
+    fn rootfs_ops(&self) -> &dyn RootfsOps {
+        &*self.ops
+    }
+}
+
+impl IsolationContext for DirectContext {
+    fn name(&self) -> &'static str {
+        "direct"
     }
 
     /// Executes a command directly on the host filesystem.
@@ -107,14 +166,32 @@ impl IsolationContext for DirectContext {
             })
             .collect();
 
-        let spec = CommandSpec::new(translated[0].clone(), translated[1..].to_vec())
-            .with_privilege(privilege);
+        // The translation above is a string join, and the kernel resolves symlinks when it
+        // execs. A rootfs whose `/bin/sh` is a symlink pointing out of the rootfs would
+        // therefore run a host binary. Verify the program — and only the program, since it
+        // is the one argument the kernel resolves on our behalf — component by component
+        // with `O_NOFOLLOW`.
+        if !self.executor.dry_run() && Utf8Path::new(&command[0]).is_absolute() {
+            verify_program_stays_in_rootfs(&self.rootfs, &command[0])?;
+        }
+
+        let spec =
+            CommandSpec::for_task_command(&super::TaskCommandToken::new(), &translated, privilege)?;
         self.executor.execute(&spec)
     }
 
     fn teardown(&mut self) -> Result<()> {
         self.torn_down = true;
         Ok(())
+    }
+}
+
+impl std::fmt::Debug for DirectContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DirectContext")
+            .field("rootfs", &self.rootfs)
+            .field("torn_down", &self.torn_down)
+            .finish_non_exhaustive()
     }
 }
 

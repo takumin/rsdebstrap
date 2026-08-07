@@ -4,10 +4,11 @@
 // the same contract with randomly generated documents so drift cannot hide in a shape nobody
 // thought to enumerate.
 //
-// The property asserted is the *critical safety invariant*: whenever the structural
-// deserializer accepts a document, the generated schema must also accept it. A violation means
-// editor/CI tooling would flag a config that `apply`/`validate` happily parse — the exact
-// failure mode the schema exists to avoid.
+// Two properties are asserted. The safety one, stated at `schema_divergences_are_pinned` in
+// that file: whenever the structural deserializer accepts a document, the schema must too. And
+// its converse, which is not a safety violation but marks silent drift: whenever the schema
+// accepts, the deserializer must too, except for the classes the pinned table also carries
+// (annotational formats, and rootfs paths whose shape JSON Schema cannot state).
 //
 // Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
 // `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
@@ -17,13 +18,6 @@
 // text and yaml_serde's acceptance surface is not identical to the JSON value model — the
 // round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
 // through `de::null_to_default`).
-
-// The whole crate is compiled out without the default-on `schema` feature: it exercises the
-// generated schema, which does not exist in a schema-less build. Gated in-file rather than
-// via a Cargo `[[test]]` stanza with `required-features` because an explicit test target
-// makes manifest parsing require the file to exist, breaking CI's sparse checkouts (the
-// fetch/build jobs check out the manifest without `tests/`).
-#![cfg(feature = "schema")]
 
 use std::sync::LazyLock;
 
@@ -38,6 +32,60 @@ static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
     jsonschema::validator_for(&schema).expect("generated schema must be a valid JSON Schema")
 });
 
+// True when a mount entry's `target` is not a well-formed absolute rootfs path.
+//
+// `MountEntry::target` is a `RelPath` spelled absolutely, so the deserializer rejects `""`,
+// a bare `/`, a relative spelling, and any `..` component. The schema types it as a plain
+// string: JSON Schema can express "starts with /" only as a regex, and a regex for the rest
+// would be the fragile kind `IpAddrSchema` warns about. So the schema stays looser here, in
+// the direction it is allowed to be.
+fn has_unspellable_mount_target(doc: &Value) -> bool {
+    let Some(entries) = doc
+        .get("prepare")
+        .and_then(|p| p.get("mount"))
+        .and_then(|m| m.get("mounts"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    entries.iter().any(|entry| {
+        entry
+            .get("target")
+            .and_then(Value::as_str)
+            .is_some_and(|t| {
+                !t.starts_with('/')
+                    || t.split('/').any(|c| c == "." || c == "..")
+                    || t.trim_matches('/').is_empty()
+            })
+    })
+}
+
+// True when a document contains a `name_servers` entry that is not a valid IP address.
+//
+// The generated schema types those entries with `format: ipv4`/`ipv6`, which JSON Schema
+// treats as annotational rather than asserting (see `IpAddrSchema`), so the schema accepts
+// what the deserializer rejects. This is the one divergence in that direction the
+// generators can produce; `schema_divergences_are_pinned` in `tests/schema_test.rs` pins
+// the same class by example.
+fn has_non_ip_name_server(doc: &Value) -> bool {
+    match doc {
+        Value::Object(map) => map.iter().any(|(key, value)| {
+            if key == "name_servers" {
+                value.as_array().is_some_and(|entries| {
+                    entries.iter().any(|e| {
+                        !e.as_str()
+                            .is_some_and(|s| s.parse::<std::net::IpAddr>().is_ok())
+                    })
+                })
+            } else {
+                has_non_ip_name_server(value)
+            }
+        }),
+        Value::Array(items) => items.iter().any(has_non_ip_name_server),
+        _ => false,
+    }
+}
+
 // Asserts the safety invariant for a single document.
 fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
     let deser_ok = serde_json::from_value::<Profile>(doc.clone()).is_ok();
@@ -46,6 +94,16 @@ fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
         !deser_ok || schema_ok,
         "SCHEMA FALSE-REJECT: deserializer accepts but schema rejects\n{}",
         serde_json::to_string_pretty(doc).unwrap()
+    );
+
+    // The other direction is not a safety violation, but an unpinned one means the schema
+    // silently drifted looser than the parser. Only the annotational-format class above is
+    // allowed to diverge here; anything else is a finding.
+    prop_assert!(
+        !schema_ok || deser_ok || has_non_ip_name_server(doc) || has_unspellable_mount_target(doc),
+        "UNPINNED SCHEMA FALSE-ACCEPT: schema accepts but deserializer rejects\n{}\n{:?}",
+        serde_json::to_string_pretty(doc).unwrap(),
+        serde_json::from_value::<Profile>(doc.clone()).unwrap_err()
     );
 
     // Production parses YAML *text*, whose acceptance surface is wider than the JSON value

@@ -8,6 +8,44 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Rootfs modifications (both `resolv_conf` tasks) are performed by a single
+  privileged helper process spawned once per run, instead of a `sudo cp` /
+  `sudo mv` / `sudo chmod` per operation. Paths are resolved one component at a
+  time with `O_NOFOLLOW` against a directory descriptor, so a symlink planted
+  anywhere along a path is an error rather than a redirect for a privileged
+  write.
+- The prepare-phase `resolv_conf` guard holds the rootfs's original
+  `/etc/resolv.conf` in memory instead of moving it to
+  `/etc/resolv.conf.rsdebstrap-orig`. An interrupted build no longer leaves a
+  backup file for the operator to move back by hand.
+- JSON Schema generation is no longer behind the `schema` cargo feature;
+  `schemars` and `serde_json` are ordinary dependencies. Adds ~460 KB to the
+  release binary. `--no-default-features` no longer produces a schema-less
+  build.
+
+### Added
+
+- `tests/privileged_helper_test.rs`, which exercises real `sudo` escalation
+  against a root-owned rootfs. `#[ignore]`d and self-skipping when passwordless
+  sudo is unavailable.
+
+### Fixed
+
+- A dangling `/etc/resolv.conf` symlink — the normal state of a systemd rootfs
+  before `systemd-resolved` runs — is now restored intact after provisioning.
+  The backup was previously probed with a call that follows symlinks, so a
+  dangling backup was read as absent, the restore was skipped, and the original
+  was lost.
+
+### Removed
+
+- **Breaking:** `assemble.resolv_conf.privilege`. Privilege for rootfs
+  modifications is now a property of the run, decided once by
+  `defaults.privilege`, so a per-task override cannot be honored. The key is
+  rejected at parse time rather than silently ignored.
+
 ## [0.1.0] - Unreleased
 
 Initial development release of rsdebstrap — a declarative CLI tool to build

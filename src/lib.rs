@@ -8,7 +8,7 @@ pub mod isolation;
 pub mod phase;
 pub mod pipeline;
 pub mod privilege;
-#[cfg(feature = "schema")]
+pub mod rootfs;
 pub mod schema;
 
 pub use error::RsdebstrapError;
@@ -18,7 +18,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
-#[cfg(feature = "schema")]
 use serde::Serialize;
 use tracing::{info, warn};
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
@@ -48,14 +47,21 @@ fn run_bootstrap_phase(
     executor: &Arc<dyn CommandExecutor>,
 ) -> Result<()> {
     let backend = profile.bootstrap.as_backend();
-    let command_name = backend.command_name();
+    let program = backend.program();
+    let command_name = program.program_name();
 
     let args = backend
         .build_args(&profile.dir)
         .with_context(|| format!("failed to build arguments for {}", command_name))?;
 
-    let privilege = profile.bootstrap.resolved_privilege_method();
-    let spec = executor::CommandSpec::new(command_name, args).with_privilege(privilege);
+    let privilege = profile
+        .bootstrap
+        .resolve_privilege(profile.defaults.privilege.as_ref())?;
+    let spec = executor::CommandSpec::privileged(
+        executor::PrivilegedProgram::Bootstrap(program),
+        args,
+        privilege,
+    );
     executor
         .execute_checked(&spec)
         .with_context(|| format!("failed to execute {}", command_name))?;
@@ -66,10 +72,26 @@ fn run_bootstrap_phase(
 /// Executes the pipeline phase (prepare, provision, assemble).
 fn run_pipeline_phase(
     profile: &config::Profile,
+    validated: &config::Validated,
     executor: Arc<dyn CommandExecutor>,
-    dry_run: bool,
 ) -> Result<()> {
-    let pipeline = profile.pipeline();
+    run_pipeline_phase_with(profile, validated, executor, None)
+}
+
+/// [`run_pipeline_phase`] with the rootfs operations supplied rather than opened.
+///
+/// `ops` is `None` in production, where the privilege setting decides which
+/// implementation to open. Tests pass one in to drive failure paths that used to
+/// be reachable by making a `cp` or `mv` exit non-zero.
+fn run_pipeline_phase_with(
+    profile: &config::Profile,
+    validated: &config::Validated,
+    executor: Arc<dyn CommandExecutor>,
+    ops: Option<Arc<dyn rootfs::RootfsOps>>,
+) -> Result<()> {
+    // The executor owns whether this is a dry run; every other layer derives it from there.
+    let dry_run = executor.dry_run();
+    let pipeline = profile.pipeline(validated)?;
 
     if pipeline.is_empty() {
         return Ok(());
@@ -101,97 +123,90 @@ fn run_pipeline_phase(
         .mount()
         .context("failed to mount filesystems in rootfs")?;
 
+    // Escalate once for the whole build: `rootfs::open` spawns a single helper
+    // when privilege is configured, and every rootfs mutation from here on is a
+    // typed request to it rather than its own `sudo` invocation.
+    let ops = match ops {
+        Some(ops) => ops,
+        None => rootfs::open(&rootfs, privilege, dry_run)?,
+    };
+
     // resolv.conf setup failure is handled by Drop guards for mounts cleanup.
     let resolv_conf_config = profile.prepare.resolv_conf.as_ref().map(|rc| rc.config());
     let mut resolv_conf = RootfsResolvConf::new(
         &rootfs,
         resolv_conf_config,
         Utf8Path::new("/etc/resolv.conf"),
-        executor.clone(),
-        privilege,
+        ops.clone(),
         dry_run,
     );
     resolv_conf
         .setup()
         .context("failed to set up resolv.conf in rootfs")?;
 
-    // Run prepare + provision, then restore the original resolv.conf BEFORE
-    // the assemble phase: an assemble resolv_conf task writes the permanent
-    // /etc/resolv.conf, which teardown's `rm -f` + backup restore would
-    // otherwise destroy. Assemble is gated on both prior stages succeeding:
-    // after a failed teardown the guard's Drop backstop retries the restore
-    // at scope end and would clobber assemble's output. The assemble task
-    // itself replaces /etc/resolv.conf atomically (staged sibling + rename),
-    // so a mid-assemble failure cannot leave the rootfs without a resolv.conf
-    // even though the guard is already disarmed. Unmount always runs
-    // last (mounts bracket all three phases).
-    // Error priority: prepare/provision > resolv_conf restore > assemble > unmount.
-    let run_result = pipeline.run_prepare_and_provision(&rootfs, &executor, dry_run);
-    let resolv_result = resolv_conf.teardown();
-    let assemble_result = if run_result.is_ok() && resolv_result.is_ok() {
-        pipeline.run_assemble(&rootfs, &executor, dry_run)
-    } else {
-        Ok(())
-    };
-    let unmount_result = mounts.unmount();
-
-    if let Err(e) = run_result {
-        if let Err(r) = resolv_result {
-            tracing::error!("resolv.conf restore also failed: {:#}", r);
-        }
-        if let Err(u) = unmount_result {
-            tracing::error!(
-                "unmount also failed after pipeline error: {:#}. \
-                Drop guard will attempt cleanup.",
-                u
-            );
-        }
-        return Err(e);
-    }
-
-    if let Err(e) = resolv_result {
-        if let Err(u) = unmount_result {
-            tracing::error!(
-                "unmount also failed after resolv.conf restore error: {:#}. \
-                Drop guard will attempt cleanup.",
-                u
-            );
-        }
-        return Err(e).context(
+    // The ordering below is carried by `Provisioned`/`Restored`/`Unmounted`: each
+    // stage takes a token only the previous one can produce. The restore has to
+    // land before assembly because an assemble resolv_conf task installs the
+    // permanent entry and a restore afterwards would overwrite it; the unmount
+    // has to land before assembly because assemble writes the rootfs's final
+    // state, which is the state without `/proc`, `/sys` and `/dev` bound over it.
+    let restored = match pipeline.run_prepare_and_provision(&rootfs, &executor, &ops) {
+        Ok(provisioned) => resolv_conf.restore(provisioned).context(
             "failed to restore resolv.conf after provisioning; any assemble tasks were skipped",
-        );
-    }
-
-    if let Err(e) = assemble_result {
-        if let Err(u) = unmount_result {
-            tracing::error!(
-                "unmount also failed after assemble error: {:#}. \
-                Drop guard will attempt cleanup.",
-                u
-            );
+        ),
+        Err(run_err) => {
+            // `Drop` would restore too, but only after the unmount below; the
+            // restore belongs inside the mounted window.
+            if let Err(restore_err) = resolv_conf.teardown() {
+                tracing::error!("resolv.conf restore also failed: {:#}", restore_err);
+            }
+            Err(run_err)
         }
-        return Err(e);
-    }
+    };
 
-    unmount_result.context("failed to unmount filesystems after pipeline completed successfully")
+    // Unmounting is attempted whichever way the stages above went; only the
+    // token it yields is gated on their success.
+    match restored {
+        Ok(token) => match mounts.unmount_before_assembly(token) {
+            Ok(unmounted) => pipeline.run_assemble(unmounted, &rootfs, &ops, dry_run),
+            Err(e) => Err(e).context(
+                "failed to unmount filesystems after provisioning; \
+                any assemble tasks were skipped",
+            ),
+        },
+        Err(pipeline_err) => {
+            if let Err(u) = mounts.unmount() {
+                tracing::error!(
+                    "unmount also failed after pipeline error: {:#}. \
+                    Drop guard will attempt cleanup.",
+                    u
+                );
+            }
+            Err(pipeline_err)
+        }
+    }
 }
 
 pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
-    if opts.dry_run {
+    // `opts.dry_run` is what `main` builds the executor from; from here on the executor is
+    // the single answer to whether this is a dry run, so no layer can disagree with the one
+    // that would actually run the commands.
+    let dry_run = executor.dry_run();
+    if dry_run {
         warn!("DRY-RUN MODE: No changes will be made");
     }
 
     let profile = config::load_profile(opts.common.file.as_path())
         .with_context(|| format!("failed to load profile from {}", opts.common.file))?;
-    profile.validate().context("profile validation failed")?;
+    let validated = profile.validate().context("profile validation failed")?;
 
-    if !opts.dry_run && !profile.dir.exists() {
+    if !dry_run && !profile.dir.exists() {
         fs::create_dir_all(&profile.dir)
             .with_context(|| format!("failed to create directory: {}", profile.dir))?;
     }
 
     run_bootstrap_phase(&profile, &executor)?;
-    run_pipeline_phase(&profile, executor, opts.dry_run)?;
+    run_pipeline_phase(&profile, &validated, executor)?;
 
     Ok(())
 }
@@ -209,7 +224,6 @@ pub fn run_validate(opts: &cli::ValidateArgs) -> Result<()> {
 /// The schema is derived directly from the [`config::Profile`] Rust types, so it always
 /// tracks what `apply`/`validate` accept — there is no separately maintained schema to
 /// drift out of sync.
-#[cfg(feature = "schema")]
 pub fn profile_json_schema() -> serde_json::Value {
     // `schemars::Schema` wraps a `serde_json::Value`; `to_value` unwraps it infallibly,
     // avoiding a redundant serialize round-trip over the whole schema tree.
@@ -222,7 +236,6 @@ pub fn profile_json_schema() -> serde_json::Value {
 /// matching the repository's JSON convention (e.g. `.renovaterc.json`, `.claude/settings.json`)
 /// and `.editorconfig`'s `[*] indent_style = tab`. Both the `schema` subcommand and the
 /// committed-schema drift test render through this function so they cannot diverge.
-#[cfg(feature = "schema")]
 pub fn profile_json_schema_pretty() -> String {
     let value = profile_json_schema();
     let mut buf = Vec::new();
@@ -239,7 +252,6 @@ pub fn profile_json_schema_pretty() -> String {
 /// A closed stdout (e.g. `rsdebstrap schema | head`) is a normal way for a pipe
 /// consumer to stop reading, so `BrokenPipe` ends the command successfully instead
 /// of panicking the way `println!` would once the schema outgrows the pipe buffer.
-#[cfg(feature = "schema")]
 pub fn run_schema() -> Result<()> {
     use std::io::Write;
 
@@ -268,55 +280,21 @@ mod tests {
     use crate::executor::{CommandSpec, ExecutionResult};
     use camino::Utf8PathBuf;
     use std::io::Write as _;
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::ExitStatus;
     use std::sync::Mutex;
 
-    // How a configured `RecordingExecutor` failure matches a command's args.
-    enum ArgMatch {
-        // Any invocation of the command fails.
-        Any,
-        // Fails if any argument contains the fragment.
-        Contains(String),
-        // Fails only if the *first* argument contains the fragment. Targets one
-        // of several same-named commands whose args differ by position — e.g.
-        // the teardown restore `mv <backup> <resolv>` (backup first) vs the
-        // setup backup `mv <resolv> <backup>` (backup second).
-        FirstArgContains(String),
-    }
-
-    // Records commands and really executes them so tests can assert both the
-    // command order and the actual filesystem effects on a temp rootfs.
-    // `fail_on_command` short-circuits a matching command with exit 1 without
-    // executing it; `fail_on_command_with_arg` / `fail_on_command_with_first_arg`
-    // additionally require an argument to contain the given fragment (anywhere,
-    // or in first position), so one occurrence of a repeated command can be
-    // targeted.
+    // Records commands and really executes them, so tests can assert both what
+    // ran and the resulting filesystem state. Only provision tasks reach it now
+    // — the resolv.conf lifecycle is syscalls through `RootfsOps`, and failures
+    // there are injected with `FailingOps`.
     struct RecordingExecutor {
         commands: Mutex<Vec<(String, Vec<String>)>>,
-        fail_on: Mutex<Option<(String, ArgMatch)>>,
     }
 
     impl RecordingExecutor {
         fn new() -> Arc<Self> {
             Arc::new(Self {
                 commands: Mutex::new(Vec::new()),
-                fail_on: Mutex::new(None),
             })
-        }
-
-        fn fail_on_command(&self, command: &str) {
-            *self.fail_on.lock().unwrap() = Some((command.to_string(), ArgMatch::Any));
-        }
-
-        fn fail_on_command_with_arg(&self, command: &str, arg_fragment: &str) {
-            *self.fail_on.lock().unwrap() =
-                Some((command.to_string(), ArgMatch::Contains(arg_fragment.to_string())));
-        }
-
-        fn fail_on_command_with_first_arg(&self, command: &str, arg_fragment: &str) {
-            *self.fail_on.lock().unwrap() =
-                Some((command.to_string(), ArgMatch::FirstArgContains(arg_fragment.to_string())));
         }
 
         fn command_names(&self) -> Vec<String> {
@@ -334,33 +312,10 @@ mod tests {
             self.commands
                 .lock()
                 .unwrap()
-                .push((spec.command.clone(), spec.args.clone()));
+                .push((spec.command().to_string(), spec.args().to_vec()));
 
-            let should_fail =
-                self.fail_on
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .is_some_and(|(command, arg_match)| {
-                        command == &spec.command
-                            && match arg_match {
-                                ArgMatch::Any => true,
-                                ArgMatch::Contains(fragment) => {
-                                    spec.args.iter().any(|a| a.contains(fragment))
-                                }
-                                ArgMatch::FirstArgContains(fragment) => {
-                                    spec.args.first().is_some_and(|a| a.contains(fragment))
-                                }
-                            }
-                    });
-            if should_fail {
-                return Ok(ExecutionResult {
-                    status: Some(ExitStatus::from_raw(1 << 8)),
-                });
-            }
-
-            let status = std::process::Command::new(&spec.command)
-                .args(&spec.args)
+            let status = std::process::Command::new(spec.command())
+                .args(spec.args())
                 .status()?;
             Ok(ExecutionResult {
                 status: Some(status),
@@ -428,16 +383,193 @@ mod tests {
         let rootfs = dir.join("rootfs");
         fs::create_dir_all(rootfs.join("etc")).unwrap();
         fs::write(rootfs.join("etc/resolv.conf"), "# original\n").unwrap();
-        // For shell provision tasks (DirectProvider): a real /tmp for the
-        // staged script, and a /bin/sh resolving to the host shell so the
-        // recording executor can really run it.
+        // For shell provision tasks (DirectProvider): a real /tmp for the staged script,
+        // and a real /bin/sh so the recording executor can actually run it. A *copy* of
+        // the host shell rather than a symlink to it — `DirectContext` refuses to exec a
+        // program whose path leaves the rootfs, which is the shape a symlink here has.
         fs::create_dir_all(rootfs.join("tmp")).unwrap();
         fs::create_dir_all(rootfs.join("bin")).unwrap();
-        std::os::unix::fs::symlink("/bin/sh", rootfs.join("bin/sh")).unwrap();
+        fs::copy("/bin/sh", rootfs.join("bin/sh")).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(rootfs.join("bin/sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
         rootfs
     }
 
     const LINK_TARGET: &str = "../run/systemd/resolve/stub-resolv.conf";
+
+    // Wraps real ops and fails one chosen operation. Replaces the old approach
+    // of making a specific `cp`/`mv` argv exit non-zero: the rootfs mutations no
+    // longer run as commands, so the failure has to be injected at this layer.
+    struct FailingOps {
+        inner: rootfs::LocalRootfsOps,
+        fail: Failure,
+        // Restores are the same call as installs, so a count distinguishes them.
+        writes: std::sync::atomic::AtomicUsize,
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum Failure {
+        // Setup's install of the temporary resolv.conf.
+        FirstWrite,
+        // Teardown's restore of the original.
+        SecondWrite,
+        // Assemble's install of the permanent entry.
+        Symlink,
+        Remove,
+    }
+
+    impl FailingOps {
+        fn boxed(rootfs: &Utf8Path, fail: Failure) -> Arc<dyn rootfs::RootfsOps> {
+            Arc::new(Self {
+                inner: rootfs::LocalRootfsOps::open(rootfs).unwrap(),
+                fail,
+                writes: std::sync::atomic::AtomicUsize::new(0),
+            })
+        }
+    }
+
+    fn refused(what: &str) -> RsdebstrapError {
+        RsdebstrapError::Isolation(format!("{what} refused by the test"))
+    }
+
+    impl rootfs::RootfsOps for FailingOps {
+        fn write_file(
+            &self,
+            path: &rootfs::RelPath,
+            content: &[u8],
+            mode: u32,
+        ) -> std::result::Result<(), RsdebstrapError> {
+            let nth = self
+                .writes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match (self.fail, nth) {
+                (Failure::FirstWrite, 0) | (Failure::SecondWrite, 1) => Err(refused("write")),
+                _ => self.inner.write_file(path, content, mode),
+            }
+        }
+
+        fn write_symlink(
+            &self,
+            path: &rootfs::RelPath,
+            target: &str,
+        ) -> std::result::Result<(), RsdebstrapError> {
+            if self.fail == Failure::Symlink {
+                return Err(refused("symlink"));
+            }
+            self.inner.write_symlink(path, target)
+        }
+
+        fn remove(&self, path: &rootfs::RelPath) -> std::result::Result<(), RsdebstrapError> {
+            if self.fail == Failure::Remove {
+                return Err(refused("remove"));
+            }
+            self.inner.remove(path)
+        }
+
+        fn take(
+            &self,
+            path: &rootfs::RelPath,
+        ) -> std::result::Result<Option<rootfs::TakenEntry>, RsdebstrapError> {
+            self.inner.take(path)
+        }
+    }
+
+    // Timeline shared by the executor and the ops below, so the mount lifecycle
+    // (commands) and the assemble writes (syscalls) can be ordered against each
+    // other. Neither layer touches the real system: mount/umount are recorded
+    // rather than run.
+    type Timeline = Arc<Mutex<Vec<String>>>;
+
+    struct TimelineExecutor {
+        timeline: Timeline,
+    }
+
+    impl CommandExecutor for TimelineExecutor {
+        fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
+            self.timeline
+                .lock()
+                .unwrap()
+                .push(spec.command().to_string());
+            Ok(ExecutionResult { status: None })
+        }
+    }
+
+    struct TimelineOps {
+        inner: rootfs::LocalRootfsOps,
+        timeline: Timeline,
+    }
+
+    impl rootfs::RootfsOps for TimelineOps {
+        fn write_file(
+            &self,
+            path: &rootfs::RelPath,
+            content: &[u8],
+            mode: u32,
+        ) -> std::result::Result<(), RsdebstrapError> {
+            self.timeline.lock().unwrap().push("write_file".to_string());
+            self.inner.write_file(path, content, mode)
+        }
+
+        fn write_symlink(
+            &self,
+            path: &rootfs::RelPath,
+            target: &str,
+        ) -> std::result::Result<(), RsdebstrapError> {
+            self.timeline
+                .lock()
+                .unwrap()
+                .push("write_symlink".to_string());
+            self.inner.write_symlink(path, target)
+        }
+
+        fn remove(&self, path: &rootfs::RelPath) -> std::result::Result<(), RsdebstrapError> {
+            self.inner.remove(path)
+        }
+
+        fn take(
+            &self,
+            path: &rootfs::RelPath,
+        ) -> std::result::Result<Option<rootfs::TakenEntry>, RsdebstrapError> {
+            self.inner.take(path)
+        }
+    }
+
+    // Assemble writes the rootfs's final state — what the image is built from —
+    // so it has to see the rootfs the way the image will, with nothing bound
+    // over it. The mounts therefore close before assemble opens, not after.
+    #[test]
+    fn assemble_runs_after_the_mounts_are_released() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        let mut yaml = profile_yaml(dir, false, None, true);
+        // Mounts require a configured privilege method; nothing escalates here,
+        // because both the executor and the ops are the recorders above.
+        yaml.push_str("defaults:\n  privilege:\n    method: sudo\n");
+        yaml.push_str("prepare:\n  mount:\n    mounts:\n      - source: /dev\n");
+        yaml.push_str("        target: /dev\n        options: [bind]\n");
+        let profile = load_profile_from(&yaml);
+
+        let timeline: Timeline = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(TimelineExecutor {
+            timeline: timeline.clone(),
+        });
+        let ops = Arc::new(TimelineOps {
+            inner: rootfs::LocalRootfsOps::open(&rootfs).unwrap(),
+            timeline: timeline.clone(),
+        });
+
+        run_pipeline_phase_with(&profile, &profile.validate().unwrap(), executor, Some(ops))
+            .unwrap();
+
+        assert_eq!(
+            *timeline.lock().unwrap(),
+            ["mount", "umount", "write_symlink"],
+            "assemble must run after the mounts are released"
+        );
+    }
 
     #[test]
     fn both_configured_assemble_output_survives() {
@@ -447,13 +579,8 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
-        // setup (mv, cp, chmod) → teardown restore (rm, mv) → assemble
-        // stage-and-rename (ln, mv): the restore happens between provision and
-        // assemble, and assemble atomically renames its staged symlink over
-        // the just-restored original — the permanent config replaces it.
-        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv", "ln", "mv"]);
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(
             fs::symlink_metadata(&resolv)
@@ -462,9 +589,6 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new(LINK_TARGET));
-        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
-        // The staging entry was consumed by the promoting rename.
-        assert!(fs::symlink_metadata(rootfs.join("etc/resolv.conf.rsdebstrap-tmp")).is_err());
     }
 
     #[test]
@@ -475,13 +599,11 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, None, false));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
-        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv"]);
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
         assert_eq!(fs::read_to_string(&resolv).unwrap(), "# original\n");
-        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
     }
 
     #[test]
@@ -492,11 +614,8 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, false, None, true));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
-        // No backup mv: the prepare guard never activates. The only commands
-        // are assemble's stage (ln) and atomic promote (mv).
-        assert_eq!(executor.command_names(), ["ln", "mv"]);
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(
             fs::symlink_metadata(&resolv)
@@ -505,7 +624,6 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new(LINK_TARGET));
-        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
     }
 
     #[test]
@@ -516,7 +634,7 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, false, None, false));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
         assert!(executor.command_names().is_empty());
         let resolv = rootfs.join("etc/resolv.conf");
@@ -530,49 +648,57 @@ mod tests {
         let rootfs = seed_rootfs(dir);
         let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
-        executor.fail_on_command("rm");
+        let ops = FailingOps::boxed(&rootfs, Failure::SecondWrite);
 
-        let err = run_pipeline_phase(&profile, executor.clone(), false).unwrap_err();
+        let err = run_pipeline_phase_with(
+            &profile,
+            &profile.validate().unwrap(),
+            executor.clone(),
+            Some(ops),
+        )
+        .unwrap_err();
 
         assert!(
             format!("{:#}", err).contains("failed to restore resolv.conf after provisioning"),
             "unexpected error: {err:#}"
         );
-        // setup (mv, cp, chmod) → teardown rm fails → assemble is gated off
-        // (no ln) → the guard's Drop backstop retries the teardown once more
-        // (the second failing rm).
-        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "rm"]);
-        // The restore genuinely never happened: the temporary file and the
-        // backup are still in place, and assemble never touched anything.
+        // Assemble is gated off by the failed restore, but the guard's Drop
+        // backstop retries it and succeeds, so the original still lands. The
+        // original is held in memory, so a failed restore cannot lose it.
         let resolv = rootfs.join("etc/resolv.conf");
-        assert_eq!(
-            fs::read_to_string(&resolv).unwrap(),
-            "# Generated by rsdebstrap\nnameserver 192.0.2.1\n"
+        assert_eq!(fs::read_to_string(&resolv).unwrap(), "# original\n");
+        assert!(
+            !executor.command_names().contains(&"ln".to_string()),
+            "assemble ran despite the failed restore"
         );
-        assert!(rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
     }
 
     #[test]
-    fn setup_cp_failure_rolls_back_without_running_pipeline() {
+    fn setup_write_failure_rolls_back_without_running_pipeline() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
         let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
-        executor.fail_on_command("cp");
+        let ops = FailingOps::boxed(&rootfs, Failure::FirstWrite);
 
-        let err = run_pipeline_phase(&profile, executor.clone(), false).unwrap_err();
+        let err = run_pipeline_phase_with(
+            &profile,
+            &profile.validate().unwrap(),
+            executor.clone(),
+            Some(ops),
+        )
+        .unwrap_err();
 
         assert!(
             format!("{:#}", err).contains("failed to set up resolv.conf in rootfs"),
             "unexpected error: {err:#}"
         );
-        // Backup mv, failed cp, rollback mv — the guard never activates, so
-        // there is no Drop retry and neither pipeline stage runs.
-        assert_eq!(executor.command_names(), ["mv", "cp", "mv"]);
+        // The guard never activated, so neither pipeline stage ran and the
+        // original is back exactly as it was found.
+        assert!(executor.command_names().is_empty());
         let resolv = rootfs.join("etc/resolv.conf");
         assert_eq!(fs::read_to_string(&resolv).unwrap(), "# original\n");
-        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
     }
 
     #[test]
@@ -583,16 +709,13 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, Some("true"), true));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
-        // setup (mv, cp, chmod) → provision shell → restore (rm, mv) →
-        // assemble stage-and-rename (ln, mv): the provision task runs while
-        // the temporary resolv.conf is in place; the restore strictly follows.
+        // The provision task is the only command; the resolv.conf lifecycle
+        // around it is syscalls now. What the sequencing has to produce is the
+        // assemble symlink surviving the restore that runs between the two.
         let sh = rootfs.join("bin/sh");
-        assert_eq!(
-            executor.command_names(),
-            ["mv", "cp", "chmod", sh.as_str(), "rm", "mv", "ln", "mv"]
-        );
+        assert_eq!(executor.command_names(), [sh.as_str()]);
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(
             fs::symlink_metadata(&resolv)
@@ -601,7 +724,6 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new(LINK_TARGET));
-        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
     }
 
     #[test]
@@ -612,20 +734,20 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, Some("exit 1"), true));
         let executor = RecordingExecutor::new();
 
-        let err = run_pipeline_phase(&profile, executor.clone(), false).unwrap_err();
+        let err = run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone())
+            .unwrap_err();
 
         assert!(
             format!("{:#}", err).contains("failed to run provision"),
             "unexpected error: {err:#}"
         );
-        // The failed provision gates assemble off (no ln/mv after the
-        // restore), but the teardown still restores the original.
+        // The failed provision gates assemble off, but the teardown still
+        // restores the original.
         let sh = rootfs.join("bin/sh");
-        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", sh.as_str(), "rm", "mv"]);
+        assert_eq!(executor.command_names(), [sh.as_str()], "assemble should not have run");
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
         assert_eq!(fs::read_to_string(&resolv).unwrap(), "# original\n");
-        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
     }
 
     #[test]
@@ -635,63 +757,61 @@ mod tests {
         let rootfs = seed_rootfs(dir);
         let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
-        // Fail only assemble's promote mv: the setup/teardown mvs never have
-        // the staging path among their arguments and run for real.
-        executor.fail_on_command_with_arg("mv", "rsdebstrap-tmp");
+        // The assemble task installs a symlink, so failing that one operation
+        // fails assemble while prepare's file writes still run for real.
+        let ops = FailingOps::boxed(&rootfs, Failure::Symlink);
 
-        let err = run_pipeline_phase(&profile, executor.clone(), false).unwrap_err();
+        let err = run_pipeline_phase_with(
+            &profile,
+            &profile.validate().unwrap(),
+            executor.clone(),
+            Some(ops),
+        )
+        .unwrap_err();
 
         assert!(
             format!("{:#}", err).contains("failed to run assemble"),
             "unexpected error: {err:#}"
         );
-        // setup (mv, cp, chmod) → restore (rm, mv) → assemble stages its
-        // symlink (ln) and the promote mv fails.
-        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv", "ln", "mv"]);
-        // Atomicity invariant at pipeline level: the restored original
-        // survives the failed assemble; only the staging symlink remains.
+        // The atomicity invariant: a failed assemble leaves the restored
+        // original in place, and stages nothing where a later run would find it.
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
         assert_eq!(fs::read_to_string(&resolv).unwrap(), "# original\n");
-        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
-        let staging = rootfs.join("etc/resolv.conf.rsdebstrap-tmp");
-        assert!(
-            fs::symlink_metadata(&staging)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
+        let etc: Vec<String> = fs::read_dir(rootfs.join("etc"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(etc, ["resolv.conf"], "unexpected leftovers in /etc: {etc:?}");
     }
 
     #[test]
-    fn restore_mv_failure_gates_assemble_and_strands_backup() {
+    fn a_failed_restore_leaves_no_orphan_behind() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = Utf8Path::from_path(tmp.path()).unwrap();
         let rootfs = seed_rootfs(dir);
         let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
-        // Fail only the teardown restore `mv <backup> <resolv>` (backup is its
-        // first arg); the setup backup `mv <resolv> <backup>` has the backup
-        // second and runs for real.
-        executor.fail_on_command_with_first_arg("mv", "rsdebstrap-orig");
+        let ops = FailingOps::boxed(&rootfs, Failure::SecondWrite);
 
-        let err = run_pipeline_phase(&profile, executor.clone(), false).unwrap_err();
+        let err = run_pipeline_phase_with(
+            &profile,
+            &profile.validate().unwrap(),
+            executor.clone(),
+            Some(ops),
+        )
+        .unwrap_err();
 
         assert!(
             format!("{:#}", err).contains("failed to restore resolv.conf after provisioning"),
             "unexpected error: {err:#}"
         );
-        // setup (mv, cp, chmod) → teardown rm ok, restore mv fails → assemble
-        // gated off (no ln) → the guard's Drop backstop retries the teardown
-        // (rm, mv), which fails again.
-        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv", "rm", "mv"]);
-        // The failure the gate exists to catch: the temporary resolv.conf was
-        // already removed and the restore never landed, so the final path is
-        // empty and the original is stranded in the backup.
-        assert!(fs::symlink_metadata(rootfs.join("etc/resolv.conf")).is_err());
-        let backup = rootfs.join("etc/resolv.conf.rsdebstrap-orig");
-        assert!(backup.exists());
-        assert_eq!(fs::read_to_string(&backup).unwrap(), "# original\n");
+        let etc: Vec<String> = fs::read_dir(rootfs.join("etc"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(etc, ["resolv.conf"], "unexpected leftovers in /etc: {etc:?}");
+        assert_eq!(fs::read_to_string(rootfs.join("etc/resolv.conf")).unwrap(), "# original\n");
     }
 
     #[test]
@@ -707,15 +827,10 @@ mod tests {
         ));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
-        // setup (mv, cp, chmod) → teardown restore (rm, mv) → assemble generate
-        // (rm, cp, chmod, mv): the generated file replaces the just-restored
-        // original, and the generate path clears any stale staging entry first.
-        assert_eq!(
-            executor.command_names(),
-            ["mv", "cp", "chmod", "rm", "mv", "rm", "cp", "chmod", "mv"]
-        );
+        // The generated file replaces the just-restored original.
+        assert!(executor.command_names().is_empty(), "no command should have run");
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
         assert!(
@@ -723,8 +838,6 @@ mod tests {
                 .unwrap()
                 .contains("nameserver 198.51.100.1")
         );
-        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
-        assert!(fs::symlink_metadata(rootfs.join("etc/resolv.conf.rsdebstrap-tmp")).is_err());
     }
 
     #[test]
@@ -740,11 +853,9 @@ mod tests {
         ));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
-        // No prepare guard: only assemble's generate sequence — clear the
-        // staging entry, copy, chmod, promote.
-        assert_eq!(executor.command_names(), ["rm", "cp", "chmod", "mv"]);
+        assert!(executor.command_names().is_empty(), "no command should have run");
         let resolv = rootfs.join("etc/resolv.conf");
         assert!(fs::symlink_metadata(&resolv).unwrap().file_type().is_file());
         assert!(
@@ -752,16 +863,11 @@ mod tests {
                 .unwrap()
                 .contains("nameserver 198.51.100.1")
         );
-        assert!(fs::symlink_metadata(rootfs.join("etc/resolv.conf.rsdebstrap-tmp")).is_err());
     }
 
-    // Debian's default `/etc/resolv.conf` is a *symlink*, not a regular file,
-    // yet every other pipeline-level test seeds a regular file. The prepare
-    // guard must back the symlink up and restore it faithfully as a symlink
-    // (the backup `mv` moves the link itself; the restore `mv` moves it back),
-    // not flatten it into a regular file. Seed a *live* symlink whose relative
-    // target sits in the same `/etc` directory so it still resolves after the
-    // backup `mv`.
+    // Debian's default `/etc/resolv.conf` is a *symlink*, not a regular file, yet every
+    // other pipeline-level test seeds a regular file. The prepare guard must detach the
+    // symlink and restore it faithfully as a symlink, not flatten it into a regular file.
     #[test]
     fn prepare_only_restores_symlink_original() {
         let tmp = tempfile::tempdir().unwrap();
@@ -775,12 +881,10 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, None, false));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
-        // Same command shape as prepare_only_restores_original — setup
-        // (mv backup, cp temp, chmod) → teardown (rm temp, mv restore) — but
-        // here the backed-up and restored entry is a symlink.
-        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "mv"]);
+        // Same shape as prepare_only_restores_original, but the detached and restored
+        // entry is a symlink.
         assert!(
             fs::symlink_metadata(&resolv)
                 .unwrap()
@@ -788,18 +892,12 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new("upstream-resolv.conf"));
-        assert!(!rootfs.join("etc/resolv.conf.rsdebstrap-orig").exists());
     }
 
-    // A fresh systemd rootfs commonly ships `/etc/resolv.conf` as a *dangling*
-    // symlink into `/run` (systemd-resolved not running yet) — exactly the
-    // prepare+assemble scenario this PR targets. The prepare guard must detect
-    // it with `symlink_metadata()` (which sees the link itself), not
-    // `metadata()` (which follows the link and errors on the missing target):
-    // detecting it as absent would skip the backup `mv` and then `cp` the
-    // temporary file *through* the dangling link, failing setup. With the
-    // guard correct, provisioning runs against a real temporary resolv.conf
-    // and the assemble task's permanent symlink still lands.
+    // A fresh systemd rootfs commonly ships `/etc/resolv.conf` as a *dangling* symlink into
+    // `/run` (systemd-resolved not running yet). Nothing in the prepare guard may stat
+    // through it: reading it as absent would skip the detach and then write the temporary
+    // file *through* the dangling link.
     #[test]
     fn both_configured_dangling_symlink_original_survives() {
         let tmp = tempfile::tempdir().unwrap();
@@ -813,14 +911,8 @@ mod tests {
         let profile = load_profile_from(&profile_yaml(dir, true, None, true));
         let executor = RecordingExecutor::new();
 
-        run_pipeline_phase(&profile, executor.clone(), false).unwrap();
+        run_pipeline_phase(&profile, &profile.validate().unwrap(), executor.clone()).unwrap();
 
-        // setup (mv backup, cp temp, chmod) → teardown (rm temp; the restore mv
-        // is *skipped* because try_exists() follows the dangling backup link and
-        // reports it absent, leaving the backup stranded — pre-existing
-        // behavior) → assemble stage-and-rename (ln, mv). The permanent assemble
-        // symlink is the final state.
-        assert_eq!(executor.command_names(), ["mv", "cp", "chmod", "rm", "ln", "mv"]);
         assert!(
             fs::symlink_metadata(&resolv)
                 .unwrap()
@@ -828,5 +920,12 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new(LINK_TARGET));
+        // The restore runs even though the original is a dangling link: it is held as a
+        // symlink value, never stat'd through. Nothing may be stranded in /etc.
+        let etc: Vec<String> = fs::read_dir(rootfs.join("etc"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(etc, ["resolv.conf"], "unexpected leftovers in /etc: {etc:?}");
     }
 }
