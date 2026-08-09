@@ -359,7 +359,7 @@ impl LocalRootfsOps {
         dir: BorrowedFd<'_>,
         detached: &str,
         path: &RelPath,
-    ) -> Result<TakenEntry> {
+    ) -> Result<(TakenEntry, Identity)> {
         // `O_NONBLOCK` because opening a FIFO for reading otherwise waits for a writer that
         // is never coming -- for the privileged helper, that is the build hanging with no
         // output. It is `fstat` below, not this open, that refuses one.
@@ -374,7 +374,9 @@ impl LocalRootfsOps {
             Ok(fd) => fd,
             // The one type that cannot be opened for reading, and the reason the caller's
             // `/etc/resolv.conf` is being detached at all half the time.
-            Err(rustix::io::Errno::LOOP) => return self.read_detached_symlink(dir, detached, path),
+            Err(rustix::io::Errno::LOOP) => {
+                return self.read_detached_symlink(dir, detached, path);
+            }
             Err(e) => return Err(open_error(e, &format!("{}{}", self.display_root, path))),
         };
 
@@ -416,11 +418,14 @@ impl LocalRootfsOps {
             )));
         }
 
-        Ok(TakenEntry::File {
-            content,
-            mode: FileMode::new(stat.st_mode),
-            owner: Owner::of(&stat),
-        })
+        Ok((
+            TakenEntry::File {
+                content,
+                mode: FileMode::new(stat.st_mode),
+                owner: Owner::of(&stat),
+            },
+            Identity::of(&stat),
+        ))
     }
 
     /// Reads the symlink `detached` names, on a descriptor for the link itself.
@@ -434,7 +439,7 @@ impl LocalRootfsOps {
         dir: BorrowedFd<'_>,
         detached: &str,
         path: &RelPath,
-    ) -> Result<TakenEntry> {
+    ) -> Result<(TakenEntry, Identity)> {
         let fd = rfs::openat(
             dir,
             detached,
@@ -464,10 +469,13 @@ impl LocalRootfsOps {
             )
         })?;
 
-        Ok(TakenEntry::Symlink {
-            target: target.to_string_lossy().into_owned(),
-            owner: Owner::of(&stat),
-        })
+        Ok((
+            TakenEntry::Symlink {
+                target: target.to_string_lossy().into_owned(),
+                owner: Owner::of(&stat),
+            },
+            Identity::of(&stat),
+        ))
     }
 
     /// Takes the whole [`RelPath`] rather than the final component it renames to, so the
@@ -481,6 +489,26 @@ impl LocalRootfsOps {
                 std::io::Error::from(e),
             )
         })
+    }
+}
+
+/// Which inode a syscall landed on.
+///
+/// Only [`RootfsOps::take`]'s `unlinkat` needs this. Everything it reads comes off a
+/// descriptor, which cannot be pointed elsewhere; the removal has to name the entry,
+/// because Linux has no unlink-by-descriptor, so comparing is all that is left there.
+#[derive(Debug, PartialEq, Eq)]
+struct Identity {
+    dev: u64,
+    ino: u64,
+}
+
+impl Identity {
+    fn of(stat: &rfs::Stat) -> Self {
+        Self {
+            dev: stat.st_dev,
+            ino: stat.st_ino,
+        }
     }
 }
 
@@ -679,7 +707,30 @@ impl RootfsOps for LocalRootfsOps {
         }
 
         match self.read_detached(dir, &detached, path) {
-            Ok(entry) => {
+            Ok((entry, read)) => {
+                // A check rather than a binding, because Linux has no unlink-by-descriptor:
+                // the entry that was read is held open, but `unlinkat` can only be given a
+                // name, and the name is one a watcher on the directory was told about. What
+                // this closes is the silent form -- removing something other than what was
+                // returned. There is no rollback here either: the name now means someone
+                // else's entry, and renaming that onto the caller's path is the last thing
+                // to do with it.
+                let current = rfs::statat(dir, detached.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+                    .map(|current| Identity::of(&current))
+                    .map_err(|e| {
+                        RsdebstrapError::io(
+                            format!("failed to stat {}/{}", self.display_root, detached),
+                            std::io::Error::from(e),
+                        )
+                    })?;
+                if current != read {
+                    return Err(RsdebstrapError::Isolation(format!(
+                        "{}{} was replaced while it was being detached: {}/{} is no longer \
+                        the entry that was read, so it was left in place",
+                        self.display_root, path, self.display_root, detached
+                    )));
+                }
+
                 rfs::unlinkat(dir, detached.as_str(), AtFlags::empty()).map_err(|e| {
                     RsdebstrapError::io(
                         format!(

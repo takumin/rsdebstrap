@@ -250,6 +250,11 @@ patterns run throughout `src/isolation/`:
   otherwise wait for a writer that is never coming — for the privileged helper, that is the
   build hanging with no output.
 
+  The `unlinkat` at the end is the one step that cannot be bound to a descriptor — Linux has
+  no unlink-by-descriptor — so it compares `st_dev`/`st_ino` against what was read and errors
+  out rather than removing something else. That narrows the window rather than closing it,
+  and the comment there says so.
+
   Refusing an entry (wrong type, over `MAX_TAKE_SIZE`) has to rename it back, since "refused"
   has to mean nothing was detached; if that rollback fails, the error names where the entry
   is. The read stays bounded even though the size came off the same descriptor, because a
