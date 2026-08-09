@@ -24,6 +24,10 @@ and this project adheres to
   `schemars` and `serde_json` are ordinary dependencies. Adds ~460 KB to the
   release binary. `--no-default-features` no longer produces a schema-less
   build.
+- Profile parse errors name the field path that failed — `provision[0]`,
+  `bootstrap` — after the line and column. The untagged `privilege` and
+  `isolation` enums report only "data did not match any variant", which on its
+  own does not say which entry is malformed.
 
 ### Added
 
