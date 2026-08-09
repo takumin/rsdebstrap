@@ -370,8 +370,6 @@ fn test_direct_context_propagates_sudo_privilege() {
 // `test_direct_context_execute_translates_absolute_paths`, which asserts the
 // same recorded privilege for the same call.
 
-// A rootfs whose `/bin/sh` is a symlink out of the rootfs used to run whatever it pointed
-// at: the path handed to the executor is a string join, and the kernel resolves it at exec.
 #[test]
 fn direct_context_refuses_a_program_symlinked_out_of_the_rootfs() {
     let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
@@ -395,9 +393,8 @@ fn direct_context_refuses_a_program_symlinked_out_of_the_rootfs() {
     assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
 }
 
-// A context used to carry its own `dry_run` flag, so pairing a dry-run executor with a live
-// context was expressible and silently performed real work. It now derives the answer from
-// the executor, which is the layer that would run the commands.
+// A context carrying its own flag could disagree with the executor and silently do real
+// work.
 #[test]
 fn context_dry_run_comes_from_the_executor() {
     let (_tmp, rootfs) = seeded_direct_rootfs(&[]);

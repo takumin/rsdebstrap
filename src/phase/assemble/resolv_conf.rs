@@ -371,9 +371,9 @@ mod tests {
         }
     }
 
-    // These assert the entry the task leaves in the rootfs. The task no longer
-    // has a command sequence to assert: staging and promotion happen inside
-    // `RootfsOps`, which pins them with its own tests.
+    // These assert the entry the task leaves in the rootfs. The task has no command
+    // sequence to assert: staging and promotion happen inside `RootfsOps`, which pins
+    // them with its own tests.
     fn assemble_rootfs() -> (tempfile::TempDir, camino::Utf8PathBuf) {
         let temp = tempfile::tempdir().unwrap();
         let rootfs = camino::Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();

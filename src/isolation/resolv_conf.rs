@@ -453,10 +453,9 @@ mod tests {
     }
 
     // A fresh systemd rootfs ships /etc/resolv.conf as a symlink into /run whose
-    // target does not exist yet. The old guard checked for its backup with
-    // `try_exists()`, which follows the link and reports a dangling one as
-    // absent, so the restore was skipped and the original was lost. Nothing is
-    // stat'd through a link now: the entry is held as a symlink value.
+    // target does not exist yet. `try_exists()` follows the link and reports a
+    // dangling one as absent, so nothing may be stat'd through a link to decide
+    // whether there is an original to restore: the entry is held as a symlink value.
     #[test]
     fn teardown_restores_a_dangling_symlink_original() {
         let (_temp, rootfs) = rootfs_with_etc();

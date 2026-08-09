@@ -287,14 +287,10 @@ fn run_apply_propagates_provision_failure() {
     );
 }
 
-// A dry run must leave the machine alone, and the executor is the only thing that says a
-// run is one. `FailingExecutor` used to inherit a `dry_run()` that answered `false`, so
-// this suite's "dry run" cases went live: `run_apply` created the profile's `dir` and the
-// pipeline escalated to a real `sudo` rootfs helper. Nothing failed, because a live run of
-// a mocked executor still succeeds — the damage was silent.
-//
-// Pinning the directory is enough to catch that: it is the first thing `run_apply` does
-// differently, and it does it before any executor call.
+// `CommandExecutor::dry_run()` is the only thing that says a run is a dry one, and a mock
+// that answers `false` sends this suite's "dry run" cases live without failing anything.
+// Pinning the directory catches that: it is the first thing `run_apply` does differently,
+// and it does it before any executor call.
 #[test]
 fn a_dry_run_creates_no_directory() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");

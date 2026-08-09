@@ -366,9 +366,9 @@ fn schema_matches_structural_deserializer() {
             .to_string(),
             true,
         ),
-        // Non-string scalars in string-typed fields: rejected by both sides. yaml_serde's raw
-        // scalar-to-string coercion used to accept these on the deserializer only; the `de`
-        // helpers now surface the resolved scalar type so the parser matches the schema.
+        // Non-string scalars in string-typed fields: rejected by both sides. yaml_serde's
+        // raw scalar-to-string coercion would accept these on the deserializer alone; the
+        // `de` helpers surface the resolved scalar type so the parser matches the schema.
         (
             "null dir",
             "bootstrap: {type: mmdebstrap, suite: t, target: r}\ndir: null\n".to_string(),
@@ -444,17 +444,13 @@ fn schema_matches_structural_deserializer() {
 fn schema_divergences_are_pinned() {
     let v = validator();
 
-    // The invariant, stated once for both this table and the differential check above: the
-    // schema may accept more than the deserializer, never less. A false *reject* would make
-    // editor tooling flag a config that builds; a false *accept* only means tooling is
-    // quieter than the parser.
-    //
     // The rows below are the known false-accepts — the schema staying annotational where
     // JSON Schema cannot express a check, or where the YAML text carries what the JSON data
     // model cannot (duplicate keys, non-finite floats). Pinning both verdicts documents each
     // exactly. An *unlisted* false-accept is a finding, not a free pass:
     // `assert_no_false_reject` in `tests/schema_proptest.rs` asserts the reverse direction
-    // too, allowing only the classes listed here.
+    // too, allowing only the classes listed here. The invariant both sides serve — accept
+    // more than the deserializer, never less — is in `docs/ARCHITECTURE.md`.
     let cases: &[(&str, String, bool, bool)] = &[
         // `mount.target` is a `RelPath` spelled absolutely, so the deserializer rejects a
         // relative spelling, a bare `/`, and any `..` component. The schema types it as a
@@ -506,11 +502,9 @@ fn schema_divergences_are_pinned() {
             false,
             true,
         ),
-        // Non-finite floats are rejected by every field's deserializer, but
         // `serde_json::Value` cannot represent NaN/infinity, so the YAML->JSON conversion
-        // collapses them to `null` — which nullable fields (the sections, `privilege`,
-        // `isolation`, `script`/`content`, ...) then schema-accept. Same conversion-
-        // lossiness class as the duplicate-key rows.
+        // collapses them to `null`, which nullable fields then schema-accept. Same
+        // conversion-lossiness class as the duplicate-key rows.
         ("NaN provision section", format!("{BASE}provision: .nan\n"), false, true),
         (
             "infinite float privilege",

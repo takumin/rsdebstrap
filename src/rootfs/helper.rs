@@ -469,10 +469,10 @@ mod tests {
         CheckedAnchor::open(&root).expect("a tempdir is not the live system");
     }
 
-    // A panic while the channel was locked poisons the mutex. Reaping used to happen on
-    // `PrivilegedRootfsOps`, which had to take that lock and gave up when it was poisoned —
-    // skipping the stdin close and the `wait` in precisely the case that leaves a root-owned
-    // helper behind. It happens in `Channel::drop` now, which a poisoned mutex still runs.
+    // A panic while the channel was locked poisons the mutex, and that is precisely the
+    // case that would strand a root-owned helper. Reaping lives in `Channel::drop`, which a
+    // poisoned mutex still runs, rather than on `PrivilegedRootfsOps`, which would have to
+    // take the poisoned lock to close stdin and `wait`.
     //
     // `cat` stands in for the helper: it reads stdin until it closes, then exits, which is
     // the same shape and needs no escalation. A still-running child and an unreaped zombie

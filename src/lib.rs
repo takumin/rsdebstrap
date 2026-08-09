@@ -81,8 +81,7 @@ fn run_pipeline_phase(
 /// [`run_pipeline_phase`] with the rootfs operations supplied rather than opened.
 ///
 /// `ops` is `None` in production, where the privilege setting decides which
-/// implementation to open. Tests pass one in to drive failure paths that used to
-/// be reachable by making a `cp` or `mv` exit non-zero.
+/// implementation to open. Tests pass one in to drive rootfs failure paths.
 fn run_pipeline_phase_with(
     profile: &config::Profile,
     validated: &config::Validated,
@@ -143,12 +142,9 @@ fn run_pipeline_phase_with(
         .setup()
         .context("failed to set up resolv.conf in rootfs")?;
 
-    // The ordering below is carried by `Provisioned`/`Restored`/`Unmounted`: each
-    // stage takes a token only the previous one can produce. The restore has to
-    // land before assembly because an assemble resolv_conf task installs the
-    // permanent entry and a restore afterwards would overwrite it; the unmount
-    // has to land before assembly because assemble writes the rootfs's final
-    // state, which is the state without `/proc`, `/sys` and `/dev` bound over it.
+    // The ordering below is carried by `Provisioned`/`Restored`/`Unmounted`: each stage
+    // takes a token only the previous one can produce. Why restore and unmount both have to
+    // land before assembly is in `docs/ARCHITECTURE.md` (Phases & the pipeline).
     let restored = match pipeline.run_prepare_and_provision(&rootfs, &executor, &ops) {
         Ok(provisioned) => resolv_conf.restore(provisioned).context(
             "failed to restore resolv.conf after provisioning; any assemble tasks were skipped",
@@ -407,9 +403,9 @@ mod tests {
 
     const LINK_TARGET: &str = "../run/systemd/resolve/stub-resolv.conf";
 
-    // Wraps real ops and fails one chosen operation. Replaces the old approach
-    // of making a specific `cp`/`mv` argv exit non-zero: the rootfs mutations no
-    // longer run as commands, so the failure has to be injected at this layer.
+    // Wraps real ops and fails one chosen operation. Rootfs mutations do not run as
+    // commands, so a failure has to be injected at this layer rather than by making an
+    // argv exit non-zero.
     struct FailingOps {
         inner: rootfs::LocalRootfsOps,
         fail: Failure,

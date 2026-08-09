@@ -1019,9 +1019,9 @@ mod tests {
         assert!(entry.validate().is_ok());
     }
 
-    // A `..`, a bare `/`, and a relative spelling are no longer `validate()`'s business:
-    // `target` is a `RelPath`, so none of them can be constructed at all and the rejection
-    // happens where the profile text is read.
+    // A `..`, a bare `/`, and a relative spelling are not `validate()`'s business: `target`
+    // is a `RelPath`, so none of them can be constructed at all and the rejection happens
+    // where the profile text is read.
     #[test]
     fn test_mount_entry_target_rejects_escapes_at_deserialization() {
         for (yaml, expected) in [
@@ -1519,8 +1519,8 @@ mod tests {
     #[test]
     fn test_validate_mounts_requires_privilege() {
         // A mount task without `defaults.privilege` must fail with the privilege guard.
-        // Regression guard for e0fd092: the error is about privilege, never about
-        // isolation/chroot (the removed "mounts require chroot isolation" guard).
+        // The negative assertions pin which guard fires: mounts are gated on privilege
+        // alone, not on the isolation backend.
         let yaml = minimal_profile_yaml("prepare:\n  mount:\n    preset: recommends\n");
         let profile = parse_profile(&yaml);
         let err = profile.validate_mounts().unwrap_err();
@@ -1566,8 +1566,8 @@ mod tests {
     #[test]
     fn test_validate_resolv_conf_propagates_underlying_validation_error() {
         // `search` without `name_servers` is invalid; the underlying
-        // `ResolvConfConfig::validate` error must propagate through the Profile method.
-        // Regression guard for e0fd092: the error is config-related, not isolation/chroot.
+        // `ResolvConfConfig::validate` error must propagate through the Profile method
+        // unchanged — a config error, not one about the isolation backend.
         let yaml =
             minimal_profile_yaml("prepare:\n  resolv_conf:\n    search:\n      - example.com\n");
         let profile = parse_profile(&yaml);

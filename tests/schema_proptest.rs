@@ -4,20 +4,17 @@
 // the same contract with randomly generated documents so drift cannot hide in a shape nobody
 // thought to enumerate.
 //
-// Two properties are asserted. The safety one, stated at `schema_divergences_are_pinned` in
-// that file: whenever the structural deserializer accepts a document, the schema must too. And
-// its converse, which is not a safety violation but marks silent drift: whenever the schema
-// accepts, the deserializer must too, except for the classes the pinned table also carries
-// (annotational formats, and rootfs paths whose shape JSON Schema cannot state).
+// Two properties are asserted: the safety one (deserializer accepts => schema accepts) and
+// its converse, which marks silent drift rather than a safety violation and allows only the
+// classes `schema_divergences_are_pinned` also carries. Both are stated in
+// `docs/ARCHITECTURE.md` (JSON Schema generation).
 //
 // Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
 // `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
 // `Privilege`/`TaskIsolation`/`ShellTask`/`MitamaeTask` dispatch, but not the semantic
-// `Profile::validate`), and the schema verdict comes from the compiled validator. Then through
-// a YAML round-trip (`yaml_serde::to_string` -> `from_str`), because production parses YAML
-// text and yaml_serde's acceptance surface is not identical to the JSON value model — the
-// round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
-// through `de::null_to_default`).
+// `Profile::validate`), and the schema verdict comes from the compiled validator. Then
+// through a YAML round-trip, which is the leg that catches YAML-layer-only divergence
+// (e.g. explicit nulls flowing through `de::null_to_default`).
 
 use std::sync::LazyLock;
 
@@ -35,10 +32,8 @@ static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
 // True when a mount entry's `target` is not a well-formed absolute rootfs path.
 //
 // `MountEntry::target` is a `RelPath` spelled absolutely, so the deserializer rejects `""`,
-// a bare `/`, a relative spelling, and any `..` component. The schema types it as a plain
-// string: JSON Schema can express "starts with /" only as a regex, and a regex for the rest
-// would be the fragile kind `IpAddrSchema` warns about. So the schema stays looser here, in
-// the direction it is allowed to be.
+// a bare `/`, a relative spelling, and any `..` component. JSON Schema can only approximate
+// that with a regex, so the schema stays looser here — in the direction it is allowed to be.
 fn has_unspellable_mount_target(doc: &Value) -> bool {
     let Some(entries) = doc
         .get("prepare")
@@ -62,11 +57,9 @@ fn has_unspellable_mount_target(doc: &Value) -> bool {
 
 // True when a document contains a `name_servers` entry that is not a valid IP address.
 //
-// The generated schema types those entries with `format: ipv4`/`ipv6`, which JSON Schema
-// treats as annotational rather than asserting (see `IpAddrSchema`), so the schema accepts
-// what the deserializer rejects. This is the one divergence in that direction the
-// generators can produce; `schema_divergences_are_pinned` in `tests/schema_test.rs` pins
-// the same class by example.
+// `format: ipv4`/`ipv6` is annotational rather than asserting (see `IpAddrSchema`), so the
+// schema accepts what the deserializer rejects. This is the one such divergence the
+// generators can produce; `schema_divergences_are_pinned` pins the same class by example.
 fn has_non_ip_name_server(doc: &Value) -> bool {
     match doc {
         Value::Object(map) => map.iter().any(|(key, value)| {

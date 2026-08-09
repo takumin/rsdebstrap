@@ -172,11 +172,9 @@ impl IsolationContext for DirectContext {
             })
             .collect();
 
-        // The translation above is a string join, and the kernel resolves symlinks when it
-        // execs. A rootfs whose `/bin/sh` is a symlink pointing out of the rootfs would
-        // therefore run a host binary. Verify the program — and only the program, since it
-        // is the one argument the kernel resolves on our behalf — component by component
-        // with `O_NOFOLLOW`.
+        // The translation above is a string join and the kernel resolves symlinks at exec,
+        // so verify the program — and only the program, the one argument the kernel
+        // resolves on our behalf — component by component with `O_NOFOLLOW`.
         if !self.executor.dry_run() && Utf8Path::new(&command[0]).is_absolute() {
             verify_program_stays_in_rootfs(&self.rootfs, &command[0])?;
         }

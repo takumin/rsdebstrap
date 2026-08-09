@@ -578,11 +578,9 @@ mod tests {
         }
     }
 
-    // The resolution walk hands each component straight to `openat`/`unlinkat`, which
-    // interpret a separator as another level of path. A component carrying one would be
-    // resolved without the per-component `O_NOFOLLOW` the walk relies on, so a `..` inside a
-    // component escapes the rootfs. `parse` splitting on '/' is what makes that impossible,
-    // and it is the only constructor.
+    // `openat`/`unlinkat` read a separator as another level of path and apply `O_NOFOLLOW`
+    // only to the last one, so a component carrying one would escape the walk. `parse`
+    // splitting on '/' is what makes that impossible, and it is the only constructor.
     #[test]
     fn rel_path_components_never_carry_a_separator() {
         for form in ["/etc/resolv.conf", "a/b/c/d", "etc//x", "//a//b//"] {
@@ -729,8 +727,8 @@ mod tests {
     }
 
     // An error naming a path that does not exist sends the reader looking in the wrong
-    // place. `promote` used to interpolate only the final component onto the rootfs, so a
-    // failed write to /etc/resolv.conf was reported as `<rootfs>/resolv.conf`.
+    // place, so `promote` interpolates the whole relative path onto the rootfs, not the
+    // final component.
     //
     // The rename is provoked into failing by putting a directory at the target name, which
     // `renameat` refuses to replace with a file. Chmod would do it too, but not when the

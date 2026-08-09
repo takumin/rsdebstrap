@@ -2063,9 +2063,10 @@ const MINIMAL_BOOTSTRAP: &str = "bootstrap: {type: mmdebstrap, suite: trixie, ta
 
 #[test]
 fn test_dir_rejects_non_string_scalars() {
-    // yaml_serde's text deserializer used to hand the raw scalar text to string fields,
-    // so `dir: null` parsed as the literal path "null" and `dir:` as "". These must all
-    // be parse errors now, matching the generated schema (which types `dir` as string).
+    // yaml_serde's text deserializer hands the raw scalar text to string fields, so
+    // without the `de` helpers `dir: null` parses as the literal path "null" and `dir:`
+    // as "". These must all be parse errors, matching the generated schema (which types
+    // `dir` as string).
     for bad in [
         "dir: null\n",
         "dir: ~\n",
@@ -2245,11 +2246,9 @@ bootstrap:
 // =========================================================================
 // deny_unknown_fields on internally tagged variants
 //
-// The claim this pins: serde consumes the `type` tag when selecting a
-// variant and hands only the remaining keys to the payload struct, so
-// `deny_unknown_fields` on the payload rejects typos without also rejecting
-// the discriminator. It is documented in docs/ARCHITECTURE.md; asserting it
-// here means the docs do not have to be believed on their own.
+// The claim this pins is documented in docs/ARCHITECTURE.md (JSON Schema
+// generation); asserting it here means the docs do not have to be believed
+// on their own.
 // =========================================================================
 
 #[test]
@@ -2300,10 +2299,10 @@ fn internally_tagged_isolation_variants_reject_typos_but_accept_the_tag() {
     );
 }
 
-// `Profile::pipeline` takes the evidence `validate` produces, so the sequence that used to
-// be a convention — validate, then build — is now the only one that compiles. This pins the
-// half of it a test can express: a profile that fails validation yields no token, and the
-// failure is the semantic one rather than a resolution error.
+// `Profile::pipeline` takes the evidence `validate` produces, so validate-then-build is the
+// only sequence that compiles. This pins the half of it a test can express: a profile that
+// fails validation yields no token, and the failure is the semantic one rather than a
+// resolution error.
 #[test]
 fn test_pipeline_requires_the_validation_token() -> Result<()> {
     // Indented in fours, and the sequence entry written in flow style, so every line

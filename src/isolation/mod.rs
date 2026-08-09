@@ -220,9 +220,9 @@ impl TaskIsolation {
 
 // The accepted YAML shapes: `true`/`false`, `{ type: ... }`, or an explicit null (which —
 // like field absence — resolves to `Inherit`). This one type drives both deserialization
-// and schema generation, so the two cannot describe different acceptance sets. The map
-// form reuses `IsolationConfig`, whose per-variant payload structs are
-// `deny_unknown_fields` (the `type` tag is consumed before the payload sees the map).
+// and schema generation, so the two cannot describe different acceptance sets. The map form
+// reuses `IsolationConfig`; see `docs/ARCHITECTURE.md` (JSON Schema generation) for why the
+// wire enum is untagged and where `deny_unknown_fields` has to sit.
 //
 // Plain `//` (not `///`) so this note does not leak into the schema's `description`.
 #[derive(Debug, Deserialize, JsonSchema)]

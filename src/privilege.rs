@@ -109,10 +109,8 @@ struct PrivilegeMethodMap {
 // — like field absence — resolves to `Inherit`). This one type drives both deserialization
 // and schema generation, so the two cannot describe different acceptance sets.
 //
-// Untagged rather than a hand-written visitor: the visitor's `expecting` string is a nicer
-// message than untagged's "did not match any variant", but keeping it meant maintaining a
-// second enum for schemars and a parity test to pin them together. `load_profile` wraps
-// deserialization in `serde_path_to_error`, so the field path recovers the lost context.
+// Untagged rather than a hand-written visitor: see `docs/ARCHITECTURE.md` (JSON Schema
+// generation) for what that trade cost and what recovers it.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum PrivilegeWire {
