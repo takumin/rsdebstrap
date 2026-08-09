@@ -47,14 +47,14 @@ pub enum RsdebstrapError {
     /// An error from a boundary that returns [`anyhow::Error`], carried with its cause
     /// chain rather than flattened into text.
     ///
-    /// Renders like [`Validation`](Self::Validation) — these reach the user from the same
-    /// places — but the original is still reachable through
-    /// [`Error::source`](std::error::Error::source), so a caller can walk the chain or
-    /// downcast to whatever the boundary actually returned.
-    #[error("validation error: {message}")]
+    /// Carries the same classification as [`Validation`](Self::Validation) — these reach
+    /// the user from the same places — and nothing else: the boundary's own message is the
+    /// `source`'s, and restating it here would print the identical line twice in every
+    /// rendering of the chain. The detail, and the ability to downcast to whatever the
+    /// boundary actually returned, come from
+    /// [`Error::source`](std::error::Error::source).
+    #[error("validation error")]
     Untyped {
-        /// The boundary error's own message, without its causes.
-        message: String,
         /// The error as it arrived, chain intact.
         #[source]
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
@@ -138,10 +138,7 @@ impl RsdebstrapError {
     pub(crate) fn from_anyhow_or_validation(e: anyhow::Error) -> Self {
         match e.downcast::<RsdebstrapError>() {
             Ok(typed) => typed,
-            Err(e) => Self::Untyped {
-                message: e.to_string(),
-                source: e.into(),
-            },
+            Err(e) => Self::Untyped { source: e.into() },
         }
     }
 
@@ -376,17 +373,23 @@ mod tests {
 
     #[test]
     fn test_from_anyhow_or_validation_wraps_non_typed_error() {
+        use std::error::Error;
+
         let anyhow_err = anyhow::anyhow!("some generic error");
         let result = RsdebstrapError::from_anyhow_or_validation(anyhow_err);
         assert!(
-            matches!(
-                &result,
-                RsdebstrapError::Untyped { message, .. } if message == "some generic error"
-            ),
+            matches!(&result, RsdebstrapError::Untyped { .. }),
             "expected Untyped variant, got: {:?}",
             result
         );
-        assert_eq!(result.to_string(), "validation error: some generic error");
+        assert_eq!(result.to_string(), "validation error");
+        assert_eq!(
+            result
+                .source()
+                .expect("the boundary error must be preserved")
+                .to_string(),
+            "some generic error"
+        );
     }
 
     // The point of `Untyped`: a boundary error's causes survive as errors rather than as
@@ -400,7 +403,9 @@ mod tests {
                 .context("reading the backend manifest");
         let result = RsdebstrapError::from_anyhow_or_validation(anyhow_err);
 
-        assert_eq!(result.to_string(), "validation error: reading the backend manifest");
+        // The variant contributes only its label: the boundary's message is the cause's,
+        // and a chain that printed it at both links would say the same thing twice.
+        assert_eq!(result.to_string(), "validation error");
 
         let cause = result
             .source()
