@@ -30,14 +30,20 @@ fn verify_program_stays_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<()
 
     let components = path.components();
     let (last, parents) = components.split_last().expect("RelPath is never empty");
-    for component in parents {
+    for (depth, component) in parents.iter().enumerate() {
         dir = rfs::openat(
             &dir,
             component.as_str(),
             OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
             Mode::empty(),
         )
-        .map_err(|e| symlink_error(e, &format!("{}/{}", rootfs, component)))?;
+        // The components walked so far, not just this one: `<rootfs>/usr/bin` names the
+        // entry that failed when `/usr/bin/env` is refused, while `<rootfs>/bin` names
+        // something else entirely, or nothing.
+        .map_err(|e| {
+            let so_far = components[..=depth].join("/");
+            symlink_error(e, &format!("{}/{}", rootfs, so_far))
+        })?;
     }
     // `statat` rather than an `openat`: `O_NOFOLLOW | O_PATH` opens the *link itself* and
     // succeeds, and a plain `O_NOFOLLOW` open needs read permission the program may not

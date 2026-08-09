@@ -316,11 +316,14 @@ impl LocalRootfsOps {
         format!(".{}.rsdebstrap-{}", name, uuid::Uuid::new_v4().simple())
     }
 
-    fn promote(&self, dir: BorrowedFd<'_>, staging: &str, target: &str) -> Result<()> {
-        rfs::renameat(dir, staging, dir, target).map_err(|e| {
+    /// Takes the whole [`RelPath`] rather than the final component it renames to, so the
+    /// error names the entry the caller asked for: interpolating the component alone
+    /// reported `<rootfs>/resolv.conf` for a write to `/etc/resolv.conf`.
+    fn promote(&self, dir: BorrowedFd<'_>, staging: &str, path: &RelPath) -> Result<()> {
+        rfs::renameat(dir, staging, dir, path.file_name()).map_err(|e| {
             let _ = rfs::unlinkat(dir, staging, AtFlags::empty());
             RsdebstrapError::io(
-                format!("failed to install {}/{}", self.display_root, target),
+                format!("failed to install {}{}", self.display_root, path),
                 std::io::Error::from(e),
             )
         })
@@ -393,7 +396,7 @@ impl RootfsOps for LocalRootfsOps {
             ));
         }
 
-        self.promote(dir, &staging, name)
+        self.promote(dir, &staging, path)
     }
 
     fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()> {
@@ -409,7 +412,7 @@ impl RootfsOps for LocalRootfsOps {
             )
         })?;
 
-        self.promote(dir, &staging, name)
+        self.promote(dir, &staging, path)
     }
 
     fn remove(&self, path: &RelPath) -> Result<()> {
@@ -723,5 +726,26 @@ mod tests {
         let link = root.join("link-to-etc");
         std::os::unix::fs::symlink(root.join("etc"), &link).unwrap();
         assert!(LocalRootfsOps::open(&link).is_err());
+    }
+
+    // An error naming a path that does not exist sends the reader looking in the wrong
+    // place. `promote` used to interpolate only the final component onto the rootfs, so a
+    // failed write to /etc/resolv.conf was reported as `<rootfs>/resolv.conf`.
+    //
+    // The rename is provoked into failing by putting a directory at the target name, which
+    // `renameat` refuses to replace with a file. Chmod would do it too, but not when the
+    // suite runs as root, where the permission bits are bypassed.
+    #[test]
+    fn a_failed_install_names_the_full_path() {
+        let (_tmp, root) = rootfs();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+        std::fs::create_dir(root.join("etc/resolv.conf")).unwrap();
+
+        let err = ops
+            .write_file(&RelPath::parse("/etc/resolv.conf").unwrap(), b"x", FileMode::new(0o644))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("/etc/resolv.conf"), "unexpected error: {err}");
     }
 }
