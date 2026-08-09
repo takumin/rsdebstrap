@@ -261,7 +261,15 @@ Every path in a `Request` is a `RelPath`, and no variant carries a host path —
 read by the parent, so only bytes cross the boundary. The anchor itself is the exception that
 cannot be typed away: it is a path argument from the unprivileged parent, so a `sudo` rule
 permitting the helper permits root writes under any directory the invoking user can name.
-`check_anchor` refuses the live system's own hierarchy; grant the rule accordingly.
+`CheckedAnchor` refuses the live system's own hierarchy; grant the rule accordingly.
+
+It refuses it by inode, and only after opening: the descriptor is taken first and the check
+runs against *that*, because resolving the path once to check it and again to open it is the
+check-then-use shape the rest of this module exists to avoid — `O_NOFOLLOW` covers the final
+component only, so an intermediate directory swapped for a symlink between the two
+resolutions hands root a descriptor somewhere else. Comparing inodes rather than strings also
+catches names canonicalization does not resolve, such as a bind mount of `/etc`. Being the
+only way to construct the value `dispatch` takes is what keeps the check from being skipped.
 
 Privilege cannot be attached to an arbitrary command any more. `CommandSpec`'s fields are
 private, and the only constructor that sets `privilege` for a fixed program takes the closed

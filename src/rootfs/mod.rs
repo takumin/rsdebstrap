@@ -240,6 +240,14 @@ impl LocalRootfsOps {
         })
     }
 
+    /// The rootfs directory this instance is anchored to.
+    ///
+    /// Only for asking questions *about* the anchor — `helper::CheckedAnchor` compares its
+    /// inode against the live system's. Resolution inside the rootfs never goes through it.
+    pub(crate) fn root(&self) -> BorrowedFd<'_> {
+        self.root.as_fd()
+    }
+
     /// Walks to the directory holding `path`'s final component.
     ///
     /// Each component is opened with `O_NOFOLLOW`, so a symlink anywhere along
