@@ -134,6 +134,34 @@ impl<'de> Deserialize<'de> for RelPath {
     }
 }
 
+/// Serde codec for a file payload crossing the helper pipe.
+///
+/// JSON has no binary type, and `serde_json` renders a `Vec<u8>` as a decimal array:
+/// `[104,101,...]`, about 4.6 bytes of text per byte of file. Staging a mitamae binary is
+/// the case that matters — tens of megabytes become hundreds, held in full on both sides,
+/// and the helper then parses one integer per byte. Base64 is 1.33x and decodes in a pass.
+///
+/// A length-prefixed raw frame would be 1.0x, but it would also make the payload the one
+/// part of the protocol that is not self-delimiting: a desynchronised reader would resume
+/// mid-payload and hand whatever it found to `serde_json`, in a process running as root.
+/// The 33% buys back a protocol where every frame is one line.
+pub(crate) mod payload {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Vec<u8>, D::Error> {
+        let encoded = String::deserialize(d)?;
+        STANDARD
+            .decode(encoded.as_bytes())
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// The permission bits an entry carries.
 ///
 /// A `u32` at these call sites is ambiguous: it is either the `st_mode` a `stat`
@@ -174,7 +202,11 @@ impl std::fmt::Display for FileMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TakenEntry {
     /// A regular file, with the mode it carried.
-    File { content: Vec<u8>, mode: FileMode },
+    File {
+        #[serde(with = "payload")]
+        content: Vec<u8>,
+        mode: FileMode,
+    },
     /// A symlink, with the target it pointed at. Whether that target resolved is
     /// deliberately not consulted: a dangling `/etc/resolv.conf` is the normal
     /// state of a systemd rootfs before `systemd-resolved` runs, and it must be

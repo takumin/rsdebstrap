@@ -258,7 +258,12 @@ Rootfs *mutation* does not use that path. `rootfs::open()` is called once per ru
 `sudo <self> __rootfs-helper --rootfs <path>`, a hidden subcommand of this same binary — which
 opens the rootfs descriptor and serves typed `Request`s over a pipe (`src/rootfs/helper.rs`).
 Every path in a `Request` is a `RelPath`, and no variant carries a host path — host files are
-read by the parent, so only bytes cross the boundary. The anchor itself is the exception that
+read by the parent, so only bytes cross the boundary. Those bytes are base64: the protocol is
+one JSON object per line, and `serde_json` renders a `Vec<u8>` as a decimal array, which costs
+about 4.6 bytes of text per byte of file — enough to turn a mitamae binary into a
+hundreds-of-megabytes line parsed one integer at a time. A raw length-prefixed frame would
+avoid the remaining 33%, at the cost of making the payload the one part of the protocol that
+is not self-delimiting, in a reader running as root. The anchor itself is the exception that
 cannot be typed away: it is a path argument from the unprivileged parent, so a `sudo` rule
 permitting the helper permits root writes under any directory the invoking user can name.
 `CheckedAnchor` refuses the live system's own hierarchy; grant the rule accordingly.
