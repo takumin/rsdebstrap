@@ -500,16 +500,10 @@ impl LocalRootfsOps {
         let write = (|| {
             let mut file = File::from(fd);
             file.write_all(content)?;
-            if let Some(owner) = owner {
-                self.restore_owner(
-                    path,
-                    owner,
-                    rfs::fchown(
-                        &file,
-                        Some(Uid::from_raw(owner.uid)),
-                        Some(Gid::from_raw(owner.gid)),
-                    ),
-                )?;
+            if let Some(owner) = owner
+                && Owner::of(&rfs::fstat(&file)?) != owner
+            {
+                rfs::fchown(&file, Some(Uid::from_raw(owner.uid)), Some(Gid::from_raw(owner.gid)))?;
             }
             // `openat`'s mode argument is masked by the process umask, so the mode
             // has to be set on the descriptor to land exactly. It also has to be set
@@ -546,17 +540,7 @@ impl LocalRootfsOps {
         // By name rather than by descriptor because a symlink cannot be opened to hold
         // one. The name is this call's own staging name, which no one else knows.
         if let Some(owner) = owner {
-            let chowned = self.restore_owner(
-                path,
-                owner,
-                rfs::chownat(
-                    dir,
-                    staging.as_str(),
-                    Some(Uid::from_raw(owner.uid)),
-                    Some(Gid::from_raw(owner.gid)),
-                    AtFlags::SYMLINK_NOFOLLOW,
-                ),
-            );
+            let chowned = self.chown_if_different(dir, staging.as_str(), owner);
             if let Err(e) = chowned {
                 let _ = rfs::unlinkat(dir, staging.as_str(), AtFlags::empty());
                 return Err(RsdebstrapError::io(
@@ -569,32 +553,31 @@ impl LocalRootfsOps {
         self.promote(dir, &staging, path)
     }
 
-    /// Puts a taken entry's ownership back onto the staged entry replacing it.
+    /// Chowns the staged entry `name` in `dir` to `owner`, if it is not already there.
     ///
-    /// A run without privilege cannot give a file away to another user. It is also the
-    /// run whose staged entry is already owned by the right user in every case it could
-    /// have taken the original from, so `EPERM` here means an ownership this run never
-    /// could have restored -- reported, rather than failing a build over it.
-    fn restore_owner(
+    /// The comparison is not an optimization. A setgid directory hands a staged entry the
+    /// directory's group, which the caller need not be a member of, and `chown` refuses a
+    /// group the caller cannot give away even when the call would change nothing. Asking
+    /// only when the owner actually differs keeps that case out of the error path -- and
+    /// leaves every `EPERM` that does reach it meaning what it says: the recorded owner
+    /// was not restored, which `put_back` must not report as success.
+    fn chown_if_different(
         &self,
-        path: &RelPath,
+        dir: BorrowedFd<'_>,
+        name: &str,
         owner: Owner,
-        result: rustix::io::Result<()>,
     ) -> rustix::io::Result<()> {
-        match result {
-            Err(rustix::io::Errno::PERM) => {
-                tracing::warn!(
-                    "cannot restore ownership {}:{} on {}{}; it stays owned by the user \
-                    running the build",
-                    owner.uid,
-                    owner.gid,
-                    self.display_root,
-                    path
-                );
-                Ok(())
-            }
-            other => other,
+        let stat = rfs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)?;
+        if Owner::of(&stat) == owner {
+            return Ok(());
         }
+        rfs::chownat(
+            dir,
+            name,
+            Some(Uid::from_raw(owner.uid)),
+            Some(Gid::from_raw(owner.gid)),
+            AtFlags::SYMLINK_NOFOLLOW,
+        )
     }
 }
 

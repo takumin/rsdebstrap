@@ -22,7 +22,8 @@ and this project adheres to
   carried. An interrupted build no longer leaves a backup file for the operator
   to move back by hand, and a rootfs bootstrapped unprivileged keeps its own
   ownership of the file rather than having it reowned by the privileged helper
-  that restores it.
+  that restores it. A restore that cannot put the recorded owner back fails
+  rather than reporting success for a file it reowned.
 - JSON Schema generation is no longer behind the `schema` cargo feature;
   `schemars` and `serde_json` are ordinary dependencies. Adds ~460 KB to the
   release binary. `--no-default-features` no longer produces a schema-less
