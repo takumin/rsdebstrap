@@ -222,3 +222,44 @@ fn helper_is_running(rootfs: &camino::Utf8Path) -> bool {
         .status
         .success()
 }
+
+// A bind mount is a second name for a directory that no amount of path canonicalization
+// reveals: `<tmpdir>` and `/etc` are different paths, resolve to themselves, and are the
+// same inode. The anchor check compares the opened descriptor's device and inode against
+// the live system's, so it refuses this; the string comparison it replaced did not.
+//
+// Needs `sudo` for the mount, not for the helper — the helper is spawned unprivileged
+// here, since what is under test is the refusal, which happens before anything is served.
+#[test]
+#[ignore]
+fn the_helper_refuses_an_anchor_bind_mounted_from_the_live_system() {
+    require_sudo!();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let target = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+
+    sudo(&["mount", "--bind", "-o", "ro", "/etc", target.as_str()]);
+    let _unmount = BindMount(target.clone());
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rsdebstrap"))
+        .args(["__rootfs-helper", "--rootfs", target.as_str()])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("failed to spawn helper");
+
+    assert!(!output.status.success(), "a bind mount of /etc should be refused");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not a rootfs"), "unexpected stderr: {stderr}");
+}
+
+// Unmounts on the way out so a failed assertion above does not leave the bind mount
+// behind; the tempdir's own `Drop` would otherwise fail to remove a mounted directory.
+struct BindMount(Utf8PathBuf);
+
+impl Drop for BindMount {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("sudo")
+            .args(["umount", self.0.as_str()])
+            .status();
+    }
+}
