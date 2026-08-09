@@ -491,10 +491,41 @@ impl LocalRootfsOps {
         ))
     }
 
+    /// Publishes the staged entry under the caller's name.
+    ///
+    /// `staged` is the inode that was written, checked against what the staging name means
+    /// now. A UUID does not make the name unguessable to anyone watching the directory, and
+    /// `renameat` takes names on both sides -- Linux has no rename-by-descriptor -- so this
+    /// is a check rather than a binding: it narrows the window to these two calls, and what
+    /// it rules out is publishing someone else's inode under a name the caller trusts.
+    ///
     /// Takes the whole [`RelPath`] rather than the final component it renames to, so the
     /// error names the entry the caller asked for: interpolating the component alone
     /// reported `<rootfs>/resolv.conf` for a write to `/etc/resolv.conf`.
-    fn promote(&self, dir: BorrowedFd<'_>, staging: &str, path: &RelPath) -> Result<()> {
+    fn promote(
+        &self,
+        dir: BorrowedFd<'_>,
+        staging: &str,
+        path: &RelPath,
+        staged: &Identity,
+    ) -> Result<()> {
+        let current = rfs::statat(dir, staging, AtFlags::SYMLINK_NOFOLLOW)
+            .map(|current| Identity::of(&current))
+            .map_err(|e| {
+                RsdebstrapError::io(
+                    format!("failed to stat {}/{}", self.display_root, staging),
+                    std::io::Error::from(e),
+                )
+            })?;
+        // Left in place rather than unlinked: the name means someone else's entry now, and
+        // removing it is no more ours to do than publishing it was.
+        if current != *staged {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{}/{} was replaced while {}{} was being staged, refusing to install it",
+                self.display_root, staging, self.display_root, path
+            )));
+        }
+
         rfs::renameat(dir, staging, dir, path.file_name()).map_err(|e| {
             let _ = rfs::unlinkat(dir, staging, AtFlags::empty());
             RsdebstrapError::io(
@@ -510,7 +541,7 @@ impl LocalRootfsOps {
 /// Only [`RootfsOps::take`]'s `unlinkat` needs this. Everything it reads comes off a
 /// descriptor, which cannot be pointed elsewhere; the removal has to name the entry,
 /// because Linux has no unlink-by-descriptor, so comparing is all that is left there.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Identity {
     dev: u64,
     ino: u64,
@@ -578,9 +609,11 @@ impl LocalRootfsOps {
             )
         })?;
 
+        let mut staged = None;
         let write = (|| {
             let mut file = File::from(fd);
             file.write_all(content)?;
+            staged = Some(Identity::of(&rfs::fstat(&file)?));
             if let Some(owner) = owner
                 && Owner::of(&rfs::fstat(&file)?) != owner
             {
@@ -602,7 +635,8 @@ impl LocalRootfsOps {
             ));
         }
 
-        self.promote(dir, &staging, path)
+        let staged = staged.expect("a successful write records the inode it wrote");
+        self.promote(dir, &staging, path, &staged)
     }
 
     fn install_symlink(&self, path: &RelPath, target: &[u8], owner: Option<Owner>) -> Result<()> {
@@ -631,7 +665,17 @@ impl LocalRootfsOps {
             }
         }
 
-        self.promote(dir, &staging, path)
+        let staged = rfs::statat(dir, staging.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+            .map(|staged| Identity::of(&staged))
+            .map_err(|e| {
+                let _ = rfs::unlinkat(dir, staging.as_str(), AtFlags::empty());
+                RsdebstrapError::io(
+                    format!("failed to stat {}/{}", self.display_root, staging),
+                    std::io::Error::from(e),
+                )
+            })?;
+
+        self.promote(dir, &staging, path, &staged)
     }
 
     /// Chowns the staged entry `name` in `dir` to `owner`, if it is not already there.
@@ -719,6 +763,17 @@ impl RootfsOps for LocalRootfsOps {
             }
         }
 
+        // What the rename took, which is what a refusal has to put back -- and only that.
+        let taken = match rfs::statat(dir, detached.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(taken) => Identity::of(&taken),
+            Err(e) => {
+                return Err(RsdebstrapError::io(
+                    format!("failed to stat {}/{}", self.display_root, detached),
+                    std::io::Error::from(e),
+                ));
+            }
+        };
+
         match self.read_detached(dir, &detached, path) {
             Ok((entry, read)) => {
                 // A check rather than a binding, because Linux has no unlink-by-descriptor:
@@ -755,17 +810,30 @@ impl RootfsOps for LocalRootfsOps {
                 })?;
                 Ok(Some(entry))
             }
-            // Refusing to detach has to mean nothing was detached, so the rename goes back.
-            // If that fails too, the entry exists only under a name the caller has never
-            // seen, so the error has to name it.
-            Err(refusal) => match rfs::renameat(dir, detached.as_str(), dir, name) {
-                Ok(()) => Err(refusal),
-                Err(e) => Err(RsdebstrapError::Isolation(format!(
-                    "{refusal}; it is left detached at {}/{} because putting it back \
-                    failed: {e}",
-                    self.display_root, detached
-                ))),
-            },
+            // Refusing to detach has to mean nothing was detached, so the rename goes back
+            // -- but only if the name still means the entry that was taken. Renaming
+            // someone else's inode onto the caller's path would be a worse outcome than the
+            // refusal it is recovering from, so that case says what happened and stops.
+            Err(refusal) => {
+                let current = rfs::statat(dir, detached.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+                    .map(|current| Identity::of(&current))
+                    .ok();
+                if current != Some(taken) {
+                    return Err(RsdebstrapError::Isolation(format!(
+                        "{refusal}; it was not put back because {}/{} is no longer the \
+                        entry that was detached",
+                        self.display_root, detached
+                    )));
+                }
+                match rfs::renameat(dir, detached.as_str(), dir, name) {
+                    Ok(()) => Err(refusal),
+                    Err(e) => Err(RsdebstrapError::Isolation(format!(
+                        "{refusal}; it is left detached at {}/{} because putting it back \
+                        failed: {e}",
+                        self.display_root, detached
+                    ))),
+                }
+            }
         }
     }
 }

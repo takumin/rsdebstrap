@@ -250,10 +250,13 @@ patterns run throughout `src/isolation/`:
   otherwise wait for a writer that is never coming — for the privileged helper, that is the
   build hanging with no output.
 
-  The `unlinkat` at the end is the one step that cannot be bound to a descriptor — Linux has
-  no unlink-by-descriptor — so it compares `st_dev`/`st_ino` against what was read and errors
-  out rather than removing something else. That narrows the window rather than closing it,
-  and the comment there says so.
+  The steps that name an entry rather than holding one are where that stops being achievable,
+  and there are three: the `unlinkat` that removes a taken entry, the `renameat` that puts a
+  refused one back, and the `renameat` that promotes a staged write over the caller's name.
+  Linux has neither unlink- nor rename-by-descriptor, so each compares `st_dev`/`st_ino`
+  against the inode it means and errors out rather than acting on another — a UUID in a
+  staging name is not a secret from anyone watching the directory. Those checks narrow the
+  window to two syscalls rather than closing it, and each says so where it stands.
 
   Refusing an entry (wrong type, over `MAX_TAKE_SIZE`) has to rename it back, since "refused"
   has to mean nothing was detached; if that rollback fails, the error names where the entry
