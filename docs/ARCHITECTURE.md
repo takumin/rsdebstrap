@@ -256,7 +256,7 @@ patterns run throughout `src/isolation/`:
 
 ### Privilege boundary
 
-Rootfs *mutation* does not use that path. `rootfs::open()` is called once per run in
+Rootfs *mutation* does not use that path. `rootfs::open()` is called once for the run in
 `run_pipeline_phase`, and when `defaults.privilege` is set it spawns one helper —
 `sudo <self> __rootfs-helper --rootfs <path>`, a hidden subcommand of this same binary — which
 opens the rootfs descriptor and serves typed `Request`s over a pipe (`src/rootfs/helper.rs`).
@@ -278,6 +278,14 @@ component only, so an intermediate directory swapped for a symlink between the t
 resolutions hands root a descriptor somewhere else. Comparing inodes rather than strings also
 catches names canonicalization does not resolve, such as a bind mount of `/etc`. Being the
 only way to construct the value `dispatch` takes is what keeps the check from being skipped.
+
+The one other `rootfs::open()` in a run escalates nothing, and has to not. A provision task
+that resolved to no isolation cannot also have resolved to a privilege — `ProvisionTask::resolve`
+refuses that pair — so its script is exec'd as the calling user, and a script staged through the
+helper would arrive `root:root` at the owner-only mode staging asks for, denying the exec it was
+staged for. `run_provision_item` therefore opens local ops for the direct branch, passing
+`privilege: None`, which is where the staging identity sat before the helper existed. Pinned by
+`direct_execution_does_not_stage_through_the_runs_shared_ops` in `tests/pipeline_test.rs`.
 
 Privilege cannot be attached to an arbitrary command any more. `CommandSpec`'s fields are
 private, and the only constructor that sets `privilege` for a fixed program takes the closed

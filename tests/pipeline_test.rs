@@ -3,12 +3,13 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::config::IsolationConfig;
 use rsdebstrap::executor::{CommandExecutor, CommandSpec, ExecutionResult};
 use rsdebstrap::phase::{AssembleConfig, PrepareConfig, ProvisionTask, ScriptSource, ShellTask};
 use rsdebstrap::pipeline::Pipeline;
+use rsdebstrap::rootfs::{FileMode, RelPath, RootfsOps, TakenEntry};
 
 // These tests drive the pipeline in dry-run mode, where no filesystem operation
 // is meant to reach a real rootfs.
@@ -33,6 +34,7 @@ struct MockExecutor {
     calls: Mutex<Vec<Vec<String>>>,
     // If set, the Nth call (0-indexed) will return an error.
     fail_on_call: Option<usize>,
+    dry_run: bool,
 }
 
 impl MockExecutor {
@@ -40,6 +42,7 @@ impl MockExecutor {
         Self {
             calls: Mutex::new(Vec::new()),
             fail_on_call: None,
+            dry_run: true,
         }
     }
 
@@ -47,6 +50,17 @@ impl MockExecutor {
         Self {
             calls: Mutex::new(Vec::new()),
             fail_on_call: Some(call_index),
+            dry_run: true,
+        }
+    }
+
+    // Reports a real run, for the one test that needs the layers under test to actually
+    // stage into a fixture rootfs rather than skip their filesystem work.
+    fn real_run() -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            fail_on_call: None,
+            dry_run: false,
         }
     }
 
@@ -60,10 +74,10 @@ impl MockExecutor {
 }
 
 impl CommandExecutor for MockExecutor {
-    // These tests drive the pipeline against a fixture rootfs that does not exist on disk,
-    // so every layer has to agree the run is a dry run. It now derives that from here.
+    // Most of these tests drive the pipeline against a fixture rootfs that does not exist
+    // on disk, so every layer has to agree the run is a dry run. It derives that from here.
     fn dry_run(&self) -> bool {
-        true
+        self.dry_run
     }
 
     fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
@@ -77,7 +91,57 @@ impl CommandExecutor for MockExecutor {
         if self.fail_on_call == Some(index) {
             anyhow::bail!("simulated failure on call {}", index);
         }
-        Ok(ExecutionResult { status: None })
+        // A real run that reported no status is treated as a killed process, so outside
+        // dry run the mock has to hand back an actual successful exit.
+        Ok(ExecutionResult {
+            status: (!self.dry_run).then(|| {
+                use std::os::unix::process::ExitStatusExt;
+                std::process::ExitStatus::from_raw(0)
+            }),
+        })
+    }
+}
+
+// Stands in for the run's shared ops, which `rsdebstrap::rootfs::open` backs with the
+// privileged helper whenever the profile configures a privilege method. It records
+// instead of performing, so a test can ask what was staged through it.
+#[derive(Default)]
+struct RecordingOps {
+    writes: Mutex<Vec<String>>,
+}
+
+impl RecordingOps {
+    fn writes(&self) -> Vec<String> {
+        self.writes.lock().unwrap().clone()
+    }
+}
+
+impl RootfsOps for RecordingOps {
+    fn write_file(
+        &self,
+        path: &RelPath,
+        _content: &[u8],
+        _mode: FileMode,
+    ) -> std::result::Result<(), RsdebstrapError> {
+        self.writes.lock().unwrap().push(path.to_string());
+        Ok(())
+    }
+
+    fn write_symlink(
+        &self,
+        path: &RelPath,
+        _target: &str,
+    ) -> std::result::Result<(), RsdebstrapError> {
+        self.writes.lock().unwrap().push(path.to_string());
+        Ok(())
+    }
+
+    fn remove(&self, _path: &RelPath) -> std::result::Result<(), RsdebstrapError> {
+        Ok(())
+    }
+
+    fn take(&self, _path: &RelPath) -> std::result::Result<Option<TakenEntry>, RsdebstrapError> {
+        Ok(None)
     }
 }
 
@@ -384,4 +448,43 @@ fn test_pipeline_validate_preserves_io_variant() {
             other,
         ),
     }
+}
+
+// A task that resolves to no isolation cannot also resolve to a privilege — `ProvisionTask::
+// resolve` refuses that pair — so its script is exec'd as the calling user. Staging it
+// through the run's shared ops would put it there as whoever those ops speak for: with a
+// privilege method configured that is root, and the 0700 mode staging asks for would then
+// deny the very exec the staging was for. So the direct path must open its own ops.
+#[test]
+fn direct_execution_does_not_stage_through_the_runs_shared_ops() {
+    let temp = tempfile::tempdir().unwrap();
+    let rootfs = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
+    std::fs::create_dir(rootfs.join("tmp")).unwrap();
+    std::fs::create_dir(rootfs.join("bin")).unwrap();
+    std::fs::write(rootfs.join("bin/sh"), "#!/bin/sh\n").unwrap();
+
+    let tasks = [inline_task_direct("echo direct")];
+    let pipeline = provision_pipeline(&tasks);
+    let executor = Arc::new(MockExecutor::real_run());
+    let shared_ops = Arc::new(RecordingOps::default());
+
+    pipeline
+        .run(&rootfs, executor.clone(), shared_ops.clone())
+        .expect("the direct task should run against the fixture rootfs");
+
+    assert!(
+        shared_ops.writes().is_empty(),
+        "the script was staged through the shared ops: {:?}",
+        shared_ops.writes()
+    );
+
+    // The exec still happened, so the script really was staged — just by ops of the
+    // direct path's own making.
+    let calls = executor.calls();
+    assert_eq!(calls.len(), 1, "unexpected calls: {:?}", calls);
+    assert!(
+        calls[0][1].starts_with(rootfs.join("tmp/task-").as_str()),
+        "unexpected argv: {:?}",
+        calls[0]
+    );
 }

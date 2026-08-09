@@ -222,13 +222,23 @@ fn run_provision_item(
     executor: &Arc<dyn CommandExecutor>,
     ops: &Arc<dyn RootfsOps>,
 ) -> Result<()> {
-    let provider: Box<dyn IsolationProvider> = match task.resolved_isolation_config() {
-        Some(config) => config.to_provider(),
-        None => Box::new(DirectProvider),
-    };
+    let (provider, ops): (Box<dyn IsolationProvider>, Arc<dyn RootfsOps>) =
+        match task.resolved_isolation_config() {
+            Some(config) => (config.to_provider(), ops.clone()),
+            // Direct execution is unprivileged by construction — `ProvisionTask::resolve`
+            // refuses `isolation: false` together with any resolved privilege — so whatever
+            // this task stages has to be written by the identity that will then exec it.
+            // The run's shared ops may be the privileged helper, and a script staged
+            // through it lands `root:root` with a mode (0700) that denies that exec.
+            None => (
+                Box::new(DirectProvider),
+                crate::rootfs::open(rootfs, None, executor.dry_run())
+                    .context("failed to open the rootfs for unisolated staging")?,
+            ),
+        };
 
     let mut ctx = provider
-        .setup(rootfs, executor.clone(), ops.clone())
+        .setup(rootfs, executor.clone(), ops)
         .context("failed to setup isolation context")?;
 
     let run_result = task.execute(ctx.as_ref());
