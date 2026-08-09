@@ -17,7 +17,7 @@ use crate::error::RsdebstrapError;
 use crate::isolation::RootfsContext;
 use crate::isolation::resolv_conf::generate_resolv_conf;
 use crate::phase::{AssembleItem, PhaseItem};
-use crate::rootfs::RelPath;
+use crate::rootfs::{FileMode, RelPath};
 
 /// Assemble phase resolv_conf task for writing a permanent `/etc/resolv.conf`.
 ///
@@ -142,7 +142,11 @@ impl AssembleResolvConfTask {
                     name_servers: self.name_servers.clone(),
                     search: self.search.clone(),
                 };
-                ops.write_file(&path, generate_resolv_conf(&config).as_bytes(), 0o644)?;
+                ops.write_file(
+                    &path,
+                    generate_resolv_conf(&config).as_bytes(),
+                    FileMode::new(0o644),
+                )?;
                 info!("wrote resolv.conf in {}", rootfs);
             }
         }

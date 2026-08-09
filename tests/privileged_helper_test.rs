@@ -18,7 +18,7 @@
 use camino::Utf8PathBuf;
 use rsdebstrap::privilege::PrivilegeMethod;
 use rsdebstrap::rootfs::helper::PrivilegedRootfsOps;
-use rsdebstrap::rootfs::{LocalRootfsOps, RelPath, RootfsOps, TakenEntry};
+use rsdebstrap::rootfs::{FileMode, LocalRootfsOps, RelPath, RootfsOps, TakenEntry};
 
 const ORIGINAL: &str = "# original, root-owned\n";
 
@@ -142,11 +142,11 @@ fn the_helper_takes_and_restores_a_root_owned_entry() {
         taken,
         TakenEntry::File {
             content: ORIGINAL.as_bytes().to_vec(),
-            mode: 0o600,
+            mode: FileMode::new(0o600),
         }
     );
 
-    ops.write_file(&path, b"nameserver 1.1.1.1\n", 0o644)
+    ops.write_file(&path, b"nameserver 1.1.1.1\n", FileMode::new(0o644))
         .unwrap();
     assert_eq!(fixture.read_resolv_conf(), "nameserver 1.1.1.1\n");
 
@@ -195,7 +195,7 @@ fn the_helper_exits_when_the_parent_drops_it() {
 
     {
         let ops = privileged(&fixture.path);
-        ops.write_file(&RelPath::parse("/etc/resolv.conf").unwrap(), b"x\n", 0o644)
+        ops.write_file(&RelPath::parse("/etc/resolv.conf").unwrap(), b"x\n", FileMode::new(0o644))
             .unwrap();
         assert!(helper_is_running(&fixture.path), "the helper does not appear to be running");
     }
