@@ -10,7 +10,7 @@
 //!
 //! What that bound is *relative to* is the anchor, and the anchor is a path argument from
 //! the unprivileged parent. A `sudo` rule permitting this helper therefore permits root
-//! writes under any directory the invoking user can name; `check_anchor` only refuses the
+//! writes under any directory the invoking user can name; `CheckedAnchor` only refuses the
 //! live system's own hierarchy. Grant the rule accordingly.
 
 use std::io::{BufRead, BufReader, Write};
@@ -18,6 +18,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
 use camino::Utf8Path;
+use rustix::fs as rfs;
 use serde::{Deserialize, Serialize};
 
 use super::{FileMode, LocalRootfsOps, RelPath, RootfsOps, TakenEntry};
@@ -67,25 +68,54 @@ const REFUSED_ANCHORS: &[&str] = &[
     "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/tmp", "/usr", "/var",
 ];
 
-/// Rejects an anchor that names the live system rather than a rootfs.
+/// A rootfs the helper has opened and checked, in that order.
 ///
-/// The anchor is the one path the helper opens by name, and it comes from the *unprivileged*
-/// parent — so a `sudo` rule permitting this helper would otherwise permit root writes
-/// anywhere. This does not make the anchor trustworthy (the parent still chooses it, and any
-/// directory the invoking user could name is still reachable); it puts a floor under the
-/// damage a mistake or a hijacked argv can do.
-fn check_anchor(rootfs: &Utf8Path) -> Result<()> {
-    let canonical = rootfs
-        .canonicalize_utf8()
-        .map_err(|e| RsdebstrapError::io(format!("failed to resolve rootfs {}", rootfs), e))?;
-    if REFUSED_ANCHORS.contains(&canonical.as_str()) {
-        return Err(RsdebstrapError::Isolation(format!(
-            "refusing to serve privileged operations against {}: it is part of the live \
-            system, not a rootfs",
-            canonical
-        )));
+/// The anchor is the one path the helper resolves by name, and it comes from the
+/// *unprivileged* parent — so a `sudo` rule permitting this helper would otherwise permit
+/// root writes anywhere. Refusing the live system's own hierarchy does not make the anchor
+/// trustworthy (the parent still chooses it, and any directory the invoking user could name
+/// is still reachable); it puts a floor under the damage a mistake or a hijacked argv can do.
+///
+/// The floor only holds if the thing checked is the thing used. Resolving the path once to
+/// check it and again to open it would not do that: `O_NOFOLLOW` covers the final component
+/// only, so swapping an intermediate directory for a symlink between the two resolutions
+/// hands root a descriptor somewhere else entirely. So the descriptor is opened first and
+/// the check runs against *it*, by inode; existing only as this type means [`dispatch`]
+/// cannot be reached with an unchecked one.
+#[derive(Debug)]
+struct CheckedAnchor(LocalRootfsOps);
+
+impl CheckedAnchor {
+    fn open(rootfs: &Utf8Path) -> Result<Self> {
+        let ops = LocalRootfsOps::open(rootfs)?;
+        let anchor = rfs::fstat(ops.root()).map_err(|e| {
+            RsdebstrapError::io(
+                format!("failed to stat rootfs {}", rootfs),
+                std::io::Error::from(e),
+            )
+        })?;
+
+        for refused in REFUSED_ANCHORS {
+            // `stat`, not `lstat`: on a merged-`/usr` system `/lib` is a symlink, and an
+            // anchor naming its target is the same directory by another name. Comparing
+            // inodes rather than strings also catches a bind mount of one of these.
+            let Ok(live) = rfs::stat(*refused) else {
+                continue;
+            };
+            if (live.st_dev, live.st_ino) == (anchor.st_dev, anchor.st_ino) {
+                return Err(RsdebstrapError::Isolation(format!(
+                    "refusing to serve privileged operations against {}: it is {}, part of \
+                    the live system, not a rootfs",
+                    rootfs, refused
+                )));
+            }
+        }
+        Ok(Self(ops))
     }
-    Ok(())
+
+    fn ops(&self) -> &LocalRootfsOps {
+        &self.0
+    }
 }
 
 /// Serves [`Request`]s on stdin against `rootfs` until stdin closes.
@@ -94,8 +124,7 @@ fn check_anchor(rootfs: &Utf8Path) -> Result<()> {
 /// [`Response::Error`] rather than terminating the loop, so one failed operation
 /// does not tear down a session the parent may still need for cleanup.
 pub fn serve(rootfs: &Utf8Path) -> Result<()> {
-    check_anchor(rootfs)?;
-    let ops = LocalRootfsOps::open(rootfs)?;
+    let ops = CheckedAnchor::open(rootfs)?;
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
 
@@ -117,7 +146,8 @@ pub fn serve(rootfs: &Utf8Path) -> Result<()> {
     Ok(())
 }
 
-fn dispatch(ops: &LocalRootfsOps, request: Request) -> Response {
+fn dispatch(anchor: &CheckedAnchor, request: Request) -> Response {
+    let ops = anchor.ops();
     let result = match request {
         Request::WriteFile {
             path,
@@ -333,8 +363,8 @@ mod tests {
     // The helper's request loop, driven directly against a real rootfs. This is
     // the same `serve` dispatch the privileged process runs, minus the escalation
     // — which is the part a test cannot exercise without a password prompt.
-    fn round_trip(ops: &LocalRootfsOps, request: Request) -> Response {
-        dispatch(ops, request)
+    fn round_trip(anchor: &CheckedAnchor, request: Request) -> Response {
+        dispatch(anchor, request)
     }
 
     fn rootfs() -> (tempfile::TempDir, camino::Utf8PathBuf) {
@@ -368,9 +398,9 @@ mod tests {
     #[test]
     fn dispatch_reports_errors_instead_of_unwinding() {
         let (_tmp, root) = rootfs();
-        let ops = LocalRootfsOps::open(&root).unwrap();
+        let anchor = CheckedAnchor::open(&root).unwrap();
         let response = round_trip(
-            &ops,
+            &anchor,
             Request::WriteFile {
                 path: RelPath::parse("/missing/resolv.conf").unwrap(),
                 content: b"x".to_vec(),
@@ -383,11 +413,11 @@ mod tests {
     #[test]
     fn take_and_write_round_trip_through_dispatch() {
         let (_tmp, root) = rootfs();
-        let ops = LocalRootfsOps::open(&root).unwrap();
+        let anchor = CheckedAnchor::open(&root).unwrap();
         let path = RelPath::parse("/etc/resolv.conf").unwrap();
 
         let written = round_trip(
-            &ops,
+            &anchor,
             Request::WriteFile {
                 path: path.clone(),
                 content: b"nameserver 9.9.9.9\n".to_vec(),
@@ -396,11 +426,40 @@ mod tests {
         );
         assert!(matches!(written, Response::Unit), "got {written:?}");
 
-        let taken = round_trip(&ops, Request::Take { path });
+        let taken = round_trip(&anchor, Request::Take { path });
         let Response::Taken(Some(TakenEntry::File { content, mode })) = taken else {
             panic!("got {taken:?}");
         };
         assert_eq!(content, b"nameserver 9.9.9.9\n");
         assert_eq!(mode, FileMode::new(0o644));
+    }
+
+    // The refused set is matched by inode, not against the string the parent passed, so a
+    // spelling that is not in `REFUSED_ANCHORS` but lands on the same directory is refused
+    // anyway. `/..` is `/`.
+    #[test]
+    fn a_refused_directory_under_another_name_is_still_refused() {
+        let err = CheckedAnchor::open(camino::Utf8Path::new("/..")).unwrap_err();
+        assert!(err.to_string().contains("not a rootfs"), "unexpected error: {err}");
+    }
+
+    // Order matters as much as the comparison: the descriptor is opened first, so a path
+    // whose final component is a symlink never reaches the inode check at all.
+    #[test]
+    fn a_symlinked_anchor_is_refused_before_the_inode_check() {
+        let (_tmp, root) = rootfs();
+        let link = root.join("link");
+        std::os::unix::fs::symlink(root.join("etc"), &link).unwrap();
+
+        let err = CheckedAnchor::open(&link).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "unexpected error: {err}");
+    }
+
+    // A temporary directory is not part of the live system even though it lives under
+    // `/tmp`, which is: the check is about the anchor itself, not about what contains it.
+    #[test]
+    fn a_directory_under_a_refused_one_is_accepted() {
+        let (_tmp, root) = rootfs();
+        CheckedAnchor::open(&root).expect("a tempdir is not the live system");
     }
 }
