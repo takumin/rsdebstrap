@@ -117,8 +117,7 @@ fn run_pipeline_phase_with(
         .map(|m| m.resolved_mounts())
         .unwrap_or_default();
     let privilege = profile.defaults.privilege.as_ref().map(|d| d.method);
-    let mut mounts =
-        RootfsMounts::new(&rootfs, mount_entries, executor.clone(), privilege, dry_run);
+    let mut mounts = RootfsMounts::new(&rootfs, mount_entries, executor.clone(), privilege);
     mounts
         .mount()
         .context("failed to mount filesystems in rootfs")?;
@@ -187,17 +186,20 @@ fn run_pipeline_phase_with(
     }
 }
 
-pub fn run_apply(opts: &cli::ApplyArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
-    // `opts.dry_run` is what `main` builds the executor from; from here on the executor is
-    // the single answer to whether this is a dry run, so no layer can disagree with the one
-    // that would actually run the commands.
+/// Runs the `apply` command against `common`, using `executor` for every program it runs.
+///
+/// Takes [`cli::CommonArgs`] rather than the whole [`cli::ApplyArgs`] so that `--dry-run` is
+/// not in scope here. `main` is the one place that turns the flag into an executor, and from
+/// there the executor is the single answer to whether this is a dry run — a caller cannot
+/// hand in one that disagrees with a flag, because there is no flag to disagree with.
+pub fn run_apply(common: &cli::CommonArgs, executor: Arc<dyn CommandExecutor>) -> Result<()> {
     let dry_run = executor.dry_run();
     if dry_run {
         warn!("DRY-RUN MODE: No changes will be made");
     }
 
-    let profile = config::load_profile(opts.common.file.as_path())
-        .with_context(|| format!("failed to load profile from {}", opts.common.file))?;
+    let profile = config::load_profile(common.file.as_path())
+        .with_context(|| format!("failed to load profile from {}", common.file))?;
     let validated = profile.validate().context("profile validation failed")?;
 
     if !dry_run && !profile.dir.exists() {
@@ -308,6 +310,12 @@ mod tests {
     }
 
     impl CommandExecutor for RecordingExecutor {
+        // Really runs what it is given, so it must not claim otherwise: these tests
+        // assert the resulting filesystem state.
+        fn dry_run(&self) -> bool {
+            false
+        }
+
         fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
             self.commands
                 .lock()
@@ -487,6 +495,12 @@ mod tests {
     }
 
     impl CommandExecutor for TimelineExecutor {
+        // The point of this test is the order real mounts and writes happen in, so the
+        // run has to be a live one even though nothing is actually mounted.
+        fn dry_run(&self) -> bool {
+            false
+        }
+
         fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
             self.timeline
                 .lock()
