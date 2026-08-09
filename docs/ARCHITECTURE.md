@@ -225,12 +225,18 @@ patterns run throughout `src/isolation/`:
   one thing left holding the entry; the returned error names the detached original rather than
   only the write that failed.
 
-  `take` reads what it returns from a descriptor rather than from a name. The `statat` it
-  starts with only chooses the branch; the file-type check, the size limit and the bounded
-  read all land on the inode `openat` returned, which is the rule `read_host_file` follows
-  from the host side. It re-identifies the entry by `st_dev`/`st_ino` before the `unlinkat`
-  as well, because Linux has no unlink-by-descriptor and the alternative is returning one
-  inode's contents while detaching another's.
+  `take` detaches before it reads. It renames the entry to a sibling whose name carries a
+  fresh UUID, and every call after that — the `statat` that chooses the branch, the read,
+  the `unlinkat` — names an entry only that call knows the name of. There is no second
+  resolution of the caller's name for anyone to win, so the inode that is read is
+  necessarily the one that was detached and the one that is removed. Reading first and
+  checking the name again afterwards cannot reach that: Linux has no unlink-by-descriptor,
+  so a check before the unlink narrows the window rather than closing it. Refusing an entry
+  (wrong type, over `MAX_TAKE_SIZE`) therefore has to rename it back, since "refused" has to
+  mean nothing was detached; if that rollback fails, the error names where the entry is.
+
+  The read stays bounded even though the size was read from the same inode, because a
+  descriptor opened before the rename still writes to it.
 
   What the value carries is what a faithful restore needs: content, mode and owner.
   `put_back` installs a *new* inode — that is what makes it atomic — so an owner it did not
