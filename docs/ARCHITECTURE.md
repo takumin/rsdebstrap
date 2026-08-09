@@ -359,7 +359,7 @@ refuses that pair — so its script is exec'd as the calling user, and a script 
 helper would arrive `root:root` at the owner-only mode staging asks for, denying the exec it was
 staged for. `run_provision_item` therefore opens local ops for the direct branch, passing
 `privilege: None`, which is where the staging identity sat before the helper existed. Pinned by
-`direct_execution_does_not_stage_through_the_runs_shared_ops` in `tests/pipeline_test.rs`.
+`direct_execution_does_not_stage_through_the_runs_shared_ops` in `src/pipeline.rs`.
 
 Privilege cannot be attached to an arbitrary command any more. `CommandSpec`'s fields are
 private, and the only constructor that sets `privilege` for a fixed program takes the closed
