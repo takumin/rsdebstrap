@@ -9,7 +9,9 @@
 mod pipe;
 mod real;
 
+use std::os::fd::OwnedFd;
 use std::process::ExitStatus;
+use std::sync::Arc;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -93,6 +95,9 @@ pub struct CommandSpec {
     cwd: Option<Utf8PathBuf>,
     env: Vec<(String, String)>,
     privilege: Option<PrivilegeMethod>,
+    // `Arc` only because `CommandSpec` is `Clone`; a descriptor has no meaningful copy,
+    // and every clone names the same inode, which is the point of holding one.
+    program: Option<Arc<OwnedFd>>,
 }
 
 impl CommandSpec {
@@ -121,6 +126,15 @@ impl CommandSpec {
         self.privilege
     }
 
+    /// The descriptor the program was opened and checked on, if this spec names an inode
+    /// rather than a path.
+    ///
+    /// An executor that has one must exec *it*; resolving [`command`](Self::command)
+    /// instead would hand the kernel the name the check could not bind.
+    pub fn program(&self) -> Option<&OwnedFd> {
+        self.program.as_deref()
+    }
+
     /// Creates a new CommandSpec with command and args
     #[must_use]
     pub fn new(command: impl Into<String>, args: Vec<String>) -> Self {
@@ -130,6 +144,7 @@ impl CommandSpec {
             cwd: None,
             env: Vec::new(),
             privilege: None,
+            program: None,
         }
     }
 
@@ -149,6 +164,7 @@ impl CommandSpec {
             cwd: None,
             env: Vec::new(),
             privilege,
+            program: None,
         }
     }
 
@@ -177,6 +193,34 @@ impl CommandSpec {
             cwd: None,
             env: Vec::new(),
             privilege,
+            program: None,
+        })
+    }
+
+    /// Creates a spec for a task's program that has already been opened and checked.
+    ///
+    /// `command` still carries the path, because that is what the program should see as
+    /// its own name and what an error should quote, but the executor execs `program`. This
+    /// is the only constructor that binds a spec to an inode; it exists because the
+    /// unisolated path is the one where the kernel resolves the program on the host, where
+    /// a name can be repointed between the check and the exec.
+    ///
+    /// There is no privilege parameter because there is no privileged form of this:
+    /// `sudo` and `doas` close the descriptors they inherit, so one cannot reach the
+    /// program through them. Nothing is lost by that — escalating a task that runs
+    /// without isolation is rejected when the task is resolved.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Isolation` if `argv` is empty.
+    pub(crate) fn for_verified_program(
+        token: &TaskCommandToken,
+        program: OwnedFd,
+        argv: &[String],
+    ) -> Result<Self, RsdebstrapError> {
+        Ok(Self {
+            program: Some(Arc::new(program)),
+            ..Self::for_task_command(token, argv, None)?
         })
     }
 

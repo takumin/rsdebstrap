@@ -3,6 +3,8 @@
 //! This module provides [`RealCommandExecutor`], which executes commands
 //! using `std::process::Command` with real-time output streaming.
 
+use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::thread::JoinHandle;
@@ -138,7 +140,16 @@ impl CommandExecutor for RealCommandExecutor {
             })
         };
 
-        let (resolved_program, resolved_args) = if let Some(method) = spec.privilege().as_ref() {
+        // A spec that carries a descriptor names the inode its check landed on. `/proc/self/fd/N`
+        // is how that is spelled to `execve`, and it deliberately skips `which`, whose job is to
+        // turn a name into a path -- exactly the resolution this is here to avoid. The descriptor
+        // is not close-on-exec: for a `#!` program the kernel hands this same name to the
+        // interpreter, which has to be able to open it after the exec that closes such
+        // descriptors.
+        let (resolved_program, resolved_args) = if let Some(program) = spec.program() {
+            let named = std::path::PathBuf::from(format!("/proc/self/fd/{}", program.as_raw_fd()));
+            (named, spec.args().to_vec())
+        } else if let Some(method) = spec.privilege().as_ref() {
             let privilege_cmd =
                 find_command(method.command_name(), "privilege escalation command")?;
             let actual_cmd = find_command(spec.command(), "command")?;
@@ -162,6 +173,12 @@ impl CommandExecutor for RealCommandExecutor {
 
         let mut command = Command::new(&resolved_program);
         command.args(&resolved_args);
+
+        // What a program reads as its own name is the path it was asked for, not the
+        // spelling of the descriptor it was reached through.
+        if spec.program().is_some() {
+            command.arg0(spec.command());
+        }
 
         if let Some(cwd) = spec.cwd() {
             command.current_dir(cwd.as_std_path());

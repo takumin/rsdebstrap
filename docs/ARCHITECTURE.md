@@ -201,6 +201,17 @@ patterns run throughout `src/isolation/`:
   bits off at construction: `take` reads a full `st_mode`, and the value it records is fed
   straight back to `write_file` by `put_back`.
 
+  **Direct execution names an inode too.** With `isolation: false` the program a task
+  declares is resolved by the kernel on the host, so the walk that refuses a symlinked
+  component now ends by returning the descriptor it landed on, and `CommandSpec` carries it.
+  The executor execs `/proc/self/fd/N` and sets argv[0] back to the path, which is the only
+  way here to exec an inode rather than a name. Two things fall out of that and are pinned
+  by tests: the descriptor must not be close-on-exec, because a `#!` program's interpreter
+  opens that same name after the exec; and a `#!` program's `$0` is the descriptor's name,
+  because the kernel builds the interpreter's argv itself. There is no privileged form —
+  `sudo` and `doas` close the descriptors they inherit — which costs nothing, since a task
+  that escalates without isolation is rejected when it is resolved.
+
   The host side of that copy stays in the parent and goes through `read_host_file`, which
   opens with `O_NOFOLLOW`, `fstat`s the *opened* descriptor, and reads from it. The earlier
   `validate_host_file_exists` resolves a path string, so it can only report what was true

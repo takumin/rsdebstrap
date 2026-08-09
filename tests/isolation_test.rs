@@ -393,6 +393,93 @@ fn direct_context_refuses_a_program_symlinked_out_of_the_rootfs() {
     assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
 }
 
+// The two tests here that really exec. Handing the executor the descriptor the check
+// landed on means the program is named as `/proc/self/fd/N`, and a `#!` program is what
+// makes that name's lifetime observable: the kernel passes the same name to the
+// interpreter, which opens it *after* the exec that closes close-on-exec descriptors.
+//
+// It also shows the one thing a program can observe about how it was reached. For a `#!`
+// program the kernel builds the interpreter's argv itself -- the script's `$0` is the name
+// the kernel was given, not the one the caller asked for. Pinned here rather than left as
+// folklore: a task whose command is a script that reads `$0` sees the descriptor's name.
+#[test]
+fn direct_context_execs_a_shebang_program_through_the_checked_descriptor() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    let reported = rootfs.join("tmp/argv0");
+    let program = rootfs.join("bin/prog");
+    std::fs::write(&program, format!("#!/bin/sh\nprintf '%s' \"$0\" > {reported}\n")).unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let executor: Arc<dyn CommandExecutor> =
+        Arc::new(rsdebstrap::executor::RealCommandExecutor::new(false));
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let result = context.execute(&["/bin/prog".to_string()], None).unwrap();
+
+    assert!(
+        result
+            .status
+            .expect("a live run reports a status")
+            .success(),
+        "the interpreter could not open the descriptor's name: {result:?}"
+    );
+    assert!(
+        std::fs::read_to_string(&reported)
+            .unwrap()
+            .starts_with("/proc/self/fd/"),
+        "a `#!` program's $0 is the name the kernel was handed"
+    );
+}
+
+// An ordinary program does keep the argv[0] the caller asked for: the spec carries the
+// path alongside the descriptor for exactly this, so how the program was opened stays an
+// implementation detail. `sh -c` with no command_name operand reports its own argv[0].
+#[test]
+fn direct_context_gives_an_executed_program_the_argv0_it_was_asked_for() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    let reported = rootfs.join("tmp/argv0");
+    let program = rootfs.join("bin/mysh");
+    std::fs::copy(std::fs::canonicalize("/bin/sh").unwrap(), &program).unwrap();
+
+    let executor: Arc<dyn CommandExecutor> =
+        Arc::new(rsdebstrap::executor::RealCommandExecutor::new(false));
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let argv = [
+        "/bin/mysh".to_string(),
+        "-c".to_string(),
+        format!("printf '%s' \"$0\" > {reported}"),
+    ];
+
+    // A sibling test forking while this copy's write descriptor is still open inherits it,
+    // and the kernel refuses to exec a file anyone holds open for writing. Nothing here can
+    // prevent that -- the descriptor belongs to `fs::copy` and the fork is another thread's
+    // -- so the exec waits the window out rather than failing the run.
+    let result = loop {
+        match context.execute(&argv, None) {
+            Ok(result) => break result,
+            Err(e) if format!("{e:#}").contains("Text file busy") => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => panic!("{e:#}"),
+        }
+    };
+
+    assert!(
+        result
+            .status
+            .expect("a live run reports a status")
+            .success()
+    );
+    assert_eq!(std::fs::read_to_string(&reported).unwrap(), program.to_string());
+}
+
 // A context carrying its own flag could disagree with the executor and silently do real
 // work.
 #[test]

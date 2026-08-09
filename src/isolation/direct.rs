@@ -10,15 +10,18 @@ use crate::privilege::PrivilegeMethod;
 use crate::rootfs::{RelPath, RootfsOps};
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use rustix::fs::{self as rfs, AtFlags, CWD, FileType, Mode, OFlags};
+use rustix::fs::{self as rfs, CWD, FileType, Mode, OFlags};
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
-/// Walks `program` inside `rootfs` with `O_NOFOLLOW`, refusing a symlink at any component.
+/// Walks `program` inside `rootfs` with `O_NOFOLLOW`, refusing a symlink at any component,
+/// and returns the descriptor it ends on.
 ///
-/// The caller hands the joined path to the executor, and the kernel resolves it when it
-/// execs — following any symlink in it, including one that leaves the rootfs. This is what
-/// makes that an error instead.
-fn verify_program_stays_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<()> {
+/// The descriptor is the point. The kernel resolves a program path when it execs, so a
+/// check that ends with a path lets the name be repointed in between — including at a
+/// component that leaves the rootfs. The executor names this descriptor instead, and what
+/// runs is the inode the walk landed on.
+fn open_program_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<OwnedFd> {
     let path = RelPath::parse(program)?;
     let mut dir = rfs::openat(
         CWD,
@@ -45,15 +48,32 @@ fn verify_program_stays_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<()
             symlink_error(e, &format!("{}/{}", rootfs, so_far))
         })?;
     }
-    // `statat` rather than an `openat`: `O_NOFOLLOW | O_PATH` opens the *link itself* and
-    // succeeds, and a plain `O_NOFOLLOW` open needs read permission the program may not
-    // grant. What matters is only whether the final component is a symlink.
-    let stat = rfs::statat(&dir, last.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+    // `O_PATH` because an executable need not be readable, and this descriptor is only
+    // ever named, never read. It also opens a symlink as the *link itself* rather than
+    // failing, so whether the final component is one is decided by `fstat` below rather
+    // than by the open.
+    let program = rfs::openat(&dir, last.as_str(), OFlags::PATH | OFlags::NOFOLLOW, Mode::empty())
         .map_err(|e| symlink_error(e, &format!("{}{}", rootfs, path)))?;
+    let stat =
+        rfs::fstat(&program).map_err(|e| symlink_error(e, &format!("{}{}", rootfs, path)))?;
     if FileType::from_raw_mode(stat.st_mode) == FileType::Symlink {
         return Err(symlink_error(rustix::io::Errno::LOOP, &format!("{}{}", rootfs, path)));
     }
-    Ok(())
+
+    // The executor execs this descriptor by naming it `/proc/self/fd/N`, which is the only
+    // way to exec an inode rather than a path here. Said now, against a path the caller
+    // wrote, rather than as an `ENOENT` out of `spawn` naming a path they did not.
+    if !std::path::Path::new("/proc/self/fd").is_dir() {
+        return Err(crate::error::RsdebstrapError::Isolation(
+            "cannot execute a task without isolation: /proc is not mounted, and the \
+            verified program can only be executed by naming its descriptor under \
+            /proc/self/fd"
+                .to_string(),
+        )
+        .into());
+    }
+
+    Ok(program)
 }
 
 fn symlink_error(e: rustix::io::Errno, what: &str) -> anyhow::Error {
@@ -172,15 +192,26 @@ impl IsolationContext for DirectContext {
             })
             .collect();
 
-        // The translation above is a string join and the kernel resolves symlinks at exec,
-        // so verify the program — and only the program, the one argument the kernel
-        // resolves on our behalf — component by component with `O_NOFOLLOW`.
-        if !self.executor.dry_run() && Utf8Path::new(&command[0]).is_absolute() {
-            verify_program_stays_in_rootfs(&self.rootfs, &command[0])?;
-        }
-
-        let spec =
-            CommandSpec::for_task_command(&super::TaskCommandToken::new(), &translated, privilege)?;
+        // The translation above is a string join, and the kernel resolves the program —
+        // the one argument it resolves on our behalf — when it execs. So the program is
+        // walked component by component with `O_NOFOLLOW` and handed to the executor as
+        // the descriptor that walk ended on, which the spec then owns for as long as the
+        // execution takes. A relative program is left to `PATH` resolution, as before:
+        // it names nothing inside the rootfs to check.
+        let token = super::TaskCommandToken::new();
+        let spec = if self.executor.dry_run() || !Utf8Path::new(&command[0]).is_absolute() {
+            CommandSpec::for_task_command(&token, &translated, privilege)?
+        } else {
+            let program = open_program_in_rootfs(&self.rootfs, &command[0])?;
+            match privilege {
+                // `sudo` and `doas` close the descriptors they inherit, so the checked one
+                // cannot reach the program through them and the path is all that is left.
+                // A task that escalates without isolation is rejected when it is resolved,
+                // so what stands here is the walk above, same as before descriptors.
+                Some(_) => CommandSpec::for_task_command(&token, &translated, privilege)?,
+                None => CommandSpec::for_verified_program(&token, program, &translated)?,
+            }
+        };
         self.executor.execute(&spec)
     }
 
