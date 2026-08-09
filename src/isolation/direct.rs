@@ -10,7 +10,7 @@ use crate::privilege::PrivilegeMethod;
 use crate::rootfs::{RelPath, RootfsOps};
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use rustix::fs::{self as rfs, CWD, FileType, Mode, OFlags};
+use rustix::fs::{self as rfs, FileType, Mode, OFlags};
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
@@ -23,13 +23,10 @@ use std::sync::Arc;
 /// runs is the inode the walk landed on.
 fn open_program_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<OwnedFd> {
     let path = RelPath::parse(program)?;
-    let mut dir = rfs::openat(
-        CWD,
-        rootfs.as_str(),
-        OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|e| symlink_error(e, rootfs.as_str()))?;
+    // The anchor is walked the same way the rest of the path is, and by the same code: a
+    // whole-path `openat` would follow an intermediate symlink and start this walk outside
+    // the rootfs, which is the one thing every component below is checked for.
+    let mut dir = crate::rootfs::open_anchor(rootfs)?;
 
     let components = path.components();
     let (last, parents) = components.split_last().expect("RelPath is never empty");

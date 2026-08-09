@@ -310,52 +310,8 @@ impl LocalRootfsOps {
     /// Returns `RsdebstrapError::Isolation` if any component is a symlink or not a
     /// directory.
     pub fn open(rootfs: &Utf8Path) -> Result<Self> {
-        let mut current: Option<OwnedFd> = None;
-        let mut walked = String::new();
-        for component in rootfs.components() {
-            let (name, flags) = match component {
-                // The one component that cannot be a symlink, and the one that has to be
-                // opened against `CWD` rather than against a descriptor.
-                Utf8Component::RootDir => ("/", OFlags::empty()),
-                Utf8Component::CurDir => continue,
-                // Safe to walk without following anything: every descriptor in the chain was
-                // opened `O_NOFOLLOW`, so `..` can only lead to the real parent of a real
-                // directory. A configured path does not reach here with one -- `open`
-                // resolves those away -- but the helper's own argv is checked, not trusted.
-                Utf8Component::ParentDir => ("..", OFlags::NOFOLLOW),
-                Utf8Component::Normal(name) => (name, OFlags::NOFOLLOW),
-                Utf8Component::Prefix(_) => {
-                    return Err(RsdebstrapError::Isolation(format!(
-                        "refusing to anchor to {}: it names a filesystem prefix",
-                        rootfs
-                    )));
-                }
-            };
-            if !walked.ends_with('/') {
-                walked.push('/');
-            }
-            if name != "/" {
-                walked.push_str(name);
-            }
-            let dir = current.as_ref().map_or(CWD, |fd| fd.as_fd());
-            let next = rfs::openat(
-                dir,
-                name,
-                flags | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
-                Mode::empty(),
-            )
-            .map_err(|e| open_error(e, &walked))?;
-            current = Some(next);
-        }
-
-        let root = current.ok_or_else(|| {
-            RsdebstrapError::Isolation(format!(
-                "refusing to anchor to {}: it names nothing",
-                rootfs
-            ))
-        })?;
         Ok(Self {
-            root,
+            root: open_anchor(rootfs)?,
             display_root: rootfs.to_string(),
         })
     }
@@ -630,6 +586,61 @@ impl ParentDir<'_> {
     fn fd(&self) -> BorrowedFd<'_> {
         self.owned.as_ref().map_or(self.root, AsFd::as_fd)
     }
+}
+
+/// Opens `rootfs` as a directory descriptor, following nothing on the way.
+///
+/// A single `openat` of a whole path applies `O_NOFOLLOW` to the final component only, so an
+/// intermediate directory swapped for a symlink is followed. This is the open the privileged
+/// helper performs as root on a path it was handed, and following one there anchors root
+/// wherever the link points -- inside the live system at a depth the refused-anchor list,
+/// which names the top of each hierarchy, does not reach.
+///
+/// Shared with the direct-execution backend, which walks a program inside the rootfs and
+/// would otherwise start that walk from a redirected anchor.
+///
+/// Symlinks the invoking user legitimately has on the way are resolved by
+/// [`resolve_prefix`], unprivileged, before any of this runs.
+pub(crate) fn open_anchor(rootfs: &Utf8Path) -> Result<OwnedFd> {
+    let mut current: Option<OwnedFd> = None;
+    let mut walked = String::new();
+    for component in rootfs.components() {
+        let (name, flags) = match component {
+            // The one component that cannot be a symlink, and the one that has to be opened
+            // against `CWD` rather than against a descriptor.
+            Utf8Component::RootDir => ("/", OFlags::empty()),
+            Utf8Component::CurDir => continue,
+            // Walked rather than refused: every descriptor in the chain was opened
+            // `O_NOFOLLOW`, so `..` can only lead to the real parent of a real directory.
+            Utf8Component::ParentDir => ("..", OFlags::NOFOLLOW),
+            Utf8Component::Normal(name) => (name, OFlags::NOFOLLOW),
+            Utf8Component::Prefix(_) => {
+                return Err(RsdebstrapError::Isolation(format!(
+                    "refusing to anchor to {}: it names a filesystem prefix",
+                    rootfs
+                )));
+            }
+        };
+        if !walked.ends_with('/') {
+            walked.push('/');
+        }
+        if name != "/" {
+            walked.push_str(name);
+        }
+        let dir = current.as_ref().map_or(CWD, |fd| fd.as_fd());
+        let next = rfs::openat(
+            dir,
+            name,
+            flags | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| open_error(e, &walked))?;
+        current = Some(next);
+    }
+
+    current.ok_or_else(|| {
+        RsdebstrapError::Isolation(format!("refusing to anchor to {}: it names nothing", rootfs))
+    })
 }
 
 fn open_error(e: rustix::io::Errno, what: &str) -> RsdebstrapError {
@@ -1006,7 +1017,7 @@ pub fn open(
     // is refused, as it always has been: resolving it here would turn that refusal into a
     // redirection, and the helper's refused-anchor list names the top of the live system,
     // not every directory under it.
-    let resolved = resolve_prefix(rootfs)?;
+    let resolved = resolve_prefix(rootfs);
 
     match privilege {
         Some(method) => Ok(Arc::new(helper::PrivilegedRootfsOps::spawn(&resolved, method)?)),
@@ -1016,11 +1027,17 @@ pub fn open(
 
 /// Resolves everything in `rootfs` except its final component.
 ///
-/// A path with no final component to hold back (`/`, or one ending in `..`) is handed on
-/// unchanged: it names no rootfs, and the anchor walk is what says so.
-fn resolve_prefix(rootfs: &Utf8Path) -> Result<Utf8PathBuf> {
+/// Returns the path unchanged when there is nothing to resolve or the prefix cannot be
+/// resolved -- a rootfs that has not been bootstrapped yet is the ordinary case of the
+/// latter, and a dry run never creates one. Failing here would turn "the directory is not
+/// there" into an error raised before the phase that would have said so.
+///
+/// Giving up is safe because it is not what enforces anything: [`open_anchor`] refuses a
+/// symlink either way. All this decides is whether a link the user legitimately has on the
+/// way is honoured or refused, and an unresolvable prefix is refused.
+pub(crate) fn resolve_prefix(rootfs: &Utf8Path) -> Utf8PathBuf {
     let (Some(parent), Some(name)) = (rootfs.parent(), rootfs.file_name()) else {
-        return Ok(rootfs.to_owned());
+        return rootfs.to_owned();
     };
     // `Utf8Path::parent` of a bare `rootfs` is the empty path, which names nothing.
     let parent = if parent.as_str().is_empty() {
@@ -1028,10 +1045,13 @@ fn resolve_prefix(rootfs: &Utf8Path) -> Result<Utf8PathBuf> {
     } else {
         parent
     };
-    let resolved = parent
-        .canonicalize_utf8()
-        .map_err(|e| RsdebstrapError::io(format!("failed to resolve rootfs {}", rootfs), e))?;
-    Ok(resolved.join(name))
+    match parent.canonicalize_utf8() {
+        Ok(resolved) => resolved.join(name),
+        Err(e) => {
+            tracing::debug!("leaving rootfs {} unresolved: {}", rootfs, e);
+            rootfs.to_owned()
+        }
+    }
 }
 
 #[cfg(test)]

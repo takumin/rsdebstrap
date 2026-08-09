@@ -108,6 +108,12 @@ fn run_pipeline_phase_with(
         .into());
     };
 
+    // Resolved once, here, and nowhere with privilege. Every consumer below anchors to this
+    // path -- the rootfs ops, the mounts, the program walk direct execution does -- and each
+    // of those opens it a component at a time without following anything, so a symlink the
+    // user legitimately has on the way has to be resolved before them or it is refused.
+    let rootfs = rootfs::resolve_prefix(&rootfs);
+
     let mount_entries = profile
         .prepare
         .mount

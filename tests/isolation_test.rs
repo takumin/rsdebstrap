@@ -499,6 +499,37 @@ fn context_dry_run_comes_from_the_executor() {
     assert!(dry_ctx.dry_run());
 }
 
+// The program walk starts at the rootfs, so the rootfs itself has to be reached without
+// following anything. A single `openat` of the whole path applies `O_NOFOLLOW` to the final
+// component only, which left the walk free to begin outside the rootfs and exec a host
+// program from there.
+#[test]
+fn direct_context_refuses_a_rootfs_reached_through_a_symlinked_component() {
+    let (_tmp, real) = seeded_direct_rootfs(&["/bin/sh"]);
+    let outer = tempfile::tempdir().unwrap();
+    let outer = camino::Utf8PathBuf::from_path_buf(outer.path().to_path_buf()).unwrap();
+    // `<outer>/link` -> the real rootfs's parent, so `<outer>/link/<name>` names the rootfs
+    // through a symlinked component without the last component being one.
+    let parent = real.parent().unwrap();
+    std::os::unix::fs::symlink(parent, outer.join("link")).unwrap();
+    let through_link = outer.join("link").join(real.file_name().unwrap());
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&through_link, executor, mock_ops(&through_link))
+        .unwrap();
+
+    let err = context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("a rootfs reached through a symlink must be refused");
+
+    assert!(format!("{err:#}").contains("symlink"), "unexpected error: {err:#}");
+    assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
 // The refusal has to name the component that failed, and it walks more than one deep for a
 // program like `/usr/bin/env`. Interpolating the current component alone onto the rootfs
 // reported `<rootfs>/bin` for a symlinked `<rootfs>/usr/bin` — a path that does not exist.
