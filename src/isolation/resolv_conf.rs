@@ -3,6 +3,7 @@
 //! [`RootfsResolvConf`] is an RAII guard that gives provisioning a working
 //! `/etc/resolv.conf` and puts back whatever was there when it is done.
 
+use std::io::Read;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -13,6 +14,14 @@ use crate::config::ResolvConfConfig;
 use crate::error::RsdebstrapError;
 use crate::pipeline::Provisioned;
 use crate::rootfs::{FileMode, RelPath, RootfsOps, TakenEntry};
+
+/// Refuses to copy a host resolver config larger than this.
+///
+/// A resolv.conf is a handful of lines; anything near this is not the file the profile
+/// meant. The bound matters because the bytes are buffered rather than streamed -- with the
+/// privileged helper serving the run they cross the boundary base64 inside JSON -- so
+/// "however large the host file happens to be" is not an answer this can give.
+const MAX_HOST_RESOLV_CONF_SIZE: u64 = 1 << 20;
 
 /// Generates resolv.conf content from explicit configuration.
 pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
@@ -127,11 +136,9 @@ impl RootfsResolvConf {
         // the privileged helper, and there is no reason for root to be the one resolving a
         // host path. What crosses the boundary is bytes.
         let installed = if config.copy {
-            match std::fs::read(&self.host_resolv_conf) {
+            match self.read_host_resolv_conf() {
                 Ok(content) => self.ops.write_file(&path, &content, FileMode::new(0o644)),
-                Err(e) => {
-                    Err(RsdebstrapError::io(format!("failed to read {}", self.host_resolv_conf), e))
-                }
+                Err(e) => Err(e),
             }
         } else {
             self.ops.write_file(
@@ -201,6 +208,41 @@ impl RootfsResolvConf {
         info!("restored resolv.conf in {}", self.rootfs);
         self.torn_down = true;
         Ok(())
+    }
+}
+
+impl RootfsResolvConf {
+    /// Reads the host's resolver config for `copy` mode.
+    ///
+    /// Symlinks are followed deliberately, unlike every other host read here: on a
+    /// systemd host `/etc/resolv.conf` *is* a symlink to the stub, and the bytes behind it
+    /// are the point.
+    fn read_host_resolv_conf(&self) -> std::result::Result<Vec<u8>, RsdebstrapError> {
+        let io_error = |e: std::io::Error| {
+            RsdebstrapError::io(format!("failed to read {}", self.host_resolv_conf), e)
+        };
+        let file = std::fs::File::open(&self.host_resolv_conf).map_err(io_error)?;
+        let size = file.metadata().map_err(io_error)?.len();
+        if size > MAX_HOST_RESOLV_CONF_SIZE {
+            return Err(RsdebstrapError::Validation(format!(
+                "{} is {} bytes, refusing to copy a resolver config over {} bytes",
+                self.host_resolv_conf, size, MAX_HOST_RESOLV_CONF_SIZE
+            )));
+        }
+
+        // Bounded on top of the size just read, because the host file can be rewritten --
+        // by `resolvconf`, or by a DHCP client -- while this is reading it.
+        let mut content = Vec::new();
+        file.take(MAX_HOST_RESOLV_CONF_SIZE + 1)
+            .read_to_end(&mut content)
+            .map_err(io_error)?;
+        if content.len() as u64 > MAX_HOST_RESOLV_CONF_SIZE {
+            return Err(RsdebstrapError::Validation(format!(
+                "{} grew past {} bytes while it was being read, refusing to copy it",
+                self.host_resolv_conf, MAX_HOST_RESOLV_CONF_SIZE
+            )));
+        }
+        Ok(content)
     }
 }
 
