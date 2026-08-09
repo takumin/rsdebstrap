@@ -55,12 +55,18 @@ a path inside the rootfs — directly on the host, so escalating it hands root t
 half-built rootfs contains. Each setting is reasonable alone, so neither one can reject it;
 the check belongs where both are known. It fires during `load_profile`, not mid-run.
 
-`Profile::validate` returns a `Validated` token and `Profile::pipeline` requires one. The
-semantic checks — a mount target that must be a reachable directory, a declared script that
-must be a regular file, a backend output that must be a directory when there are pipeline
-tasks — cannot be stated in the config types, so "this profile was validated" is carried as a
-value rather than as a convention `run_apply` happens to follow. (`Pipeline::new` remains
-public as the unvalidated low-level constructor, and says so.)
+`Profile::validate` returns a `ValidatedProfile`, and that is the only thing that can build
+a pipeline. The semantic checks — a mount target that must be a reachable directory, a
+declared script that must be a regular file, a backend output that must be a directory when
+there are pipeline tasks — cannot be stated in the config types, so "this profile was
+validated" is carried as a value rather than as a convention `run_apply` happens to follow.
+(`Pipeline::new` remains public as the unvalidated low-level constructor, and says so.)
+
+It borrows the profile it was produced from rather than standing for it. A bare token says
+only that *some* profile passed, and can be presented for a second one whose mount targets,
+script paths and backend output were never checked — of those, only the backend output is
+checked again downstream. The borrow also means no `&mut` can be taken while the evidence is
+alive, so the profile cannot be edited after the checks ran.
 
 `mount` and `resolv_conf` used to live under `IsolationConfig`; they were moved out to
 the `prepare` phase. `IsolationConfig` is now just the backend selector: an internally

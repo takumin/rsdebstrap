@@ -457,18 +457,30 @@ pub struct Profile {
     pub assemble: AssembleConfig,
 }
 
-/// Evidence that [`Profile::validate`] has run and passed.
+/// A profile [`Profile::validate`] has run over, and the only route to a [`Pipeline`]
+/// built from it.
 ///
-/// [`Profile::pipeline`] requires one, and only `validate` produces one. Several checks it
-/// performs are not expressible in the config types — that mount targets exist as
-/// directories the run may create, that a declared script is a regular file, that the
-/// bootstrap backend's output is a directory when there are pipeline tasks — so "validated"
-/// has to be carried as a value rather than assumed.
+/// Several checks `validate` performs are not expressible in the config types — that mount
+/// targets exist as directories the run may create, that a declared script is a regular
+/// file, that the bootstrap backend's output is a directory when there are pipeline tasks —
+/// so "validated" has to be carried as a value rather than assumed.
+///
+/// It holds the profile rather than standing for it. A token that only meant "some profile
+/// passed" could be handed to a different one, whose checks would then never run; borrowing
+/// also keeps the profile from being edited out from under the evidence, since no `&mut`
+/// can be taken while this is alive.
 #[derive(Debug)]
-pub struct Validated(());
+pub struct ValidatedProfile<'a> {
+    profile: &'a Profile,
+}
 
-impl Profile {
-    /// Creates a `Pipeline` from this profile's task phases, resolving each provision
+impl<'a> ValidatedProfile<'a> {
+    /// The profile this evidence was produced from.
+    pub fn profile(&self) -> &'a Profile {
+        self.profile
+    }
+
+    /// Creates a `Pipeline` from the profile's task phases, resolving each provision
     /// task's settings against `defaults`.
     ///
     /// # Errors
@@ -476,10 +488,12 @@ impl Profile {
     /// Returns `RsdebstrapError::Validation` if a task declares `privilege: true` but
     /// the profile configures no `defaults.privilege.method`, or if it resolves to
     /// escalated execution without isolation.
-    pub fn pipeline(&self, _validated: &Validated) -> Result<Pipeline<'_>, RsdebstrapError> {
-        self.build_pipeline()
+    pub fn pipeline(&self) -> Result<Pipeline<'a>, RsdebstrapError> {
+        self.profile.build_pipeline()
     }
+}
 
+impl Profile {
     fn build_pipeline(&self) -> Result<Pipeline<'_>, RsdebstrapError> {
         Pipeline::new(
             &self.prepare,
@@ -491,7 +505,7 @@ impl Profile {
     }
 
     /// Validate configuration semantics beyond basic deserialization.
-    pub fn validate(&self) -> Result<Validated, RsdebstrapError> {
+    pub fn validate(&self) -> Result<ValidatedProfile<'_>, RsdebstrapError> {
         if self.dir.exists() && !self.dir.is_dir() {
             return Err(RsdebstrapError::Validation(format!(
                 "dir must be a directory: {}",
@@ -519,7 +533,7 @@ impl Profile {
             }
         }
 
-        Ok(Validated(()))
+        Ok(ValidatedProfile { profile: self })
     }
 
     /// Validates mount-related configuration.

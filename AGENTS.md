@@ -84,11 +84,14 @@ rejects it at load time.
 
 ## Evidence types
 
-Several invariants are carried as values rather than as an order to remember. `Validated`
-(from `Profile::validate`, required by `Profile::pipeline`); `Provisioned` → `Restored` →
-`Unmounted` (the phase-ordering chain); `TaskCommandToken` (only `isolation` can build one).
-When you find yourself writing "callers must call X first", check whether X can return
-something instead.
+Several invariants are carried as values rather than as an order to remember.
+`ValidatedProfile` (from `Profile::validate`, the only route to a `Pipeline`);
+`Provisioned` → `Restored` → `Unmounted` (the phase-ordering chain); `TaskCommandToken`
+(only `isolation` can build one). When you find yourself writing "callers must call X
+first", check whether X can return something instead — and have it return evidence about
+the *value*, not a bare token: `ValidatedProfile` borrows the profile it validated, so
+evidence for one profile cannot be presented for another, and the profile cannot be edited
+while the evidence is alive.
 
 Settings follow the same rule from the other direction: `Privilege` and `TaskIsolation`
 describe only what the profile declared, and resolution produces a separate value
