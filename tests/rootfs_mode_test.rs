@@ -13,7 +13,7 @@
 use std::os::unix::fs::PermissionsExt;
 
 use camino::Utf8PathBuf;
-use rsdebstrap::rootfs::{FileMode, LocalRootfsOps, RelPath, RootfsOps, TakenEntry};
+use rsdebstrap::rootfs::{FileMode, LocalRootfsOps, Owner, RelPath, RootfsOps, TakenEntry};
 use rustix::fs::Mode;
 
 // Strips group and other bits — the bits every mode asserted below wants to keep.
@@ -29,6 +29,15 @@ fn rootfs() -> (tempfile::TempDir, Utf8PathBuf) {
 
 fn mode_of(path: &camino::Utf8Path) -> u32 {
     std::fs::metadata(path).unwrap().permissions().mode() & 0o7777
+}
+
+fn owner_of(path: &camino::Utf8Path) -> Owner {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(path).unwrap();
+    Owner {
+        uid: meta.uid(),
+        gid: meta.gid(),
+    }
 }
 
 #[test]
@@ -61,12 +70,14 @@ fn put_back_restores_the_mode_the_entry_carried() {
     std::fs::set_permissions(root.join("etc/resolv.conf"), std::fs::Permissions::from_mode(0o644))
         .unwrap();
 
+    let owner = owner_of(&root.join("etc/resolv.conf"));
     let taken = ops.take(&path).unwrap().unwrap();
     assert_eq!(
         taken,
         TakenEntry::File {
             content: b"nameserver 9.9.9.9\n".to_vec(),
             mode: FileMode::new(0o644),
+            owner,
         }
     );
 
@@ -88,12 +99,14 @@ fn put_back_restores_setgid() {
 
     ops.write_file(&path, b"payload", FileMode::new(0o2755))
         .unwrap();
+    let owner = owner_of(&root.join("etc/setgid-file"));
     let taken = ops.take(&path).unwrap().unwrap();
     assert_eq!(
         taken,
         TakenEntry::File {
             content: b"payload".to_vec(),
             mode: FileMode::new(0o2755),
+            owner,
         }
     );
 

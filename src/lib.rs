@@ -463,6 +463,21 @@ mod tests {
             self.inner.write_symlink(path, target)
         }
 
+        // Through this mock's own writers, so a restore is one of the writes the
+        // `Failure` cases count.
+        fn put_back(
+            &self,
+            path: &rootfs::RelPath,
+            entry: &rootfs::TakenEntry,
+        ) -> std::result::Result<(), RsdebstrapError> {
+            match entry {
+                rootfs::TakenEntry::File { content, mode, .. } => {
+                    self.write_file(path, content, *mode)
+                }
+                rootfs::TakenEntry::Symlink { target, .. } => self.write_symlink(path, target),
+            }
+        }
+
         fn remove(&self, path: &rootfs::RelPath) -> std::result::Result<(), RsdebstrapError> {
             if self.fail == Failure::Remove {
                 return Err(refused("remove"));
@@ -530,6 +545,15 @@ mod tests {
                 .unwrap()
                 .push("write_symlink".to_string());
             self.inner.write_symlink(path, target)
+        }
+
+        fn put_back(
+            &self,
+            path: &rootfs::RelPath,
+            entry: &rootfs::TakenEntry,
+        ) -> std::result::Result<(), RsdebstrapError> {
+            self.timeline.lock().unwrap().push("put_back".to_string());
+            self.inner.put_back(path, entry)
         }
 
         fn remove(&self, path: &rootfs::RelPath) -> std::result::Result<(), RsdebstrapError> {

@@ -18,7 +18,7 @@
 use camino::Utf8PathBuf;
 use rsdebstrap::privilege::PrivilegeMethod;
 use rsdebstrap::rootfs::helper::PrivilegedRootfsOps;
-use rsdebstrap::rootfs::{FileMode, LocalRootfsOps, RelPath, RootfsOps, TakenEntry};
+use rsdebstrap::rootfs::{FileMode, LocalRootfsOps, Owner, RelPath, RootfsOps, TakenEntry};
 
 const ORIGINAL: &str = "# original, root-owned\n";
 
@@ -78,6 +78,26 @@ impl RootOwnedRootfs {
             .expect("failed to read back through sudo");
         assert!(out.status.success(), "reading back failed: {out:?}");
         String::from_utf8(out.stdout).unwrap()
+    }
+
+    fn chown_resolv_conf(&self, spec: &str) {
+        sudo(&["chown", spec, self.path.join("etc/resolv.conf").as_str()]);
+    }
+
+    // Numeric `%u:%g` rather than the name form, which needs the ids to resolve to a
+    // passwd entry and is localized when they do not.
+    fn resolv_conf_owner(&self) -> String {
+        let out = std::process::Command::new("sudo")
+            .args([
+                "stat",
+                "-c",
+                "%u:%g",
+                self.path.join("etc/resolv.conf").as_str(),
+            ])
+            .output()
+            .expect("failed to stat through sudo");
+        assert!(out.status.success(), "stat failed: {out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
     }
 
     // `test -L` rather than `stat -c %F`, whose output is localized.
@@ -143,6 +163,7 @@ fn the_helper_takes_and_restores_a_root_owned_entry() {
         TakenEntry::File {
             content: ORIGINAL.as_bytes().to_vec(),
             mode: FileMode::new(0o600),
+            owner: Owner { uid: 0, gid: 0 },
         }
     );
 
@@ -151,6 +172,49 @@ fn the_helper_takes_and_restores_a_root_owned_entry() {
     assert_eq!(fixture.read_resolv_conf(), "nameserver 1.1.1.1\n");
 
     ops.put_back(&path, &taken).unwrap();
+    assert_eq!(fixture.read_resolv_conf(), ORIGINAL);
+}
+
+// `put_back` reinstalls the entry as a new inode, and the process writing it is root for
+// the whole of a privileged run, so an owner that is not root survives only if the entry
+// carried it. A root-owned original would pass either way; this one cannot. The id is
+// unlikely to resolve to a passwd entry, which is fine -- `chown` takes it numerically,
+// and so does the assertion.
+#[test]
+#[ignore = "requires passwordless sudo"]
+fn the_helper_restores_an_owner_that_is_not_its_own() {
+    require_sudo!();
+    let fixture = RootOwnedRootfs::new();
+    fixture.chown_resolv_conf("12345:12345");
+    let ops = privileged(&fixture.path);
+    let path = RelPath::parse("/etc/resolv.conf").unwrap();
+
+    let taken = ops
+        .take(&path)
+        .unwrap()
+        .expect("the entry should have been there");
+    assert_eq!(
+        taken,
+        TakenEntry::File {
+            content: ORIGINAL.as_bytes().to_vec(),
+            mode: FileMode::new(0o600),
+            owner: Owner {
+                uid: 12345,
+                gid: 12345
+            },
+        }
+    );
+
+    ops.write_file(&path, b"nameserver 1.1.1.1\n", FileMode::new(0o644))
+        .unwrap();
+    assert_eq!(
+        fixture.resolv_conf_owner(),
+        "0:0",
+        "the helper's own write should belong to root, or the test proves nothing"
+    );
+
+    ops.put_back(&path, &taken).unwrap();
+    assert_eq!(fixture.resolv_conf_owner(), "12345:12345");
     assert_eq!(fixture.read_resolv_conf(), ORIGINAL);
 }
 

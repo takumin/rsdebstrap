@@ -18,7 +18,7 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::sync::Arc;
 
 use camino::{Utf8Path, Utf8PathBuf};
-use rustix::fs::{self as rfs, AtFlags, CWD, FileType, Mode, OFlags};
+use rustix::fs::{self as rfs, AtFlags, CWD, FileType, Gid, Mode, OFlags, Uid};
 use serde::{Deserialize, Serialize};
 
 pub mod helper;
@@ -193,25 +193,52 @@ impl std::fmt::Display for FileMode {
     }
 }
 
+/// The uid and gid an entry carried when it was detached.
+///
+/// Restored explicitly because [`RootfsOps::put_back`] installs a *new* inode: the
+/// staging entry belongs to whoever wrote it, which is root for the whole of a run the
+/// privileged helper serves. A rootfs bootstrapped unprivileged owns its files as the
+/// calling user, so without this its `/etc/resolv.conf` comes back owned by root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Owner {
+    pub uid: u32,
+    pub gid: u32,
+}
+
+impl Owner {
+    fn of(stat: &rfs::Stat) -> Self {
+        Self {
+            uid: stat.st_uid,
+            gid: stat.st_gid,
+        }
+    }
+}
+
 /// An entry detached from the rootfs by [`RootfsOps::take`], held in memory.
 ///
 /// Nothing on disk represents a taken entry. A backup *file* would survive a
 /// crash as an orphan the operator has to clean up by hand, and its path would
 /// be one more thing an attacker could pre-create; holding the content in the
 /// parent process makes both impossible.
+///
+/// What it holds is what an `/etc/resolv.conf` needs to come back unchanged: the
+/// content, the mode, and the owner. Timestamps, xattrs, ACLs and hard-link identity are
+/// not carried, and the last of those no in-memory representation could carry -- the
+/// entry is reinstalled as a new inode either way.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TakenEntry {
-    /// A regular file, with the mode it carried.
+    /// A regular file, with the mode and owner it carried.
     File {
         #[serde(with = "payload")]
         content: Vec<u8>,
         mode: FileMode,
+        owner: Owner,
     },
     /// A symlink, with the target it pointed at. Whether that target resolved is
     /// deliberately not consulted: a dangling `/etc/resolv.conf` is the normal
     /// state of a systemd rootfs before `systemd-resolved` runs, and it must be
     /// restored exactly as found.
-    Symlink { target: String },
+    Symlink { target: String, owner: Owner },
 }
 
 /// Mutations inside a rootfs.
@@ -233,13 +260,13 @@ pub trait RootfsOps: Send + Sync {
     /// After this returns, nothing exists at `path`.
     fn take(&self, path: &RelPath) -> Result<Option<TakenEntry>>;
 
-    /// Writes a previously taken entry back to `path`, atomically.
-    fn put_back(&self, path: &RelPath, entry: &TakenEntry) -> Result<()> {
-        match entry {
-            TakenEntry::File { content, mode } => self.write_file(path, content, *mode),
-            TakenEntry::Symlink { target } => self.write_symlink(path, target),
-        }
-    }
+    /// Writes a previously taken entry back to `path`, atomically, carrying back the
+    /// mode and owner it was detached with.
+    ///
+    /// Required rather than defaulted to [`RootfsOps::write_file`]: that default
+    /// reinstalled the entry as a file owned by whoever was writing it, and nothing in
+    /// the signature said the owner had been dropped on the way.
+    fn put_back(&self, path: &RelPath, entry: &TakenEntry) -> Result<()>;
 }
 
 /// [`RootfsOps`] performed directly by this process.
@@ -377,6 +404,7 @@ impl LocalRootfsOps {
             TakenEntry::File {
                 content,
                 mode: FileMode::new(stat.st_mode),
+                owner: Owner::of(&stat),
             },
             Identity::of(&stat),
         ))
@@ -439,8 +467,14 @@ fn open_error(e: rustix::io::Errno, what: &str) -> RsdebstrapError {
     }
 }
 
-impl RootfsOps for LocalRootfsOps {
-    fn write_file(&self, path: &RelPath, content: &[u8], mode: FileMode) -> Result<()> {
+impl LocalRootfsOps {
+    fn install_file(
+        &self,
+        path: &RelPath,
+        content: &[u8],
+        mode: FileMode,
+        owner: Option<Owner>,
+    ) -> Result<()> {
         let parent = self.parent_dir(path)?;
         let dir = parent.fd();
         let name = path.file_name();
@@ -466,10 +500,21 @@ impl RootfsOps for LocalRootfsOps {
         let write = (|| {
             let mut file = File::from(fd);
             file.write_all(content)?;
+            if let Some(owner) = owner {
+                self.restore_owner(
+                    path,
+                    owner,
+                    rfs::fchown(
+                        &file,
+                        Some(Uid::from_raw(owner.uid)),
+                        Some(Gid::from_raw(owner.gid)),
+                    ),
+                )?;
+            }
             // `openat`'s mode argument is masked by the process umask, so the mode
             // has to be set on the descriptor to land exactly. It also has to be set
-            // *after* the write: writing to a file clears its setuid/setgid bits, so
-            // a `put_back` restoring a setgid entry would silently drop them.
+            // *after* the write and the chown: both clear a file's setuid/setgid bits,
+            // so a `put_back` restoring a setgid entry would silently drop them.
             rfs::fchmod(&file, Mode::from_raw_mode(mode.bits()))?;
             file.sync_all()?;
             Ok::<(), std::io::Error>(())
@@ -485,7 +530,7 @@ impl RootfsOps for LocalRootfsOps {
         self.promote(dir, &staging, path)
     }
 
-    fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()> {
+    fn install_symlink(&self, path: &RelPath, target: &str, owner: Option<Owner>) -> Result<()> {
         let parent = self.parent_dir(path)?;
         let dir = parent.fd();
         let name = path.file_name();
@@ -498,7 +543,81 @@ impl RootfsOps for LocalRootfsOps {
             )
         })?;
 
+        // By name rather than by descriptor because a symlink cannot be opened to hold
+        // one. The name is this call's own staging name, which no one else knows.
+        if let Some(owner) = owner {
+            let chowned = self.restore_owner(
+                path,
+                owner,
+                rfs::chownat(
+                    dir,
+                    staging.as_str(),
+                    Some(Uid::from_raw(owner.uid)),
+                    Some(Gid::from_raw(owner.gid)),
+                    AtFlags::SYMLINK_NOFOLLOW,
+                ),
+            );
+            if let Err(e) = chowned {
+                let _ = rfs::unlinkat(dir, staging.as_str(), AtFlags::empty());
+                return Err(RsdebstrapError::io(
+                    format!("failed to restore ownership of {}{}", self.display_root, path),
+                    std::io::Error::from(e),
+                ));
+            }
+        }
+
         self.promote(dir, &staging, path)
+    }
+
+    /// Puts a taken entry's ownership back onto the staged entry replacing it.
+    ///
+    /// A run without privilege cannot give a file away to another user. It is also the
+    /// run whose staged entry is already owned by the right user in every case it could
+    /// have taken the original from, so `EPERM` here means an ownership this run never
+    /// could have restored -- reported, rather than failing a build over it.
+    fn restore_owner(
+        &self,
+        path: &RelPath,
+        owner: Owner,
+        result: rustix::io::Result<()>,
+    ) -> rustix::io::Result<()> {
+        match result {
+            Err(rustix::io::Errno::PERM) => {
+                tracing::warn!(
+                    "cannot restore ownership {}:{} on {}{}; it stays owned by the user \
+                    running the build",
+                    owner.uid,
+                    owner.gid,
+                    self.display_root,
+                    path
+                );
+                Ok(())
+            }
+            other => other,
+        }
+    }
+}
+
+impl RootfsOps for LocalRootfsOps {
+    fn write_file(&self, path: &RelPath, content: &[u8], mode: FileMode) -> Result<()> {
+        self.install_file(path, content, mode, None)
+    }
+
+    fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()> {
+        self.install_symlink(path, target, None)
+    }
+
+    fn put_back(&self, path: &RelPath, entry: &TakenEntry) -> Result<()> {
+        match entry {
+            TakenEntry::File {
+                content,
+                mode,
+                owner,
+            } => self.install_file(path, content, *mode, Some(*owner)),
+            TakenEntry::Symlink { target, owner } => {
+                self.install_symlink(path, target, Some(*owner))
+            }
+        }
     }
 
     fn remove(&self, path: &RelPath) -> Result<()> {
@@ -544,6 +663,7 @@ impl RootfsOps for LocalRootfsOps {
                 (
                     TakenEntry::Symlink {
                         target: target.to_string_lossy().into_owned(),
+                        owner: Owner::of(&stat),
                     },
                     Identity::of(&stat),
                 )
@@ -623,6 +743,11 @@ impl RootfsOps for DryRunRootfsOps {
         Ok(())
     }
 
+    fn put_back(&self, path: &RelPath, _entry: &TakenEntry) -> Result<()> {
+        tracing::info!("dry run: restore {}{}", self.rootfs, path);
+        Ok(())
+    }
+
     fn take(&self, path: &RelPath) -> Result<Option<TakenEntry>> {
         tracing::info!("dry run: detach {}{}", self.rootfs, path);
         // Nothing was detached, so nothing is restored on teardown — which is
@@ -653,6 +778,17 @@ pub fn open(
 mod tests {
     use super::*;
     use camino::Utf8PathBuf;
+
+    // Whoever runs the test owns what it creates, but a setgid directory would hand the
+    // file a different group, so the expectation comes from the entry itself.
+    fn owner_of(path: &Utf8Path) -> Owner {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::symlink_metadata(path).unwrap();
+        Owner {
+            uid: meta.uid(),
+            gid: meta.gid(),
+        }
+    }
 
     fn rootfs() -> (tempfile::TempDir, Utf8PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
@@ -700,13 +836,15 @@ mod tests {
 
         ops.write_file(&path, b"nameserver 1.1.1.1\n", FileMode::new(0o644))
             .unwrap();
+        let owner = owner_of(&root.join("etc/resolv.conf"));
         let taken = ops.take(&path).unwrap().unwrap();
 
         assert_eq!(
             taken,
             TakenEntry::File {
                 content: b"nameserver 1.1.1.1\n".to_vec(),
-                mode: FileMode::new(0o644)
+                mode: FileMode::new(0o644),
+                owner
             }
         );
         assert!(!root.join("etc/resolv.conf").exists());
@@ -726,11 +864,13 @@ mod tests {
         )
         .unwrap();
 
+        let owner = owner_of(&root.join("etc/resolv.conf"));
         let taken = ops.take(&path).unwrap().unwrap();
         assert_eq!(
             taken,
             TakenEntry::Symlink {
-                target: "../run/systemd/resolve/stub-resolv.conf".to_string()
+                target: "../run/systemd/resolve/stub-resolv.conf".to_string(),
+                owner
             }
         );
 

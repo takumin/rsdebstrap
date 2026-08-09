@@ -52,6 +52,13 @@ pub enum Request {
     Take {
         path: RelPath,
     },
+    // Carries the whole entry rather than reusing `WriteFile`, because restoring one
+    // sets an owner, and only the helper has the privilege to set it to anything but
+    // its own.
+    PutBack {
+        path: RelPath,
+        entry: TakenEntry,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -162,6 +169,7 @@ fn dispatch(anchor: &CheckedAnchor, request: Request) -> Response {
         }
         Request::Remove { path } => ops.remove(&path).map(|()| Response::Unit),
         Request::Take { path } => ops.take(&path).map(Response::Taken),
+        Request::PutBack { path, entry } => ops.put_back(&path, &entry).map(|()| Response::Unit),
     };
     result.unwrap_or_else(|e| Response::Error(e.to_string()))
 }
@@ -353,6 +361,13 @@ impl RootfsOps for PrivilegedRootfsOps {
         self.unit(Request::Remove { path: path.clone() })
     }
 
+    fn put_back(&self, path: &RelPath, entry: &TakenEntry) -> Result<()> {
+        self.unit(Request::PutBack {
+            path: path.clone(),
+            entry: entry.clone(),
+        })
+    }
+
     fn take(&self, path: &RelPath) -> Result<Option<TakenEntry>> {
         match self.request(&Request::Take { path: path.clone() })? {
             Response::Taken(entry) => Ok(entry),
@@ -365,6 +380,7 @@ impl RootfsOps for PrivilegedRootfsOps {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rootfs::Owner;
 
     // The helper's request loop, driven directly against a real rootfs. This is
     // the same `serve` dispatch the privileged process runs, minus the escalation
@@ -433,7 +449,7 @@ mod tests {
         assert!(matches!(written, Response::Unit), "got {written:?}");
 
         let taken = round_trip(&anchor, Request::Take { path });
-        let Response::Taken(Some(TakenEntry::File { content, mode })) = taken else {
+        let Response::Taken(Some(TakenEntry::File { content, mode, .. })) = taken else {
             panic!("got {taken:?}");
         };
         assert_eq!(content, b"nameserver 9.9.9.9\n");
@@ -546,6 +562,7 @@ mod tests {
         let entry = TakenEntry::File {
             content: (0..=255u8).collect(),
             mode: FileMode::new(0o600),
+            owner: Owner { uid: 0, gid: 0 },
         };
         let encoded = serde_json::to_string(&entry).unwrap();
         assert_eq!(serde_json::from_str::<TakenEntry>(&encoded).unwrap(), entry);

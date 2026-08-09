@@ -136,6 +136,15 @@ impl RootfsOps for RecordingOps {
         Ok(())
     }
 
+    fn put_back(
+        &self,
+        path: &RelPath,
+        _entry: &TakenEntry,
+    ) -> std::result::Result<(), RsdebstrapError> {
+        self.writes.lock().unwrap().push(path.to_string());
+        Ok(())
+    }
+
     fn remove(&self, _path: &RelPath) -> std::result::Result<(), RsdebstrapError> {
         Ok(())
     }

@@ -206,8 +206,8 @@ patterns run throughout `src/isolation/`:
   into the rootfs) all guarantee cleanup via `Drop`, including on error paths. Mounts
   unmount in reverse order and `unmount()` is idempotent, collecting errors across entries.
   `RootfsResolvConf` detaches the rootfs's own resolv.conf with `RootfsOps::take`, which
-  returns it as a value (file content + mode, or symlink target) rather than moving it to a
-  backup path, and puts it back on teardown or `Drop`.
+  returns it as a value (file content, mode and owner, or symlink target and owner) rather
+  than moving it to a backup path, and puts it back on teardown or `Drop`.
 
   Holding it in memory removes two failure modes a backup file had. A crash left the backup
   as an orphan the operator had to move back by hand, and an attacker who could pre-create the
@@ -218,6 +218,19 @@ patterns run throughout `src/isolation/`:
   the install fails and the rollback fails with it, the restore is still owed and `Drop` is the
   one thing left holding the entry; the returned error names the detached original rather than
   only the write that failed.
+
+  `take` reads what it returns from a descriptor rather than from a name. The `statat` it
+  starts with only chooses the branch; the file-type check, the size limit and the bounded
+  read all land on the inode `openat` returned, which is the rule `read_host_file` follows
+  from the host side. It re-identifies the entry by `st_dev`/`st_ino` before the `unlinkat`
+  as well, because Linux has no unlink-by-descriptor and the alternative is returning one
+  inode's contents while detaching another's.
+
+  What the value carries is what a faithful restore needs: content, mode and owner.
+  `put_back` installs a *new* inode — that is what makes it atomic — so an owner it did not
+  record would be replaced by the writer's, which is root for the whole of a privileged run.
+  Timestamps, xattrs and ACLs are not carried, and hard-link identity no in-memory
+  representation could carry.
 
 ## Isolation & command execution
 

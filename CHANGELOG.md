@@ -18,8 +18,11 @@ and this project adheres to
   write.
 - The prepare-phase `resolv_conf` guard holds the rootfs's original
   `/etc/resolv.conf` in memory instead of moving it to
-  `/etc/resolv.conf.rsdebstrap-orig`. An interrupted build no longer leaves a
-  backup file for the operator to move back by hand.
+  `/etc/resolv.conf.rsdebstrap-orig`, and restores it with the mode and owner it
+  carried. An interrupted build no longer leaves a backup file for the operator
+  to move back by hand, and a rootfs bootstrapped unprivileged keeps its own
+  ownership of the file rather than having it reowned by the privileged helper
+  that restores it.
 - JSON Schema generation is no longer behind the `schema` cargo feature;
   `schemars` and `serde_json` are ordinary dependencies. Adds ~460 KB to the
   release binary. `--no-default-features` no longer produces a schema-less

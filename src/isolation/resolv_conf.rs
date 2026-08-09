@@ -335,6 +335,23 @@ mod tests {
             self.inner.write_symlink(path, target)
         }
 
+        // Routed through this mock's own `write_file` rather than the inner ops, so a
+        // restore counts against the failure budget the way the real one does.
+        fn put_back(
+            &self,
+            path: &RelPath,
+            entry: &crate::rootfs::TakenEntry,
+        ) -> std::result::Result<(), crate::error::RsdebstrapError> {
+            match entry {
+                crate::rootfs::TakenEntry::File { content, mode, .. } => {
+                    self.write_file(path, content, *mode)
+                }
+                crate::rootfs::TakenEntry::Symlink { target, .. } => {
+                    self.write_symlink(path, target)
+                }
+            }
+        }
+
         fn remove(&self, path: &RelPath) -> std::result::Result<(), crate::error::RsdebstrapError> {
             self.inner.remove(path)
         }
