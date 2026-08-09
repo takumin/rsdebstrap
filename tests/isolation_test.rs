@@ -414,3 +414,29 @@ fn context_dry_run_comes_from_the_executor() {
     assert!(!live_ctx.dry_run());
     assert!(dry_ctx.dry_run());
 }
+
+// The refusal has to name the component that failed, and it walks more than one deep for a
+// program like `/usr/bin/env`. Interpolating the current component alone onto the rootfs
+// reported `<rootfs>/bin` for a symlinked `<rootfs>/usr/bin` — a path that does not exist.
+#[test]
+fn a_refused_intermediate_component_is_named_in_full() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(rootfs.join("usr")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), rootfs.join("usr/bin")).unwrap();
+
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let err = context
+        .execute(&["/usr/bin/env".to_string()], None)
+        .expect_err("a symlinked intermediate directory must be refused");
+    let rendered = format!("{err:#}");
+
+    assert!(
+        rendered.contains(&format!("{rootfs}/usr/bin")),
+        "the error should name the full path to the refused component: {rendered}"
+    );
+}
