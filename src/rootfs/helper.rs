@@ -38,6 +38,7 @@ pub const HELPER_SUBCOMMAND: &str = "__rootfs-helper";
 pub enum Request {
     WriteFile {
         path: RelPath,
+        #[serde(with = "crate::rootfs::payload")]
         content: Vec<u8>,
         mode: FileMode,
     },
@@ -504,5 +505,49 @@ mod tests {
             !std::path::Path::new(&proc_entry).exists(),
             "{proc_entry} still exists: the child was left running or unreaped"
         );
+    }
+
+    // What the base64 payload encoding is for. A `Vec<u8>` rendered as a JSON decimal array
+    // costs about 4.6 bytes of text per byte of file, so staging a 40 MB mitamae binary
+    // meant a ~180 MB line held in full by both processes and one integer parsed per byte.
+    //
+    // The bound is deliberately loose — this pins the order of magnitude, not base64's exact
+    // ratio — but 4/3 plus a small envelope is far below what any per-byte-token encoding
+    // can reach, so a regression to one fails here.
+    #[test]
+    fn a_file_payload_does_not_inflate_on_the_wire() {
+        let content: Vec<u8> = (0..=255u8).cycle().take(64 * 1024).collect();
+        let encoded = serde_json::to_string(&Request::WriteFile {
+            path: RelPath::parse("/usr/local/bin/mitamae").unwrap(),
+            content: content.clone(),
+            mode: FileMode::new(0o700),
+        })
+        .unwrap();
+
+        assert!(
+            encoded.len() < content.len() * 3 / 2,
+            "{} bytes of payload became {} bytes on the wire",
+            content.len(),
+            encoded.len()
+        );
+
+        let Request::WriteFile { content: back, .. } =
+            serde_json::from_str::<Request>(&encoded).unwrap()
+        else {
+            panic!("round-tripped into a different variant");
+        };
+        assert_eq!(back, content, "the payload did not survive the round trip");
+    }
+
+    // Every byte value has to survive, including the ones that are not valid UTF-8 and the
+    // ones JSON would otherwise have to escape.
+    #[test]
+    fn a_taken_entry_round_trips_every_byte_value() {
+        let entry = TakenEntry::File {
+            content: (0..=255u8).collect(),
+            mode: FileMode::new(0o600),
+        };
+        let encoded = serde_json::to_string(&entry).unwrap();
+        assert_eq!(serde_json::from_str::<TakenEntry>(&encoded).unwrap(), entry);
     }
 }

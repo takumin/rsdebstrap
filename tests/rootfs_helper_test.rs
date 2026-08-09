@@ -80,10 +80,8 @@ fn take_detaches_the_entry_and_returns_its_contents() {
 #[test]
 fn write_file_installs_content_and_mode() {
     let (_tmp, root) = seeded_rootfs();
-    let responses = run_session(
-        &root,
-        &[r#"{"WriteFile":{"path":"/etc/hosts","content":[104,105,10],"mode":420}}"#],
-    );
+    let responses =
+        run_session(&root, &[r#"{"WriteFile":{"path":"/etc/hosts","content":"aGkK","mode":420}}"#]);
 
     assert_eq!(responses[0], "\"Unit\"");
     assert_eq!(std::fs::read(root.join("etc/hosts")).unwrap(), b"hi\n");
@@ -117,8 +115,8 @@ fn the_session_survives_a_failing_operation() {
     let responses = run_session(
         &root,
         &[
-            r#"{"WriteFile":{"path":"/missing/x","content":[120],"mode":420}}"#,
-            r#"{"WriteFile":{"path":"/etc/hosts","content":[120],"mode":420}}"#,
+            r#"{"WriteFile":{"path":"/missing/x","content":"eA==","mode":420}}"#,
+            r#"{"WriteFile":{"path":"/etc/hosts","content":"eA==","mode":420}}"#,
         ],
     );
 
