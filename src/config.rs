@@ -505,9 +505,6 @@ impl Profile {
         let pipeline = self.build_pipeline()?;
         pipeline.validate()?;
 
-        // rootfs_output() returns anyhow::Result, so we attempt to downcast to
-        // RsdebstrapError to preserve the original variant. If downcast fails
-        // (e.g., a non-RsdebstrapError from a backend), we fall back to Validation.
         if !pipeline.is_empty() {
             let backend = self.bootstrap.as_backend();
             let output = backend
@@ -753,7 +750,6 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    // Generates a yaml_serde::Error by attempting to parse invalid YAML.
     fn make_yaml_error(yaml: &str) -> yaml_serde::Error {
         yaml_serde::from_str::<Profile>(yaml).unwrap_err()
     }
@@ -1040,7 +1036,6 @@ mod tests {
 
     #[test]
     fn test_mount_entry_validate_valid_bind_mount() {
-        // /tmp is guaranteed to exist on any system
         let entry = MountEntry {
             source: "/tmp".to_string(),
             target: rootfs_path("/tmp"),
