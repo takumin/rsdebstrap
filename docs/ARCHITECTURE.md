@@ -239,6 +239,14 @@ patterns run throughout `src/isolation/`:
   takes no such flag. The value existed four times over before, passed independently, so a
   dry-run executor paired with a live context was constructible and wrote for real. `main`
   builds the executor from `--dry-run` and nothing downstream re-reads the CLI flag.
+
+  Two things keep it that way rather than leaving it to review. `dry_run()` has no default
+  implementation: a default would have to be `false`, so an executor that forgot to answer
+  would claim to be a live run, and the omission is a compile error instead. And `run_apply`
+  takes `CommonArgs`, not `ApplyArgs`, so `--dry-run` is not in scope where the run happens —
+  a caller cannot pass a flag that disagrees with the executor, because it cannot pass one at
+  all. Both holes were real: a test executor inheriting the default drove a "dry run" that
+  created directories and escalated to a `sudo` rootfs helper.
 - Privilege is threaded through *command* execution as `Option<PrivilegeMethod>`, so
   escalation is uniform across the commands that genuinely are external programs
   (`mount`, `umount`, `chroot`, the bootstrap backend, provision scripts).

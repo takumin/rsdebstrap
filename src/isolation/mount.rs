@@ -149,14 +149,17 @@ impl RootfsMounts {
     /// Creates a new `RootfsMounts` instance.
     ///
     /// No mounts are performed until [`mount()`](Self::mount) is called.
+    /// Takes no `dry_run` of its own: the executor already answers that, and a mount
+    /// guard that believed otherwise would either skip the `umount` for mounts that
+    /// really happened or issue one for mounts that never did.
     pub fn new(
         rootfs: &Utf8Path,
         entries: Vec<MountEntry>,
         executor: Arc<dyn CommandExecutor>,
         privilege: Option<PrivilegeMethod>,
-        dry_run: bool,
     ) -> Self {
         let mounted_paths = vec![None; entries.len()];
+        let dry_run = executor.dry_run();
         Self {
             rootfs: rootfs.to_owned(),
             entries,
@@ -362,6 +365,9 @@ mod tests {
 
     struct MockMountExecutor {
         calls: Mutex<Vec<Vec<String>>>,
+        // What this executor answers for the run; the guard derives its own behaviour
+        // from it rather than being told separately.
+        dry_run: bool,
         // Privilege recorded per call, positionally aligned with `calls`.
         privileges: Mutex<Vec<Option<PrivilegeMethod>>>,
         // Call index that returns non-zero exit status.
@@ -376,10 +382,18 @@ mod tests {
         fn new() -> Self {
             Self {
                 calls: Mutex::new(Vec::new()),
+                dry_run: false,
                 privileges: Mutex::new(Vec::new()),
                 fail_on_call: None,
                 fail_umount_on_calls: vec![],
                 return_err_on_call: None,
+            }
+        }
+
+        fn dry_run() -> Self {
+            Self {
+                dry_run: true,
+                ..Self::new()
             }
         }
 
@@ -414,6 +428,10 @@ mod tests {
     }
 
     impl CommandExecutor for MockMountExecutor {
+        fn dry_run(&self) -> bool {
+            self.dry_run
+        }
+
         fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
             let mut calls = self.calls.lock().unwrap();
             let index = calls.len();
@@ -460,7 +478,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
         mounts.mount().unwrap();
         mounts.unmount().unwrap();
 
@@ -480,7 +498,7 @@ mod tests {
     fn empty_entries_is_noop() {
         let executor = Arc::new(MockMountExecutor::new());
         let mut mounts =
-            RootfsMounts::new(Utf8Path::new("/tmp/rootfs"), vec![], executor.clone(), None, true);
+            RootfsMounts::new(Utf8Path::new("/tmp/rootfs"), vec![], executor.clone(), None);
         assert!(mounts.is_empty());
         mounts.mount().unwrap();
         mounts.unmount().unwrap();
@@ -493,7 +511,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
         let err = mounts.mount().unwrap_err();
         assert!(err.to_string().contains("command execution failed"));
 
@@ -512,8 +530,7 @@ mod tests {
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
         {
-            let mut mounts =
-                RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+            let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
             mounts.mount().unwrap();
             // Drop without calling unmount()
         }
@@ -524,13 +541,12 @@ mod tests {
 
     #[test]
     fn dry_run_skips_mkdir() {
-        let executor = Arc::new(MockMountExecutor::new());
+        let executor = Arc::new(MockMountExecutor::dry_run());
         let mut mounts = RootfsMounts::new(
             Utf8Path::new("/nonexistent/rootfs"),
             test_entries(),
             executor.clone(),
             None,
-            true,
         );
         // Should not fail even though rootfs doesn't exist (dry-run skips mkdir)
         mounts.mount().unwrap();
@@ -546,7 +562,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
         mounts.mount().unwrap();
         mounts.unmount().unwrap();
         mounts.unmount().unwrap();
@@ -567,13 +583,8 @@ mod tests {
             options: vec![],
         }];
 
-        let mut mounts = RootfsMounts::new(
-            &rootfs,
-            entries,
-            executor.clone(),
-            Some(PrivilegeMethod::Sudo),
-            false,
-        );
+        let mut mounts =
+            RootfsMounts::new(&rootfs, entries, executor.clone(), Some(PrivilegeMethod::Sudo));
         mounts.mount().unwrap();
         mounts.unmount().unwrap();
 
@@ -598,7 +609,7 @@ mod tests {
             options: vec![],
         }];
 
-        let mut mounts = RootfsMounts::new(&rootfs, entries, executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, entries, executor.clone(), None);
         mounts.mount().unwrap();
         mounts.unmount().unwrap();
 
@@ -614,7 +625,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
         let err = mounts.mount().unwrap_err();
         assert!(
             err.to_string().contains("executor error"),
@@ -638,8 +649,7 @@ mod tests {
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
         {
-            let mut mounts =
-                RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+            let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
             mounts.mount().unwrap();
 
             let err = mounts.unmount();
@@ -662,7 +672,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
         let err = mounts.mount().unwrap_err();
         assert!(err.to_string().contains("command execution failed"));
 
@@ -679,7 +689,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
         mounts.mount().unwrap();
 
         let err = mounts.unmount().unwrap_err();
@@ -695,7 +705,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
         mounts.mount().unwrap();
 
         let err = mounts.unmount().unwrap_err();
@@ -715,7 +725,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
         mounts.mount().unwrap();
 
         // First unmount: /sys fails, /proc succeeds
@@ -746,7 +756,7 @@ mod tests {
             options: vec![],
         }];
 
-        let mut mounts = RootfsMounts::new(&rootfs, entries, executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, entries, executor.clone(), None);
         let err = mounts.mount().unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("symlink detected"), "should detect symlink: {}", msg);
@@ -767,7 +777,7 @@ mod tests {
             options: vec![],
         }];
 
-        let mut mounts = RootfsMounts::new(&rootfs, entries, executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, entries, executor.clone(), None);
         let err = mounts.mount().unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -834,7 +844,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
-        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None, false);
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
         mounts.mount().unwrap();
 
         assert!(mounts.mounted_paths[0].is_some());

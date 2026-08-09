@@ -19,6 +19,13 @@ struct RecordingExecutor {
 }
 
 impl CommandExecutor for RecordingExecutor {
+    // A live run: `DirectProvider` skips its symlinked-program check in a dry run, and
+    // `direct_context_refuses_a_program_symlinked_out_of_the_rootfs` is here to exercise it.
+    // Nothing is executed for real because this executor only records.
+    fn dry_run(&self) -> bool {
+        false
+    }
+
     fn execute(&self, spec: &CommandSpec) -> anyhow::Result<ExecutionResult> {
         self.calls.lock().unwrap().push((
             spec.command().to_string(),
