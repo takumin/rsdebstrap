@@ -356,40 +356,43 @@ impl LocalRootfsOps {
         format!(".{}.rsdebstrap-{}", name, uuid::Uuid::new_v4().simple())
     }
 
-    /// Reads the entry `detached` names in `dir`, which [`RootfsOps::take`] has already
-    /// renamed out of the way.
+    /// Reads the entry `name` holds in `dir`, before [`RootfsOps::take`] detaches it.
     ///
-    /// Everything the returned entry carries comes off one descriptor. The rename is what
-    /// takes the caller's name out of play, but it does not hide the new one -- a watcher
-    /// on the directory is told the name a rename lands on -- so classifying by `statat`
-    /// and then opening by name would still be two resolutions, free to disagree about the
-    /// type, the size, the mode and the owner.
+    /// Reading before the rename is what makes the rename checkable. Everything the
+    /// returned entry carries comes off one descriptor, and the identity returned with it
+    /// is that descriptor's -- so it names the inode that was still at the caller's name,
+    /// which is the only thing a later `statat` on the detached name can honestly be
+    /// compared against. Sampling the identity after the rename instead would let a watcher
+    /// on the directory -- who is told where a rename lands -- substitute an entry there
+    /// and have every check downstream agree about the substitute.
     ///
-    /// `path` is only for error messages: it is the name the caller asked about, which is
-    /// no longer the name being read.
-    fn read_detached(
+    /// Refusing here also refuses before anything has moved, so a FIFO or an oversized file
+    /// leaves the caller's name exactly as it was, with no rollback to get wrong.
+    ///
+    /// `Ok(None)` is "there is nothing to take": an absent `/etc/resolv.conf` is the normal
+    /// state of a fresh rootfs, not a failure.
+    fn read_entry(
         &self,
         dir: BorrowedFd<'_>,
-        detached: &str,
+        name: &str,
         path: &RelPath,
-    ) -> Result<(TakenEntry, Identity)> {
+    ) -> Result<Option<(TakenEntry, Identity)>> {
         // `O_NONBLOCK` because opening a FIFO for reading otherwise waits for a writer that
         // is never coming -- for the privileged helper, that is the build hanging with no
         // output. It is `fstat` below, not this open, that refuses one.
         let opened = rfs::openat(
             dir,
-            detached,
+            name,
             OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
             Mode::empty(),
         );
 
         let fd = match opened {
             Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => return Ok(None),
             // The one type that cannot be opened for reading, and the reason the caller's
             // `/etc/resolv.conf` is being detached at all half the time.
-            Err(rustix::io::Errno::LOOP) => {
-                return self.read_detached_symlink(dir, detached, path);
-            }
+            Err(rustix::io::Errno::LOOP) => return self.read_symlink(dir, name, path),
             Err(e) => return Err(open_error(e, &format!("{}{}", self.display_root, path))),
         };
 
@@ -413,10 +416,11 @@ impl LocalRootfsOps {
             )));
         }
 
-        // Bounded on top of the size just read from this same inode: a descriptor opened
-        // before the rename still writes to it, and an unbounded `read_to_end` would follow
-        // the file as far as that writer takes it. The limit is what keeps a detached entry
-        // small enough to hold in memory and to serialize over the helper channel.
+        // Bounded on top of the size just read from this same inode: the entry is still
+        // linked at its own name here, so a writer can be appending to it, and an unbounded
+        // `read_to_end` would follow the file as far as that writer takes it. The limit is
+        // what keeps a detached entry small enough to hold in memory and to serialize over
+        // the helper channel.
         let mut content = Vec::new();
         File::from(fd)
             .take(MAX_TAKE_SIZE + 1)
@@ -431,35 +435,40 @@ impl LocalRootfsOps {
             )));
         }
 
-        Ok((
+        Ok(Some((
             TakenEntry::File {
                 content,
                 mode: FileMode::new(stat.st_mode),
                 owner: Owner::of(&stat),
             },
             Identity::of(&stat),
-        ))
+        )))
     }
 
-    /// Reads the symlink `detached` names, on a descriptor for the link itself.
+    /// Reads the symlink `name` holds, on a descriptor for the link itself.
     ///
     /// `O_PATH | O_NOFOLLOW` is the one way to hold a symlink open, and an empty path to
     /// `readlinkat` is how the target is read back off it. Whether that target resolves is
     /// deliberately not consulted: a dangling `/etc/resolv.conf` is the normal state of a
     /// systemd rootfs before `systemd-resolved` runs.
-    fn read_detached_symlink(
+    fn read_symlink(
         &self,
         dir: BorrowedFd<'_>,
-        detached: &str,
+        name: &str,
         path: &RelPath,
-    ) -> Result<(TakenEntry, Identity)> {
-        let fd = rfs::openat(
+    ) -> Result<Option<(TakenEntry, Identity)>> {
+        let fd = match rfs::openat(
             dir,
-            detached,
+            name,
             OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
-        )
-        .map_err(|e| open_error(e, &format!("{}{}", self.display_root, path)))?;
+        ) {
+            Ok(fd) => fd,
+            // The link can have been removed between the two opens, which is the same
+            // answer as its never having been there.
+            Err(rustix::io::Errno::NOENT) => return Ok(None),
+            Err(e) => return Err(open_error(e, &format!("{}{}", self.display_root, path))),
+        };
 
         let stat = rfs::fstat(&fd).map_err(|e| {
             RsdebstrapError::io(
@@ -482,13 +491,13 @@ impl LocalRootfsOps {
             )
         })?;
 
-        Ok((
+        Ok(Some((
             TakenEntry::Symlink {
                 target: target.into_bytes(),
                 owner: Owner::of(&stat),
             },
             Identity::of(&stat),
-        ))
+        )))
     }
 
     /// Publishes the staged entry under the caller's name.
@@ -538,9 +547,16 @@ impl LocalRootfsOps {
 
 /// Which inode a syscall landed on.
 ///
-/// Only [`RootfsOps::take`]'s `unlinkat` needs this. Everything it reads comes off a
-/// descriptor, which cannot be pointed elsewhere; the removal has to name the entry,
-/// because Linux has no unlink-by-descriptor, so comparing is all that is left there.
+/// Content and metadata always come off a descriptor, which cannot be pointed elsewhere.
+/// This is for the steps that cannot: Linux has no rename-by-descriptor and no
+/// unlink-by-descriptor, so `promote`'s publish and `take`'s detach and removal have to
+/// name their target, and comparing what the name means now against what a descriptor
+/// already established is all that is left there.
+///
+/// Which makes where the value is sampled the whole point. It has to come from a
+/// descriptor opened before the syscall that a watcher of the directory is told about --
+/// an identity read back afterwards describes whatever is there by then, and agrees with
+/// itself no matter who put it there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Identity {
     dev: u64,
@@ -743,98 +759,60 @@ impl RootfsOps for LocalRootfsOps {
         let parent = self.parent_dir(path)?;
         let dir = parent.fd();
         let name = path.file_name();
-        let detached = Self::staging_name(name);
 
-        // Detach first, read second: this takes the caller's name out of play in one
-        // syscall, so nothing that follows can be tricked into acting on whatever appears
-        // at `/etc/resolv.conf` next. It does not make the new name secret -- a watcher on
-        // the directory is told where a rename lands -- which is why `read_detached` binds
-        // itself to a descriptor rather than trusting the name it was given. A `renameat`
-        // on a missing entry is also how "it was not there" is reported, which keeps that
-        // answer on the same syscall as the detach.
-        match rfs::renameat(dir, name, dir, detached.as_str()) {
-            Ok(()) => {}
-            Err(rustix::io::Errno::NOENT) => return Ok(None),
-            Err(e) => {
-                return Err(RsdebstrapError::io(
-                    format!("failed to detach {}{}", self.display_root, path),
-                    std::io::Error::from(e),
-                ));
-            }
-        }
-
-        // What the rename took, which is what a refusal has to put back -- and only that.
-        let taken = match rfs::statat(dir, detached.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
-            Ok(taken) => Identity::of(&taken),
-            Err(e) => {
-                return Err(RsdebstrapError::io(
-                    format!("failed to stat {}/{}", self.display_root, detached),
-                    std::io::Error::from(e),
-                ));
-            }
+        // Read first, detach second. The rename below is the step that takes the caller's
+        // name out of play, but it is also the step a watcher on the directory is told
+        // about, so it needs something to be checked against that the watcher cannot have
+        // chosen: the identity of the descriptor this opened while the entry was still the
+        // caller's. Every refusal is behind us by then, so there is no rollback rename to
+        // aim at the wrong inode either.
+        let Some((entry, taken)) = self.read_entry(dir, name, path)? else {
+            return Ok(None);
         };
 
-        match self.read_detached(dir, &detached, path) {
-            Ok((entry, read)) => {
-                // A check rather than a binding, because Linux has no unlink-by-descriptor:
-                // the entry that was read is held open, but `unlinkat` can only be given a
-                // name, and the name is one a watcher on the directory was told about. What
-                // this closes is the silent form -- removing something other than what was
-                // returned. There is no rollback here either: the name now means someone
-                // else's entry, and renaming that onto the caller's path is the last thing
-                // to do with it.
-                let current = rfs::statat(dir, detached.as_str(), AtFlags::SYMLINK_NOFOLLOW)
-                    .map(|current| Identity::of(&current))
-                    .map_err(|e| {
-                        RsdebstrapError::io(
-                            format!("failed to stat {}/{}", self.display_root, detached),
-                            std::io::Error::from(e),
-                        )
-                    })?;
-                if current != read {
-                    return Err(RsdebstrapError::Isolation(format!(
-                        "{}{} was replaced while it was being detached: {}/{} is no longer \
-                        the entry that was read, so it was left in place",
-                        self.display_root, path, self.display_root, detached
-                    )));
-                }
+        let detached = Self::staging_name(name);
+        rfs::renameat(dir, name, dir, detached.as_str()).map_err(|e| {
+            RsdebstrapError::io(
+                format!("failed to detach {}{}", self.display_root, path),
+                std::io::Error::from(e),
+            )
+        })?;
 
-                rfs::unlinkat(dir, detached.as_str(), AtFlags::empty()).map_err(|e| {
-                    RsdebstrapError::io(
-                        format!(
-                            "detached {}{} but failed to remove it from {}/{}",
-                            self.display_root, path, self.display_root, detached
-                        ),
-                        std::io::Error::from(e),
-                    )
-                })?;
-                Ok(Some(entry))
-            }
-            // Refusing to detach has to mean nothing was detached, so the rename goes back
-            // -- but only if the name still means the entry that was taken. Renaming
-            // someone else's inode onto the caller's path would be a worse outcome than the
-            // refusal it is recovering from, so that case says what happened and stops.
-            Err(refusal) => {
-                let current = rfs::statat(dir, detached.as_str(), AtFlags::SYMLINK_NOFOLLOW)
-                    .map(|current| Identity::of(&current))
-                    .ok();
-                if current != Some(taken) {
-                    return Err(RsdebstrapError::Isolation(format!(
-                        "{refusal}; it was not put back because {}/{} is no longer the \
-                        entry that was detached",
-                        self.display_root, detached
-                    )));
-                }
-                match rfs::renameat(dir, detached.as_str(), dir, name) {
-                    Ok(()) => Err(refusal),
-                    Err(e) => Err(RsdebstrapError::Isolation(format!(
-                        "{refusal}; it is left detached at {}/{} because putting it back \
-                        failed: {e}",
-                        self.display_root, detached
-                    ))),
-                }
-            }
+        // A check rather than a binding, twice over: Linux has neither rename-by-descriptor
+        // nor unlink-by-descriptor, so the entry that was read is held open but both
+        // syscalls here can only be given a name. What this rules out is the silent form --
+        // reporting an entry as taken while a different one was moved, and removing
+        // something other than what was returned.
+        //
+        // Nothing is put back and nothing is removed when it does not hold: the name means
+        // someone else's entry at that point, and neither publishing it under the caller's
+        // name nor deleting it is ours to do.
+        let current = rfs::statat(dir, detached.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+            .map(|current| Identity::of(&current))
+            .map_err(|e| {
+                RsdebstrapError::io(
+                    format!("failed to stat {}/{}", self.display_root, detached),
+                    std::io::Error::from(e),
+                )
+            })?;
+        if current != taken {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{}{} was replaced while it was being detached: {}/{} is not the entry \
+                that was read, so it was left there",
+                self.display_root, path, self.display_root, detached
+            )));
         }
+
+        rfs::unlinkat(dir, detached.as_str(), AtFlags::empty()).map_err(|e| {
+            RsdebstrapError::io(
+                format!(
+                    "detached {}{} but failed to remove it from {}/{}",
+                    self.display_root, path, self.display_root, detached
+                ),
+                std::io::Error::from(e),
+            )
+        })?;
+        Ok(Some(entry))
     }
 }
 

@@ -236,34 +236,38 @@ patterns run throughout `src/isolation/`:
   one thing left holding the entry; the returned error names the detached original rather than
   only the write that failed.
 
-  `take` detaches before it reads. It renames the entry to a sibling whose name carries a
-  fresh UUID, which takes the caller's name out of play in one syscall: nothing after that
-  can be tricked into acting on whatever appears at `/etc/resolv.conf` next. Reading first
-  and re-checking the name afterwards cannot reach that — Linux has no unlink-by-descriptor,
-  so a check before the unlink narrows the window rather than closing it.
+  `take` reads before it detaches, on a descriptor. One `openat` of the caller's own name
+  decides the type, the size, the mode and the owner by `fstat`, and a symlink (which cannot
+  be opened for reading) is held by `O_PATH | O_NOFOLLOW` and read back with an empty path to
+  `readlinkat`. The open is non-blocking, because a FIFO left in the way would otherwise wait
+  for a writer that is never coming — for the privileged helper, that is the build hanging
+  with no output. Only then is the entry renamed to a sibling whose name carries a fresh
+  UUID, which takes the caller's name out of play in one syscall.
 
-  The rename does not make the new name *secret*, though: a watcher on the directory is told
-  where a rename lands. So the read binds itself to a descriptor rather than to the name —
-  one `openat` decides the type, the size, the mode and the owner by `fstat`, and a symlink
-  (which cannot be opened for reading) is held by `O_PATH | O_NOFOLLOW` and read back with an
-  empty path to `readlinkat`. The open is non-blocking, because a FIFO left in the way would
-  otherwise wait for a writer that is never coming — for the privileged helper, that is the
-  build hanging with no output.
+  Reading first is what makes that rename checkable. A rename does not make the new name
+  *secret* — a watcher on the directory is told where one lands — so the detached name has to
+  be compared against something the watcher cannot have chosen, and that is the identity of
+  the descriptor opened while the entry was still the caller's. Sampling the identity from
+  the detached name afterwards instead would describe whatever is there by then, and agree
+  with itself no matter who put it there.
 
-  The steps that name an entry rather than holding one are where that stops being achievable,
-  and there are three: the `unlinkat` that removes a taken entry, the `renameat` that puts a
-  refused one back, and the `renameat` that promotes a staged write over the caller's name.
+  It also puts every refusal (wrong type, over `MAX_TAKE_SIZE`) before anything has moved, so
+  a refused `take` leaves the caller's name exactly as it was and there is no rollback rename
+  to aim at the wrong inode. The read stays bounded even though the size came off the same
+  descriptor, because the entry is still linked at its own name and a writer can be appending
+  to it. `read_host_file` bounds the host side the same way and for a second reason: staging
+  crosses the privilege boundary as one base64-in-JSON request, so the bytes exist several
+  times over at the peak.
+
+  The steps that name an entry rather than holding one are where binding stops being
+  achievable, and there are three: the `renameat` that detaches, the `unlinkat` that removes
+  what was taken, and the `renameat` that promotes a staged write over the caller's name.
   Linux has neither unlink- nor rename-by-descriptor, so each compares `st_dev`/`st_ino`
-  against the inode it means and errors out rather than acting on another — a UUID in a
-  staging name is not a secret from anyone watching the directory. Those checks narrow the
-  window to two syscalls rather than closing it, and each says so where it stands.
-
-  Refusing an entry (wrong type, over `MAX_TAKE_SIZE`) has to rename it back, since "refused"
-  has to mean nothing was detached; if that rollback fails, the error names where the entry
-  is. The read stays bounded even though the size came off the same descriptor, because a
-  descriptor opened before the rename still writes to the inode. `read_host_file` bounds the
-  host side the same way and for a second reason: staging crosses the privilege boundary as
-  one base64-in-JSON request, so the bytes exist several times over at the peak.
+  against the inode a descriptor already established and errors out rather than acting on
+  another — a UUID in a staging name is not a secret from anyone watching the directory.
+  Those checks narrow the window to two syscalls rather than closing it, and each says so
+  where it stands. When one fails, nothing is published and nothing is removed: the name
+  means someone else's entry at that point, and neither is ours to do.
 
   What the value carries is what a faithful restore needs: content, mode and owner.
   `put_back` installs a *new* inode — that is what makes it atomic — so an owner it did not
