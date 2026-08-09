@@ -100,6 +100,27 @@ impl RootOwnedRootfs {
         String::from_utf8(out.stdout).unwrap().trim().to_string()
     }
 
+    // `-h` because `chown` follows a symlink by default, which would reown the target
+    // rather than the link the test is about.
+    fn replace_resolv_conf_with_symlink(&self, target: &str, owner: &str) {
+        let resolv = self.path.join("etc/resolv.conf");
+        sudo(&["rm", "-f", resolv.as_str()]);
+        sudo(&["ln", "-s", target, resolv.as_str()]);
+        sudo(&["chown", "-h", owner, resolv.as_str()]);
+    }
+
+    fn resolv_conf_target(&self) -> String {
+        let out = std::process::Command::new("sudo")
+            .args(["readlink", self.path.join("etc/resolv.conf").as_str()])
+            .output()
+            .expect("failed to readlink through sudo");
+        assert!(out.status.success(), "readlink failed: {out:?}");
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .trim_end()
+            .to_string()
+    }
+
     // `test -L` rather than `stat -c %F`, whose output is localized.
     fn resolv_conf_is_symlink(&self) -> bool {
         std::process::Command::new("sudo")
@@ -216,6 +237,45 @@ fn the_helper_restores_an_owner_that_is_not_its_own() {
     ops.put_back(&path, &taken).unwrap();
     assert_eq!(fixture.resolv_conf_owner(), "12345:12345");
     assert_eq!(fixture.read_resolv_conf(), ORIGINAL);
+}
+
+// The owner of a restored symlink is set by name and then checked off an `O_PATH`
+// descriptor, since nothing hands back a descriptor for a link it creates. Everywhere else
+// a symlink is put back it already carries the owner the helper writes as, so this is the
+// only test in which that check has two different values to tell apart.
+#[test]
+#[ignore = "requires passwordless sudo"]
+fn the_helper_restores_a_symlink_owned_by_someone_else() {
+    require_sudo!();
+    let fixture = RootOwnedRootfs::new();
+    fixture
+        .replace_resolv_conf_with_symlink("../run/systemd/resolve/stub-resolv.conf", "12345:12345");
+    let ops = privileged(&fixture.path);
+    let path = RelPath::parse("/etc/resolv.conf").unwrap();
+
+    let taken = ops
+        .take(&path)
+        .unwrap()
+        .expect("the entry should have been there");
+    assert_eq!(
+        taken,
+        TakenEntry::Symlink {
+            target: b"../run/systemd/resolve/stub-resolv.conf".to_vec(),
+            owner: Owner {
+                uid: 12345,
+                gid: 12345
+            },
+        }
+    );
+
+    ops.write_file(&path, b"nameserver 1.1.1.1\n", FileMode::new(0o644))
+        .unwrap();
+    assert!(!fixture.resolv_conf_is_symlink());
+
+    ops.put_back(&path, &taken).unwrap();
+    assert!(fixture.resolv_conf_is_symlink());
+    assert_eq!(fixture.resolv_conf_target(), "../run/systemd/resolve/stub-resolv.conf");
+    assert_eq!(fixture.resolv_conf_owner(), "12345:12345");
 }
 
 #[test]

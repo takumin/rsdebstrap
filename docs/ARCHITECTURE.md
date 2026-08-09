@@ -259,6 +259,14 @@ patterns run throughout `src/isolation/`:
   crosses the privilege boundary as one base64-in-JSON request, so the bytes exist several
   times over at the peak.
 
+  Staging a *symlink* cannot bind at all: no syscall creates one and hands back a descriptor,
+  and the staging name is announced to anyone watching the directory. Checking is enough
+  there for a reason that does not generalize — a symlink has nothing to it but its target,
+  which is fixed at creation, so a link that is a symlink, points where the call asked, and
+  carries the owner it restored is not merely *like* the staged one, it is indistinguishable
+  from it. All three come off one `O_PATH | O_NOFOLLOW` descriptor, and its identity is what
+  the promoting rename rechecks.
+
   The steps that name an entry rather than holding one are where binding stops being
   achievable, and there are three: the `renameat` that detaches, the `unlinkat` that removes
   what was taken, and the `renameat` that promotes a staged write over the caller's name.

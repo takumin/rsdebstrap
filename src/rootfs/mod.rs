@@ -668,8 +668,10 @@ impl LocalRootfsOps {
             )
         })?;
 
-        // By name rather than by descriptor because a symlink cannot be opened to hold
-        // one. The name is this call's own staging name, which no one else knows.
+        // By name because there is no syscall that creates a symlink and hands back a
+        // descriptor for it, and the staging name is not a secret -- a watcher on the
+        // directory is told about the creation. So this cannot bind the way `install_file`
+        // does, and it does not try to: `verify_staged_symlink` checks instead.
         if let Some(owner) = owner {
             let chowned = self.chown_if_different(dir, staging.as_str(), owner);
             if let Err(e) = chowned {
@@ -681,17 +683,77 @@ impl LocalRootfsOps {
             }
         }
 
-        let staged = rfs::statat(dir, staging.as_str(), AtFlags::SYMLINK_NOFOLLOW)
-            .map(|staged| Identity::of(&staged))
-            .map_err(|e| {
-                let _ = rfs::unlinkat(dir, staging.as_str(), AtFlags::empty());
-                RsdebstrapError::io(
-                    format!("failed to stat {}/{}", self.display_root, staging),
-                    std::io::Error::from(e),
-                )
-            })?;
-
+        let staged = self.verify_staged_symlink(dir, &staging, path, target, owner)?;
         self.promote(dir, &staging, path, &staged)
+    }
+
+    /// Checks that `staging` is the symlink this call meant to publish, and returns which
+    /// inode that is.
+    ///
+    /// `install_file` binds: `O_CREAT | O_EXCL` hands back a descriptor, and the content,
+    /// the mode and the owner all land on it. Creating a symlink hands back nothing to hold,
+    /// and the staging name is announced to anyone watching the directory, so an inode
+    /// substituted between the `symlinkat` and here would be described by any identity
+    /// sampled afterwards -- and would agree with itself all the way to the rename.
+    ///
+    /// What makes checking sufficient here rather than merely narrowing is that a symlink
+    /// has nothing else to it. Its target is fixed at creation -- no syscall edits one in
+    /// place -- so a link that is a symlink, points where this call asked, and carries the
+    /// owner this call restored is not *like* the one that was staged, it is
+    /// indistinguishable from it. All three come off one `O_PATH | O_NOFOLLOW` descriptor,
+    /// whose identity is then what [`Self::promote`] rechecks before publishing.
+    ///
+    /// A mismatch leaves the entry alone: the name means someone else's link at that point,
+    /// and removing it is no more this call's business than publishing it was.
+    fn verify_staged_symlink(
+        &self,
+        dir: BorrowedFd<'_>,
+        staging: &str,
+        path: &RelPath,
+        target: &[u8],
+        owner: Option<Owner>,
+    ) -> Result<Identity> {
+        let mismatch = |what: &str| {
+            Err(RsdebstrapError::Isolation(format!(
+                "{}/{} is not the symlink staged for {}{} ({}), refusing to install it",
+                self.display_root, staging, self.display_root, path, what
+            )))
+        };
+
+        let fd = rfs::openat(
+            dir,
+            staging,
+            OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| open_error(e, &format!("{}/{}", self.display_root, staging)))?;
+
+        let stat = rfs::fstat(&fd).map_err(|e| {
+            RsdebstrapError::io(
+                format!("failed to stat {}/{}", self.display_root, staging),
+                std::io::Error::from(e),
+            )
+        })?;
+        if FileType::from_raw_mode(stat.st_mode as rfs::RawMode) != FileType::Symlink {
+            return mismatch("no longer a symlink");
+        }
+        if let Some(owner) = owner
+            && Owner::of(&stat) != owner
+        {
+            return mismatch("wrong owner");
+        }
+
+        let staged_target = rfs::readlinkat(&fd, "", Vec::new()).map_err(|e| {
+            RsdebstrapError::io(
+                format!("failed to read symlink {}/{}", self.display_root, staging),
+                std::io::Error::from(e),
+            )
+        })?;
+        if staged_target.as_bytes() != target {
+            return mismatch("wrong target");
+        }
+
+        Ok(Identity::of(&stat))
     }
 
     /// Chowns the staged entry `name` in `dir` to `owner`, if it is not already there.
