@@ -41,7 +41,7 @@ fn main() -> Result<()> {
         cli::Commands::Apply(opts) => {
             let executor = Arc::new(executor::RealCommandExecutor::new(opts.dry_run));
 
-            run_apply(opts, executor)?;
+            run_apply(&opts.common, executor)?;
         }
         cli::Commands::Validate(opts) => run_validate(opts)?,
         cli::Commands::Completions(_) => unreachable!("stdout-only subcommands handled earlier"),

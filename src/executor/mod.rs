@@ -247,10 +247,11 @@ pub trait CommandExecutor: Send + Sync {
     /// the rootfs operations all derive their behaviour from it rather than carrying their
     /// own copy, so no two layers can disagree about whether the run is a dry run.
     ///
-    /// Defaults to `false` for the mock executors in tests, which are not dry runs.
-    fn dry_run(&self) -> bool {
-        false
-    }
+    /// Deliberately has no default. A default would have to be `false`, and an
+    /// implementation that forgot to answer would then claim to be a live run: the rootfs
+    /// ops would escalate, mount would run, and a test meaning to stay in dry run would
+    /// touch the machine. Making it required turns that omission into a compile error.
+    fn dry_run(&self) -> bool;
 
     /// Executes a command and returns an error for non-zero exit status.
     ///

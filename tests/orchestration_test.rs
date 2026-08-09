@@ -18,8 +18,6 @@ struct RecordingExecutor {
 }
 
 impl CommandExecutor for RecordingExecutor {
-    // Every `run_apply` case here passes `dry_run: true`, and the executor is now what says
-    // so: `main` builds it from the flag, and the rest of the run derives from the executor.
     fn dry_run(&self) -> bool {
         true
     }
@@ -113,19 +111,16 @@ bootstrap:
 fn run_apply_uses_executor_with_built_args() {
     let file = write_yaml_tempfile(bootstrap_only_yaml());
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
-    let opts = cli::ApplyArgs {
-        common: cli::CommonArgs {
-            file: path.to_owned(),
-            log_level: cli::LogLevel::Error,
-        },
-        dry_run: true,
+    let common = cli::CommonArgs {
+        file: path.to_owned(),
+        log_level: cli::LogLevel::Error,
     };
     let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
         calls: Arc::clone(&calls),
     });
 
-    run_apply(&opts, executor).expect("run_apply should succeed");
+    run_apply(&common, executor).expect("run_apply should succeed");
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
@@ -138,19 +133,16 @@ fn run_apply_uses_executor_with_built_args() {
 fn run_apply_uses_executor_with_debootstrap_args() {
     let file = write_yaml_tempfile(bootstrap_only_debootstrap_yaml());
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
-    let opts = cli::ApplyArgs {
-        common: cli::CommonArgs {
-            file: path.to_owned(),
-            log_level: cli::LogLevel::Error,
-        },
-        dry_run: true,
+    let common = cli::CommonArgs {
+        file: path.to_owned(),
+        log_level: cli::LogLevel::Error,
     };
     let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
         calls: Arc::clone(&calls),
     });
 
-    run_apply(&opts, executor).expect("run_apply should succeed");
+    run_apply(&common, executor).expect("run_apply should succeed");
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
@@ -186,19 +178,16 @@ fn run_validate_succeeds_on_valid_profile() {
 fn run_apply_with_pipeline_tasks_uses_isolation() {
     let file = write_yaml_tempfile(provisioner_yaml());
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
-    let opts = cli::ApplyArgs {
-        common: cli::CommonArgs {
-            file: path.to_owned(),
-            log_level: cli::LogLevel::Error,
-        },
-        dry_run: true,
+    let common = cli::CommonArgs {
+        file: path.to_owned(),
+        log_level: cli::LogLevel::Error,
     };
     let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
         calls: Arc::clone(&calls),
     });
 
-    run_apply(&opts, executor).expect("run_apply should succeed");
+    run_apply(&common, executor).expect("run_apply should succeed");
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
@@ -231,6 +220,10 @@ impl FailingExecutor {
 }
 
 impl CommandExecutor for FailingExecutor {
+    fn dry_run(&self) -> bool {
+        true
+    }
+
     fn execute(&self, spec: &CommandSpec) -> anyhow::Result<ExecutionResult> {
         let current = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
         self.calls
@@ -252,12 +245,9 @@ impl CommandExecutor for FailingExecutor {
 fn run_apply_propagates_provision_failure() {
     let file = write_yaml_tempfile(provisioner_yaml());
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
-    let opts = cli::ApplyArgs {
-        common: cli::CommonArgs {
-            file: path.to_owned(),
-            log_level: cli::LogLevel::Error,
-        },
-        dry_run: true,
+    let common = cli::CommonArgs {
+        file: path.to_owned(),
+        log_level: cli::LogLevel::Error,
     };
 
     // Fail starting from the 2nd call (pipeline task execution)
@@ -265,7 +255,7 @@ fn run_apply_propagates_provision_failure() {
     // Call 2: chroot for pipeline task (fails) - this is the pipeline error
     let executor: Arc<dyn CommandExecutor> = Arc::new(FailingExecutor::new(2));
 
-    let result = run_apply(&opts, executor);
+    let result = run_apply(&common, executor);
 
     assert!(result.is_err());
 
@@ -277,4 +267,34 @@ fn run_apply_propagates_provision_failure() {
         "Expected provisioner error, got: {}",
         err_string
     );
+}
+
+// A dry run must leave the machine alone, and the executor is the only thing that says a
+// run is one. `FailingExecutor` used to inherit a `dry_run()` that answered `false`, so
+// this suite's "dry run" cases went live: `run_apply` created the profile's `dir` and the
+// pipeline escalated to a real `sudo` rootfs helper. Nothing failed, because a live run of
+// a mocked executor still succeeds — the damage was silent.
+//
+// Pinning the directory is enough to catch that: it is the first thing `run_apply` does
+// differently, and it does it before any executor call.
+#[test]
+fn a_dry_run_creates_no_directory() {
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let dir = Utf8Path::from_path(tmp.path()).expect("temp path should be valid UTF-8");
+    let absent = dir.join("would-be-created");
+
+    let yaml = format!(
+        "---\ndir: {absent}\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  \
+         target: rootfs.tar.zst\n  mirrors:\n  - https://deb.debian.org/debian\n"
+    );
+    let file = write_yaml_tempfile(&yaml);
+    let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
+    let common = cli::CommonArgs {
+        file: path.to_owned(),
+        log_level: cli::LogLevel::Error,
+    };
+
+    run_apply(&common, Arc::new(RecordingExecutor::default())).expect("run_apply should succeed");
+
+    assert!(!absent.exists(), "a dry run created {absent}");
 }
