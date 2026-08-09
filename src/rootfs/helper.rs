@@ -192,6 +192,28 @@ impl Channel {
     }
 }
 
+/// Reaping lives here, on the value that owns the child, rather than on
+/// [`PrivilegedRootfsOps`], which owns it behind a `Mutex`.
+///
+/// The difference is what happens after a panic while the channel is locked. Reaping from
+/// the outer type means taking the poisoned lock and deciding what to do about it, and the
+/// obvious `let Ok(..) = .. else { return }` skips the reap in exactly the case the comment
+/// below is about. Dropping a `Mutex` drops its contents whether or not it is poisoned, so
+/// putting the work here means there is no lock to take and no decision to get wrong.
+impl Drop for Channel {
+    fn drop(&mut self) {
+        // Closing stdin ends the helper's read loop, so it exits on its own and
+        // `wait` reaps it. Without this the child would outlive us as a zombie
+        // holding a root-owned descriptor into the rootfs.
+        drop(self.stdin.take());
+        match self.child.wait() {
+            Ok(status) if status.success() => tracing::debug!("privileged helper exited"),
+            Ok(status) => tracing::warn!("privileged helper exited with {status}"),
+            Err(e) => tracing::warn!("failed to reap the privileged helper: {e}"),
+        }
+    }
+}
+
 impl PrivilegedRootfsOps {
     /// Spawns the helper under `method` and anchors it to `rootfs`.
     ///
@@ -308,23 +330,6 @@ impl PrivilegedRootfsOps {
 
 fn unexpected_response() -> RsdebstrapError {
     RsdebstrapError::Isolation("privileged helper answered a different request".into())
-}
-
-impl Drop for PrivilegedRootfsOps {
-    fn drop(&mut self) {
-        let Ok(channel) = self.channel.get_mut() else {
-            return;
-        };
-        // Closing stdin ends the helper's read loop, so it exits on its own and
-        // `wait` reaps it. Without this the child would outlive us as a zombie
-        // holding a root-owned descriptor into the rootfs.
-        drop(channel.stdin.take());
-        match channel.child.wait() {
-            Ok(status) if status.success() => tracing::debug!("privileged helper exited"),
-            Ok(status) => tracing::warn!("privileged helper exited with {status}"),
-            Err(e) => tracing::warn!("failed to reap the privileged helper: {e}"),
-        }
-    }
 }
 
 impl RootfsOps for PrivilegedRootfsOps {
@@ -461,5 +466,43 @@ mod tests {
     fn a_directory_under_a_refused_one_is_accepted() {
         let (_tmp, root) = rootfs();
         CheckedAnchor::open(&root).expect("a tempdir is not the live system");
+    }
+
+    // A panic while the channel was locked poisons the mutex. Reaping used to happen on
+    // `PrivilegedRootfsOps`, which had to take that lock and gave up when it was poisoned —
+    // skipping the stdin close and the `wait` in precisely the case that leaves a root-owned
+    // helper behind. It happens in `Channel::drop` now, which a poisoned mutex still runs.
+    //
+    // `cat` stands in for the helper: it reads stdin until it closes, then exits, which is
+    // the same shape and needs no escalation. A still-running child and an unreaped zombie
+    // both keep /proc/<pid> alive, so its absence is the whole assertion.
+    #[test]
+    fn a_poisoned_channel_still_reaps_the_child() {
+        let mut child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn the stand-in child");
+        let pid = child.id();
+        let channel = Mutex::new(Channel {
+            stdin: Some(child.stdin.take().expect("stdin was piped")),
+            stdout: BufReader::new(child.stdout.take().expect("stdout was piped")),
+            child,
+        });
+
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = channel.lock().unwrap();
+            panic!("poison the channel");
+        }));
+        assert!(poisoned.is_err(), "the panic should have unwound");
+        assert!(channel.is_poisoned(), "the mutex should be poisoned");
+
+        drop(channel);
+
+        let proc_entry = format!("/proc/{pid}");
+        assert!(
+            !std::path::Path::new(&proc_entry).exists(),
+            "{proc_entry} still exists: the child was left running or unreaped"
+        );
     }
 }
