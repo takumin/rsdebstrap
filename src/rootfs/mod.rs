@@ -316,6 +316,72 @@ impl LocalRootfsOps {
         format!(".{}.rsdebstrap-{}", name, uuid::Uuid::new_v4().simple())
     }
 
+    /// Reads the regular file `path` names in `dir`, refusing whatever the descriptor
+    /// turns out to hold instead.
+    ///
+    /// `O_NONBLOCK` because the entry may have become a FIFO since the `statat` that
+    /// chose this branch, and opening one for reading otherwise blocks until a writer
+    /// appears — for the privileged helper, that is the build hanging with no output.
+    fn read_regular_file(
+        &self,
+        dir: BorrowedFd<'_>,
+        path: &RelPath,
+    ) -> Result<(TakenEntry, Identity)> {
+        let fd = rfs::openat(
+            dir,
+            path.file_name(),
+            OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| open_error(e, &format!("{}{}", self.display_root, path)))?;
+
+        let stat = rfs::fstat(&fd).map_err(|e| {
+            RsdebstrapError::io(
+                format!("failed to stat {}{}", self.display_root, path),
+                std::io::Error::from(e),
+            )
+        })?;
+        let kind = FileType::from_raw_mode(stat.st_mode as rfs::RawMode);
+        if kind != FileType::RegularFile {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{}{} is a {:?}, refusing to detach it",
+                self.display_root, path, kind
+            )));
+        }
+        if stat.st_size as u64 > MAX_TAKE_SIZE {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{}{} is {} bytes, refusing to detach an entry over {} bytes",
+                self.display_root, path, stat.st_size, MAX_TAKE_SIZE
+            )));
+        }
+
+        // Bounded on top of the size just read, not instead of it: the file can grow
+        // between the two, and an unbounded `read_to_end` would follow it up to whatever
+        // the writer produces. The limit is what keeps a detached entry small enough to
+        // hold in memory and to serialize back over the helper channel.
+        let mut content = Vec::new();
+        File::from(fd)
+            .take(MAX_TAKE_SIZE + 1)
+            .read_to_end(&mut content)
+            .map_err(|e| {
+                RsdebstrapError::io(format!("failed to read {}{}", self.display_root, path), e)
+            })?;
+        if content.len() as u64 > MAX_TAKE_SIZE {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{}{} grew past {} bytes while it was being read, refusing to detach it",
+                self.display_root, path, MAX_TAKE_SIZE
+            )));
+        }
+
+        Ok((
+            TakenEntry::File {
+                content,
+                mode: FileMode::new(stat.st_mode),
+            },
+            Identity::of(&stat),
+        ))
+    }
+
     /// Takes the whole [`RelPath`] rather than the final component it renames to, so the
     /// error names the entry the caller asked for: interpolating the component alone
     /// reported `<rootfs>/resolv.conf` for a write to `/etc/resolv.conf`.
@@ -327,6 +393,26 @@ impl LocalRootfsOps {
                 std::io::Error::from(e),
             )
         })
+    }
+}
+
+/// Which inode a syscall landed on.
+///
+/// Every call here resolves a name, so two of them can land on two different inodes.
+/// Comparing this is how [`RootfsOps::take`] refuses to return one entry's contents and
+/// detach another's.
+#[derive(Debug, PartialEq, Eq)]
+struct Identity {
+    dev: u64,
+    ino: u64,
+}
+
+impl Identity {
+    fn of(stat: &rfs::Stat) -> Self {
+        Self {
+            dev: stat.st_dev,
+            ino: stat.st_ino,
+        }
     }
 }
 
@@ -444,7 +530,10 @@ impl RootfsOps for LocalRootfsOps {
             }
         };
 
-        let entry = match FileType::from_raw_mode(stat.st_mode as rfs::RawMode) {
+        // All this `stat` decides is which branch to take. It cannot decide what is safe
+        // to read: the calls below resolve `name` again, so a branch's own limits have to
+        // be checked against the inode it ends up holding, not against this one.
+        let (entry, read) = match FileType::from_raw_mode(stat.st_mode as rfs::RawMode) {
             FileType::Symlink => {
                 let target = rfs::readlinkat(dir, name, Vec::new()).map_err(|e| {
                     RsdebstrapError::io(
@@ -452,33 +541,14 @@ impl RootfsOps for LocalRootfsOps {
                         std::io::Error::from(e),
                     )
                 })?;
-                TakenEntry::Symlink {
-                    target: target.to_string_lossy().into_owned(),
-                }
-            }
-            FileType::RegularFile => {
-                if stat.st_size as u64 > MAX_TAKE_SIZE {
-                    return Err(RsdebstrapError::Isolation(format!(
-                        "{}{} is {} bytes, refusing to detach an entry over {} bytes",
-                        self.display_root, path, stat.st_size, MAX_TAKE_SIZE
-                    )));
-                }
-                let fd = rfs::openat(
-                    dir,
-                    name,
-                    OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::CLOEXEC,
-                    Mode::empty(),
+                (
+                    TakenEntry::Symlink {
+                        target: target.to_string_lossy().into_owned(),
+                    },
+                    Identity::of(&stat),
                 )
-                .map_err(|e| open_error(e, &format!("{}{}", self.display_root, path)))?;
-                let mut content = Vec::new();
-                File::from(fd).read_to_end(&mut content).map_err(|e| {
-                    RsdebstrapError::io(format!("failed to read {}{}", self.display_root, path), e)
-                })?;
-                TakenEntry::File {
-                    content,
-                    mode: FileMode::new(stat.st_mode),
-                }
             }
+            FileType::RegularFile => self.read_regular_file(dir, path)?,
             other => {
                 return Err(RsdebstrapError::Isolation(format!(
                     "{}{} is a {:?}, refusing to detach it",
@@ -486,6 +556,26 @@ impl RootfsOps for LocalRootfsOps {
                 )));
             }
         };
+
+        // The entry about to be unlinked has to be the one that was just read, or `take`
+        // returns one inode's contents and detaches another's. Linux has no unlink-by-
+        // descriptor, so this narrows the window to these two calls rather than closing
+        // it; what it does close is the far wider one that spans the read.
+        let current = rfs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)
+            .map(|current| Identity::of(&current))
+            .map_err(|e| {
+                RsdebstrapError::io(
+                    format!("failed to stat {}{}", self.display_root, path),
+                    std::io::Error::from(e),
+                )
+            })?;
+        if current != read {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{}{} was replaced while it was being detached, refusing to remove it \
+                (possible symlink attack)",
+                self.display_root, path
+            )));
+        }
 
         rfs::unlinkat(dir, name, AtFlags::empty()).map_err(|e| {
             RsdebstrapError::io(
@@ -654,6 +744,46 @@ mod tests {
                 .unwrap(),
             "../run/systemd/resolve/stub-resolv.conf"
         );
+    }
+
+    // The limit is checked on the descriptor `take` reads from, not on the earlier
+    // `statat`, so a file that is oversized at open time is refused whatever the name
+    // resolved to a moment earlier.
+    #[test]
+    fn take_refuses_an_oversized_file() {
+        let (_tmp, root) = rootfs();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+        let path = RelPath::parse("/etc/resolv.conf").unwrap();
+        std::fs::write(root.join("etc/resolv.conf"), vec![b'x'; (MAX_TAKE_SIZE + 1) as usize])
+            .unwrap();
+
+        let err = ops.take(&path).unwrap_err().to_string();
+
+        assert!(err.contains("refusing to detach"), "unexpected error: {err}");
+        assert!(root.join("etc/resolv.conf").exists(), "refused but still detached");
+    }
+
+    // Anything that is not a regular file or a symlink has no in-memory representation
+    // here, and a FIFO would additionally block the read it is opened for.
+    #[test]
+    fn take_refuses_a_fifo() {
+        let (_tmp, root) = rootfs();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+        rfs::mknodat(
+            CWD,
+            root.join("etc/resolv.conf").as_str(),
+            FileType::Fifo,
+            Mode::from_raw_mode(0o644),
+            0,
+        )
+        .unwrap();
+
+        let err = ops
+            .take(&RelPath::parse("/etc/resolv.conf").unwrap())
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("refusing to detach"), "unexpected error: {err}");
     }
 
     #[test]
