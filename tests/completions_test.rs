@@ -41,7 +41,6 @@ fn test_completion_contents() -> Result<()> {
     Ok(())
 }
 
-// The `shell` argument reaches the command handler intact.
 #[test]
 fn test_completions_command_carries_shell() -> Result<()> {
     let args = Cli::parse_from(["rsdebstrap", "completions", "bash"]);

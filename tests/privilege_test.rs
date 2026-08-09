@@ -6,7 +6,6 @@ use rsdebstrap::phase::{ScriptSource, ShellTask};
 use rsdebstrap::privilege::{PrivilegeDefaults, PrivilegeMethod};
 use tempfile::tempdir;
 
-// The privilege a provision task resolves to under the profile's defaults.
 fn task_privilege(profile: &Profile, index: usize) -> Option<PrivilegeMethod> {
     profile.provision[index]
         .privilege()
@@ -14,7 +13,6 @@ fn task_privilege(profile: &Profile, index: usize) -> Option<PrivilegeMethod> {
         .expect("resolve should succeed")
 }
 
-// The privilege the bootstrap backend resolves to under the profile's defaults.
 fn bootstrap_privilege(profile: &Profile) -> Option<PrivilegeMethod> {
     profile
         .bootstrap

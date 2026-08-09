@@ -548,7 +548,6 @@ mod tests {
             executor.clone(),
             None,
         );
-        // Should not fail even though rootfs doesn't exist (dry-run skips mkdir)
         mounts.mount().unwrap();
         mounts.unmount().unwrap();
 

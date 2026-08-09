@@ -331,8 +331,6 @@ mod tests {
         "assemble:\n  resolv_conf:\n    link: ../run/systemd/resolve/stub-resolv.conf\n";
     const GENERATE_ASSEMBLE: &str = "assemble:\n  resolv_conf:\n    name_servers: [198.51.100.1]\n";
 
-    // Minimal profile with a link-mode assemble task when `assemble` is set;
-    // delegates to [`profile_yaml_with_assemble`].
     fn profile_yaml(
         dir: &Utf8Path,
         prepare: bool,

@@ -79,7 +79,6 @@ fn has_non_ip_name_server(doc: &Value) -> bool {
     }
 }
 
-// Asserts the safety invariant for a single document.
 fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
     let deser_ok = serde_json::from_value::<Profile>(doc.clone()).is_ok();
     let schema_ok = VALIDATOR.is_valid(doc);

@@ -42,7 +42,6 @@ fn write_yaml_tempfile(yaml: &str) -> NamedTempFile {
     file
 }
 
-// Minimal bootstrap-only YAML (no provisioners).
 fn bootstrap_only_yaml() -> &'static str {
     // editorconfig-checker-disable
     r#"---

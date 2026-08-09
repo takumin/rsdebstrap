@@ -80,7 +80,6 @@ fn cwd_is_applied_to_child() {
         "sentinel unexpectedly present in the test's working directory"
     );
 
-    // With cwd applied, `test -f <sentinel>` finds the file created in that dir.
     let spec =
         CommandSpec::new("sh", vec!["-c".into(), format!("test -f {sentinel}")]).with_cwd(cwd);
     let result = executor.execute(&spec).expect("execute should spawn");
@@ -106,7 +105,6 @@ fn env_is_applied_to_child() {
     );
     let script = format!("test \"${var}\" = present");
 
-    // With the env var set, the shell test succeeds (exit 0).
     let spec = CommandSpec::new("sh", vec!["-c".into(), script.clone()]).with_env(var, "present");
     let result = executor.execute(&spec).expect("execute should spawn");
     assert_eq!(result.code(), Some(0), "env var should be visible to the child");

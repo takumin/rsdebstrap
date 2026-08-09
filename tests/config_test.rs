@@ -2081,7 +2081,6 @@ fn test_dir_rejects_non_string_scalars() {
 
 #[test]
 fn test_dir_accepts_quoted_scalar_lookalikes() {
-    // Quoting makes them genuine strings; those stay accepted.
     for good in ["dir: \"42\"\n", "dir: \"null\"\n", "dir: \"~\"\n"] {
         let yaml = format!("{MINIMAL_BOOTSTRAP}{good}");
         assert!(deserializes(&yaml), "expected acceptance of {good:?}");
