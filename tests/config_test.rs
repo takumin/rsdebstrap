@@ -253,7 +253,9 @@ bootstrap:
 #[test]
 fn test_profile_parsing_rejects_incomplete_shell_task() -> Result<()> {
     // editorconfig-checker-disable
-    // With ScriptSource enum, missing script/content is now a parse error, not validation error
+    // `ShellTask`'s `Deserialize` resolves the script source through
+    // `resolve_script_source`, so a task carrying neither key fails at parse time and never
+    // reaches `validate()`.
     let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test

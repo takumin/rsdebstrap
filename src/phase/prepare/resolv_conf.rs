@@ -110,7 +110,7 @@ mod tests {
 
     // `config()` is what the isolation layer consumes, so pin the mapping
     // once on the field-carrying case; the copy case is covered end to end
-    // by `setup_copy_mode_issues_correct_commands` in
+    // by `setup_copies_the_host_file_in_copy_mode` in
     // `src/isolation/resolv_conf.rs`.
     #[test]
     fn config_generate() {
