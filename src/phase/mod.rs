@@ -184,6 +184,15 @@ pub(crate) fn validate_host_file_exists(
     Ok(())
 }
 
+/// Refuses to stage a host file larger than this.
+///
+/// Staging buffers the whole file: it crosses the privilege boundary as one helper request,
+/// base64 inside JSON, so the bytes exist several times over at the peak. The largest thing
+/// a profile legitimately names here is a mitamae binary, tens of megabytes; this leaves
+/// room for that and turns "the profile named something enormous" into an error rather than
+/// two processes growing until one of them is killed.
+const MAX_HOST_FILE_SIZE: u64 = 64 << 20;
+
 /// Reads a host file, refusing a symlink or a non-regular file at the same descriptor.
 ///
 /// [`validate_host_file_exists`] performs the same check earlier, for a readable error
@@ -218,10 +227,28 @@ pub(crate) fn read_host_file(path: &Utf8Path, label: &str) -> Result<Vec<u8>> {
         );
     }
 
+    if stat.st_size as u64 > MAX_HOST_FILE_SIZE {
+        return Err(RsdebstrapError::Validation(format!(
+            "{} {} is {} bytes, refusing to stage a file over {} bytes",
+            label, path, stat.st_size, MAX_HOST_FILE_SIZE
+        ))
+        .into());
+    }
+
+    // Bounded on top of the size just read from this descriptor, because a writer can
+    // still extend the file and an unbounded `read_to_end` would follow it.
     let mut content = Vec::new();
     std::fs::File::from(fd)
+        .take(MAX_HOST_FILE_SIZE + 1)
         .read_to_end(&mut content)
         .with_context(|| format!("failed to read {} {}", label, path))?;
+    if content.len() as u64 > MAX_HOST_FILE_SIZE {
+        return Err(RsdebstrapError::Validation(format!(
+            "{} {} grew past {} bytes while it was being read, refusing to stage it",
+            label, path, MAX_HOST_FILE_SIZE
+        ))
+        .into());
+    }
     Ok(content)
 }
 

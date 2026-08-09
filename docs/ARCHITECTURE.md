@@ -258,7 +258,9 @@ patterns run throughout `src/isolation/`:
   Refusing an entry (wrong type, over `MAX_TAKE_SIZE`) has to rename it back, since "refused"
   has to mean nothing was detached; if that rollback fails, the error names where the entry
   is. The read stays bounded even though the size came off the same descriptor, because a
-  descriptor opened before the rename still writes to the inode.
+  descriptor opened before the rename still writes to the inode. `read_host_file` bounds the
+  host side the same way and for a second reason: staging crosses the privilege boundary as
+  one base64-in-JSON request, so the bytes exist several times over at the peak.
 
   What the value carries is what a faithful restore needs: content, mode and owner.
   `put_back` installs a *new* inode — that is what makes it atomic — so an owner it did not

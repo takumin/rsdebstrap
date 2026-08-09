@@ -28,6 +28,10 @@ and this project adheres to
   `schemars` and `serde_json` are ordinary dependencies. Adds ~460 KB to the
   release binary. `--no-default-features` no longer produces a schema-less
   build.
+- A provision task's script, recipe, or mitamae binary is staged into the rootfs
+  through the same descriptor-anchored path, which buffers the file to cross the
+  privilege boundary in one request. Files over 64 MiB are refused rather than
+  read into memory in both processes.
 - Profile parse errors name the field path that failed — `provision[0]`,
   `bootstrap` — after the line and column. The untagged `privilege` and
   `isolation` enums report only "data did not match any variant", which on its

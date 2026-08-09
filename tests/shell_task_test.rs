@@ -262,6 +262,39 @@ fn test_run_fails_when_script_copy_fails() {
     );
 }
 
+// Staging buffers the whole file to cross the privilege boundary as one request, so a
+// profile naming something enormous has to be an error rather than two processes growing
+// until one is killed. The fixture is sparse: the refusal comes off the size `fstat`
+// reports, so nothing has to be written to reach it.
+#[test]
+fn test_run_refuses_an_oversized_external_script() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = camino::Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .expect("path should be valid UTF-8");
+
+    setup_valid_rootfs(&temp_dir);
+
+    let script_path = temp_dir.path().join("enormous.sh");
+    let script = std::fs::File::create(&script_path).expect("failed to create script");
+    script
+        .set_len((64 << 20) + 1)
+        .expect("failed to size the script");
+    drop(script);
+    let script_path_utf8 =
+        camino::Utf8PathBuf::from_path_buf(script_path).expect("script path should be valid UTF-8");
+
+    let task = ShellTask::new(ScriptSource::Script(script_path_utf8));
+    let context = MockContext::new(&rootfs);
+
+    let err_msg = format!("{:#}", task.execute(&context, None).unwrap_err());
+
+    assert!(
+        err_msg.contains("refusing to stage a file over"),
+        "Expected the size refusal, got: {}",
+        err_msg
+    );
+}
+
 #[test]
 fn test_execute_inline_script_success() {
     let temp_dir = tempdir().expect("failed to create temp dir");
