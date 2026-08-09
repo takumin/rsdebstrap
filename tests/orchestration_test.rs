@@ -62,6 +62,24 @@ bootstrap:
     // editorconfig-checker-enable
 }
 
+// `bootstrap_only_yaml` with the output directory chosen by the caller, for tests that
+// assert on whether the directory ends up existing.
+fn bootstrap_only_yaml_in(dir: &Utf8Path) -> String {
+    // editorconfig-checker-disable
+    format!(
+        r#"---
+dir: {dir}
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs.tar.zst
+  mirrors:
+  - https://deb.debian.org/debian
+"#
+    )
+    // editorconfig-checker-enable
+}
+
 // Minimal YAML with a provisioner (requires directory target for pipeline).
 fn provisioner_yaml() -> &'static str {
     // editorconfig-checker-disable
@@ -283,11 +301,7 @@ fn a_dry_run_creates_no_directory() {
     let dir = Utf8Path::from_path(tmp.path()).expect("temp path should be valid UTF-8");
     let absent = dir.join("would-be-created");
 
-    let yaml = format!(
-        "---\ndir: {absent}\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  \
-         target: rootfs.tar.zst\n  mirrors:\n  - https://deb.debian.org/debian\n"
-    );
-    let file = write_yaml_tempfile(&yaml);
+    let file = write_yaml_tempfile(&bootstrap_only_yaml_in(&absent));
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let common = cli::CommonArgs {
         file: path.to_owned(),
