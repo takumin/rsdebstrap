@@ -111,7 +111,6 @@ provision:
     // editorconfig-checker-enable
 }
 
-// Minimal bootstrap-only YAML using the debootstrap backend.
 fn bootstrap_only_debootstrap_yaml() -> &'static str {
     // editorconfig-checker-disable
     r#"---

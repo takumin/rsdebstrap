@@ -15,7 +15,6 @@ use jsonschema::Validator;
 use rsdebstrap::config::Profile;
 use serde_json::Value;
 
-// Builds a validator from the crate's generated schema.
 fn validator() -> Validator {
     let schema = rsdebstrap::profile_json_schema();
     jsonschema::validator_for(&schema).expect("generated schema must be a valid JSON Schema")

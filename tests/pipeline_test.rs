@@ -23,7 +23,6 @@ static EMPTY_PREPARE: PrepareConfig = PrepareConfig {
 };
 static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig { resolv_conf: None };
 
-// Builds a pipeline with only provision tasks (empty prepare/assemble phases).
 fn provision_pipeline(tasks: &[ProvisionTask]) -> Pipeline<'_> {
     Pipeline::new(&EMPTY_PREPARE, tasks, &EMPTY_ASSEMBLE, None, &IsolationConfig::default())
         .expect("no task declares `privilege: true`, so resolution cannot fail")
@@ -82,12 +81,10 @@ impl CommandExecutor for MockExecutor {
     }
 }
 
-// Helper to create a simple inline shell task.
 fn inline_task(content: &str) -> ProvisionTask {
     ProvisionTask::Shell(ShellTask::new(ScriptSource::Content(content.to_string())))
 }
 
-// Helper to create an inline shell task with isolation disabled (direct execution).
 fn inline_task_direct(content: &str) -> ProvisionTask {
     let yaml = format!("content: \"{}\"\nisolation: false\n", content);
     ProvisionTask::Shell(yaml_serde::from_str(&yaml).unwrap())

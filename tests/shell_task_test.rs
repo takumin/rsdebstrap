@@ -16,7 +16,6 @@ use tempfile::tempdir;
 
 use crate::helpers::MockContext;
 
-// Helper to set up a valid rootfs with /tmp and /bin/sh
 fn setup_valid_rootfs(temp_dir: &tempfile::TempDir) {
     let rootfs = temp_dir.path();
     std::fs::create_dir(rootfs.join("tmp")).expect("failed to create tmp dir");

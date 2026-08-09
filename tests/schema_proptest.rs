@@ -293,7 +293,6 @@ fn resolv_conf_strategy() -> impl Strategy<Value = Option<Value>> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
-    // Randomized provision tasks must never be false-rejected by the schema.
     #[test]
     fn provision_tasks_never_false_rejected(tasks in prop::collection::vec(task_strategy(), 0..4)) {
         let doc = json!({
@@ -305,7 +304,6 @@ proptest! {
         assert_no_false_reject(&doc)?;
     }
 
-    // Randomized bootstrap + defaults blocks must never be false-rejected by the schema.
     #[test]
     fn bootstrap_and_defaults_never_false_rejected(
         bootstrap in bootstrap_strategy(),

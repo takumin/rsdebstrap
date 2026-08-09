@@ -8,13 +8,11 @@ use tempfile::tempdir;
 
 use crate::helpers::MockContext;
 
-// Helper to set up a valid rootfs with /tmp
 fn setup_rootfs_with_tmp(temp_dir: &tempfile::TempDir) {
     let rootfs = temp_dir.path();
     std::fs::create_dir(rootfs.join("tmp")).expect("failed to create tmp dir");
 }
 
-// Helper to create a fake mitamae binary in the temp dir
 fn create_fake_binary(temp_dir: &tempfile::TempDir) -> camino::Utf8PathBuf {
     let binary_path = temp_dir.path().join("mitamae");
     std::fs::write(&binary_path, "fake mitamae binary").expect("failed to write binary");
