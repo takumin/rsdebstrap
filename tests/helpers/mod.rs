@@ -18,8 +18,6 @@ use rsdebstrap::privilege::Privilege;
 use tempfile::NamedTempFile;
 use tracing::warn;
 
-// Global mutex to serialize tests that modify the current working directory.
-// This prevents parallel tests from interfering with each other.
 pub static CWD_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[macro_export]
