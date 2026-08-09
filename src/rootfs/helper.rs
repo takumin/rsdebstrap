@@ -71,7 +71,10 @@ pub enum Response {
 
 /// Directories the helper refuses to anchor to, whatever the parent asks for.
 ///
-/// These are the live system's own hierarchy. A rootfs is never one of them.
+/// These are the live system's own hierarchy. A rootfs is never one of them. The list names
+/// the *top* of each hierarchy and matches by inode, so it is a floor and not a boundary:
+/// what keeps the anchor from landing at `/etc/ssh`, which no entry here names, is that
+/// nothing on the way to it is followed.
 const REFUSED_ANCHORS: &[&str] = &[
     "/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib32", "/lib64", "/libx32", "/opt",
     "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/tmp", "/usr", "/var",
@@ -85,12 +88,16 @@ const REFUSED_ANCHORS: &[&str] = &[
 /// trustworthy (the parent still chooses it, and any directory the invoking user could name
 /// is still reachable); it puts a floor under the damage a mistake or a hijacked argv can do.
 ///
-/// The floor only holds if the thing checked is the thing used. Resolving the path once to
-/// check it and again to open it would not do that: `O_NOFOLLOW` covers the final component
-/// only, so swapping an intermediate directory for a symlink between the two resolutions
-/// hands root a descriptor somewhere else entirely. So the descriptor is opened first and
-/// the check runs against *it*, by inode; existing only as this type means [`dispatch`]
-/// cannot be reached with an unchecked one.
+/// The floor only holds if the thing checked is the thing used, so the descriptor is opened
+/// first and the check runs against *it*, by inode; existing only as this type means
+/// [`dispatch`] cannot be reached with an unchecked one.
+///
+/// It also only holds if the open lands where the path says. [`LocalRootfsOps::open`] walks
+/// the path a component at a time under `O_NOFOLLOW` for that reason: root must not follow a
+/// symlink swapped in for an intermediate directory, which would anchor it inside the live
+/// system one level below anything [`REFUSED_ANCHORS`] names. Symlinks the invoking user
+/// legitimately has on the way are resolved before the helper is spawned, by the
+/// unprivileged parent.
 #[derive(Debug)]
 struct CheckedAnchor(LocalRootfsOps);
 

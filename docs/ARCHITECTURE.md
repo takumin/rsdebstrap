@@ -337,11 +337,21 @@ permitting the helper permits root writes under any directory the invoking user 
 
 It refuses it by inode, and only after opening: the descriptor is taken first and the check
 runs against *that*, because resolving the path once to check it and again to open it is the
-check-then-use shape the rest of this module exists to avoid — `O_NOFOLLOW` covers the final
-component only, so an intermediate directory swapped for a symlink between the two
-resolutions hands root a descriptor somewhere else. Comparing inodes rather than strings also
-catches names canonicalization does not resolve, such as a bind mount of `/etc`. Being the
-only way to construct the value `dispatch` takes is what keeps the check from being skipped.
+check-then-use shape the rest of this module exists to avoid. Comparing inodes rather than
+strings also catches names canonicalization does not resolve, such as a bind mount of `/etc`.
+Being the only way to construct the value `dispatch` takes is what keeps the check from being
+skipped.
+
+Opening the anchor is itself a walk, one component at a time under `O_NOFOLLOW`, because a
+single `openat` of the whole path applies `O_NOFOLLOW` to the last component only. Root
+following an intermediate symlink would anchor it wherever that points, and the refusal list
+names the *top* of each live hierarchy — `/etc` is on it, `/etc/ssh` is not, so a redirected
+anchor would land under a floor that never fires. Refusing symlinks there does not refuse a
+legitimate layout: `rootfs::open()` resolves the path's prefix first, in the unprivileged
+parent, so a rootfs reached through a symlinked `/home` still works and the resolution that
+made it work never held privilege. The final component is deliberately left out of that —
+a rootfs that is itself a symlink stays refused, because resolving it would turn the refusal
+into a redirection.
 
 The one other `rootfs::open()` in a run escalates nothing, and has to not. A provision task
 that resolved to no isolation cannot also have resolved to a privilege — `ProvisionTask::resolve`

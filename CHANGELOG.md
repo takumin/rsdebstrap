@@ -16,6 +16,12 @@ and this project adheres to
   time with `O_NOFOLLOW` against a directory descriptor, so a symlink planted
   anywhere along a path is an error rather than a redirect for a privileged
   write.
+- The rootfs path is resolved before privilege is acquired, and the privileged
+  helper then opens it one component at a time without following symlinks. A
+  directory on the way to the rootfs that is replaced by a symlink after the
+  bootstrap no longer redirects root's writes into the live system; a rootfs
+  reached through a symlinked parent still works, because the parent process
+  resolved it.
 - The prepare-phase `resolv_conf` guard holds the rootfs's original
   `/etc/resolv.conf` in memory instead of moving it to
   `/etc/resolv.conf.rsdebstrap-orig`, and restores it with the mode and owner it

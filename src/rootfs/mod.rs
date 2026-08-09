@@ -17,7 +17,7 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
 use std::sync::Arc;
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use rustix::fs::{self as rfs, AtFlags, CWD, FileType, Gid, Mode, OFlags, Uid};
 use serde::{Deserialize, Serialize};
 
@@ -294,18 +294,66 @@ impl LocalRootfsOps {
     /// Opens `rootfs` and anchors subsequent operations to the directory it
     /// names at this moment.
     ///
+    /// Every component is opened with `O_NOFOLLOW`, not just the last one. A single
+    /// `openat` of the whole path applies `O_NOFOLLOW` to the final component only, so an
+    /// intermediate directory swapped for a symlink is followed -- and this open is the one
+    /// the privileged helper performs as root, on a path it was handed. Following one there
+    /// anchors root inside the live system, somewhere the helper's refused-anchor list does
+    /// not name: `/etc/ssh` is not `/etc`.
+    ///
+    /// Symlinks in the path a user configured are resolved once, without privilege, by
+    /// [`rootfs::open`](open) before the helper is spawned. So refusing them here does not refuse a
+    /// legitimate layout -- it refuses one that changed after that.
+    ///
     /// # Errors
     ///
-    /// Returns `RsdebstrapError::Isolation` if `rootfs` is a symlink or not a
+    /// Returns `RsdebstrapError::Isolation` if any component is a symlink or not a
     /// directory.
     pub fn open(rootfs: &Utf8Path) -> Result<Self> {
-        let root = rfs::openat(
-            CWD,
-            rootfs.as_str(),
-            OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(|e| open_error(e, rootfs.as_str()))?;
+        let mut current: Option<OwnedFd> = None;
+        let mut walked = String::new();
+        for component in rootfs.components() {
+            let (name, flags) = match component {
+                // The one component that cannot be a symlink, and the one that has to be
+                // opened against `CWD` rather than against a descriptor.
+                Utf8Component::RootDir => ("/", OFlags::empty()),
+                Utf8Component::CurDir => continue,
+                // Safe to walk without following anything: every descriptor in the chain was
+                // opened `O_NOFOLLOW`, so `..` can only lead to the real parent of a real
+                // directory. A configured path does not reach here with one -- `open`
+                // resolves those away -- but the helper's own argv is checked, not trusted.
+                Utf8Component::ParentDir => ("..", OFlags::NOFOLLOW),
+                Utf8Component::Normal(name) => (name, OFlags::NOFOLLOW),
+                Utf8Component::Prefix(_) => {
+                    return Err(RsdebstrapError::Isolation(format!(
+                        "refusing to anchor to {}: it names a filesystem prefix",
+                        rootfs
+                    )));
+                }
+            };
+            if !walked.ends_with('/') {
+                walked.push('/');
+            }
+            if name != "/" {
+                walked.push_str(name);
+            }
+            let dir = current.as_ref().map_or(CWD, |fd| fd.as_fd());
+            let next = rfs::openat(
+                dir,
+                name,
+                flags | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|e| open_error(e, &walked))?;
+            current = Some(next);
+        }
+
+        let root = current.ok_or_else(|| {
+            RsdebstrapError::Isolation(format!(
+                "refusing to anchor to {}: it names nothing",
+                rootfs
+            ))
+        })?;
         Ok(Self {
             root,
             display_root: rootfs.to_string(),
@@ -946,10 +994,44 @@ pub fn open(
     if dry_run {
         return Ok(Arc::new(DryRunRootfsOps::new(rootfs)));
     }
+
+    // The one place a symlink on the way to the rootfs is followed, and it is here rather
+    // than in the helper because here is unprivileged. `/srv/build` may legitimately be
+    // reached through a symlinked `/home`; what must not happen is root resolving that
+    // indirection, where a component swapped since bootstrap redirects the anchor into the
+    // live system. So the *prefix* is resolved once, here, and `LocalRootfsOps::open` --
+    // which is what runs as root -- follows nothing.
+    //
+    // The final component is left unresolved on purpose. A rootfs that is itself a symlink
+    // is refused, as it always has been: resolving it here would turn that refusal into a
+    // redirection, and the helper's refused-anchor list names the top of the live system,
+    // not every directory under it.
+    let resolved = resolve_prefix(rootfs)?;
+
     match privilege {
-        Some(method) => Ok(Arc::new(helper::PrivilegedRootfsOps::spawn(rootfs, method)?)),
-        None => Ok(Arc::new(LocalRootfsOps::open(rootfs)?)),
+        Some(method) => Ok(Arc::new(helper::PrivilegedRootfsOps::spawn(&resolved, method)?)),
+        None => Ok(Arc::new(LocalRootfsOps::open(&resolved)?)),
     }
+}
+
+/// Resolves everything in `rootfs` except its final component.
+///
+/// A path with no final component to hold back (`/`, or one ending in `..`) is handed on
+/// unchanged: it names no rootfs, and the anchor walk is what says so.
+fn resolve_prefix(rootfs: &Utf8Path) -> Result<Utf8PathBuf> {
+    let (Some(parent), Some(name)) = (rootfs.parent(), rootfs.file_name()) else {
+        return Ok(rootfs.to_owned());
+    };
+    // `Utf8Path::parent` of a bare `rootfs` is the empty path, which names nothing.
+    let parent = if parent.as_str().is_empty() {
+        Utf8Path::new(".")
+    } else {
+        parent
+    };
+    let resolved = parent
+        .canonicalize_utf8()
+        .map_err(|e| RsdebstrapError::io(format!("failed to resolve rootfs {}", rootfs), e))?;
+    Ok(resolved.join(name))
 }
 
 #[cfg(test)]
@@ -973,6 +1055,67 @@ mod tests {
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         std::fs::create_dir_all(root.join("etc")).unwrap();
         (tmp, root)
+    }
+
+    // `O_NOFOLLOW` on a whole-path `openat` covers the final component only, so this walks
+    // them. The helper performs this open as root on a path handed to it, and a component
+    // swapped for a symlink would otherwise anchor root wherever it points -- inside the
+    // live system at a path the refused-anchor list does not name.
+    #[test]
+    fn open_refuses_a_symlink_in_the_middle_of_the_anchor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(base.join("real/rootfs")).unwrap();
+        std::os::unix::fs::symlink("real", base.join("link")).unwrap();
+
+        let err = LocalRootfsOps::open(&base.join("link/rootfs")).unwrap_err();
+
+        assert!(err.to_string().contains("symlink"), "unexpected error: {err}");
+        assert!(
+            err.to_string().contains("/link"),
+            "the error should name the component that was refused: {err}"
+        );
+    }
+
+    // The refusal above is not a restriction on what a user may configure: `open` resolves
+    // the prefix once, unprivileged, before spawning the helper that cannot resolve it.
+    #[test]
+    fn open_resolves_a_symlinked_anchor_before_anchoring_to_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(base.join("real/rootfs/etc")).unwrap();
+        std::os::unix::fs::symlink("real", base.join("link")).unwrap();
+
+        let ops = open(&base.join("link/rootfs"), None, false).unwrap();
+        ops.write_file(
+            &RelPath::parse("/etc/resolv.conf").unwrap(),
+            b"nameserver 1.1.1.1\n",
+            FileMode::new(0o644),
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(base.join("real/rootfs/etc/resolv.conf")).unwrap(),
+            "nameserver 1.1.1.1\n"
+        );
+    }
+
+    // Only the prefix, though. Resolving the last component too would turn the refusal that
+    // `opening_a_symlinked_rootfs_is_refused` pins into a redirection -- and a link aimed
+    // one level inside the live system lands somewhere the refused-anchor list, which names
+    // only the top of each hierarchy, would let through.
+    #[test]
+    fn open_does_not_resolve_a_rootfs_that_is_itself_a_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(base.join("real")).unwrap();
+        std::os::unix::fs::symlink("real", base.join("rootfs")).unwrap();
+
+        let Err(err) = open(&base.join("rootfs"), None, false) else {
+            panic!("a rootfs that is a symlink should be refused, not followed");
+        };
+
+        assert!(err.to_string().contains("symlink"), "unexpected error: {err}");
     }
 
     #[test]
