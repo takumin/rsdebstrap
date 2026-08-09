@@ -41,7 +41,7 @@ checked once and resolved again can name two different inodes, and a symlink pla
 between redirects the write. Use [`RootfsOps`](src/rootfs/) instead — it resolves each path
 component with `O_NOFOLLOW` against a directory descriptor, and its `RelPath` cannot express
 a path outside the rootfs. That includes staging a provision task's script or the mitamae
-binary: `write_file` carries the mode from creation and `StagedFileGuard` removes through the
+binary: `write_file` lands its `FileMode` exactly and `StagedFileGuard` removes through the
 same descriptor. Escalation happens once per run, in the helper process `rootfs::open()`
 spawns.
 

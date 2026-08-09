@@ -20,7 +20,7 @@ use std::sync::Mutex;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 
-use super::{LocalRootfsOps, RelPath, RootfsOps, TakenEntry};
+use super::{FileMode, LocalRootfsOps, RelPath, RootfsOps, TakenEntry};
 use crate::error::RsdebstrapError;
 use crate::privilege::PrivilegeMethod;
 
@@ -38,7 +38,7 @@ pub enum Request {
     WriteFile {
         path: RelPath,
         content: Vec<u8>,
-        mode: u32,
+        mode: FileMode,
     },
     WriteSymlink {
         path: RelPath,
@@ -298,7 +298,7 @@ impl Drop for PrivilegedRootfsOps {
 }
 
 impl RootfsOps for PrivilegedRootfsOps {
-    fn write_file(&self, path: &RelPath, content: &[u8], mode: u32) -> Result<()> {
+    fn write_file(&self, path: &RelPath, content: &[u8], mode: FileMode) -> Result<()> {
         self.unit(Request::WriteFile {
             path: path.clone(),
             content: content.to_vec(),
@@ -349,11 +349,11 @@ mod tests {
         let request = Request::WriteFile {
             path: RelPath::parse("/etc/resolv.conf").unwrap(),
             content: b"nameserver 1.1.1.1\n".to_vec(),
-            mode: 0o644,
+            mode: FileMode::new(0o644),
         };
         let encoded = serde_json::to_string(&request).unwrap();
         let decoded: Request = serde_json::from_str(&encoded).unwrap();
-        assert!(matches!(decoded, Request::WriteFile { mode: 0o644, .. }));
+        assert!(matches!(decoded, Request::WriteFile { mode, .. } if mode == FileMode::new(0o644)));
     }
 
     // A request naming a path outside the rootfs must not survive decoding: the
@@ -374,7 +374,7 @@ mod tests {
             Request::WriteFile {
                 path: RelPath::parse("/missing/resolv.conf").unwrap(),
                 content: b"x".to_vec(),
-                mode: 0o644,
+                mode: FileMode::new(0o644),
             },
         );
         assert!(matches!(response, Response::Error(_)), "got {response:?}");
@@ -391,7 +391,7 @@ mod tests {
             Request::WriteFile {
                 path: path.clone(),
                 content: b"nameserver 9.9.9.9\n".to_vec(),
-                mode: 0o644,
+                mode: FileMode::new(0o644),
             },
         );
         assert!(matches!(written, Response::Unit), "got {written:?}");
@@ -401,6 +401,6 @@ mod tests {
             panic!("got {taken:?}");
         };
         assert_eq!(content, b"nameserver 9.9.9.9\n");
-        assert_eq!(mode, 0o644);
+        assert_eq!(mode, FileMode::new(0o644));
     }
 }

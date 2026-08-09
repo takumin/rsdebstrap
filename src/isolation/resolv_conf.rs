@@ -12,7 +12,7 @@ use tracing::info;
 use crate::config::ResolvConfConfig;
 use crate::error::RsdebstrapError;
 use crate::pipeline::Provisioned;
-use crate::rootfs::{RelPath, RootfsOps, TakenEntry};
+use crate::rootfs::{FileMode, RelPath, RootfsOps, TakenEntry};
 
 /// Generates resolv.conf content from explicit configuration.
 pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
@@ -121,14 +121,17 @@ impl RootfsResolvConf {
         // host path. What crosses the boundary is bytes.
         let installed = if config.copy {
             match std::fs::read(&self.host_resolv_conf) {
-                Ok(content) => self.ops.write_file(&path, &content, 0o644),
+                Ok(content) => self.ops.write_file(&path, &content, FileMode::new(0o644)),
                 Err(e) => {
                     Err(RsdebstrapError::io(format!("failed to read {}", self.host_resolv_conf), e))
                 }
             }
         } else {
-            self.ops
-                .write_file(&path, generate_resolv_conf(config).as_bytes(), 0o644)
+            self.ops.write_file(
+                &path,
+                generate_resolv_conf(config).as_bytes(),
+                FileMode::new(0o644),
+            )
         };
 
         if let Err(write_err) = installed {
@@ -301,7 +304,7 @@ mod tests {
             &self,
             path: &RelPath,
             content: &[u8],
-            mode: u32,
+            mode: FileMode,
         ) -> std::result::Result<(), crate::error::RsdebstrapError> {
             if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 return Err(crate::error::RsdebstrapError::Isolation("write refused".into()));

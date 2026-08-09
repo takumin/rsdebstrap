@@ -45,7 +45,7 @@ use crate::error::RsdebstrapError;
 use crate::executor::ExecutionResult;
 use crate::isolation::{IsolationContext, RootfsContext};
 use crate::privilege::PrivilegeMethod;
-use crate::rootfs::{RelPath, RootfsOps};
+use crate::rootfs::{FileMode, RelPath, RootfsOps};
 
 /// Script source for task execution.
 ///
@@ -274,13 +274,13 @@ impl Drop for StagedFileGuard<'_> {
 /// Stages a script source inside the rootfs at `path` with `mode`.
 ///
 /// The host side of the copy happens here, unprivileged; what reaches [`RootfsOps`] is the
-/// bytes and a [`RelPath`]. The write is atomic and carries its mode from creation, so the
-/// file never exists in the rootfs with permissions other than the ones asked for.
+/// bytes and a [`RelPath`]. The write is atomic and lands `mode` exactly, so the file never
+/// exists in the rootfs with permissions other than the ones asked for.
 pub(crate) fn stage_source_file(
     ops: &dyn RootfsOps,
     source: &ScriptSource,
     path: &RelPath,
-    mode: u32,
+    mode: FileMode,
     label: &str,
 ) -> Result<()> {
     let content = match source {
@@ -469,7 +469,8 @@ mod tests {
     fn staged_file_guard_removes_the_entry_on_drop() {
         let (temp_dir, ops) = staged_rootfs();
         let path = RelPath::parse("/tmp/staged").unwrap();
-        ops.write_file(&path, b"content", 0o600).unwrap();
+        ops.write_file(&path, b"content", FileMode::new(0o600))
+            .unwrap();
         let host = temp_dir.path().join("tmp/staged");
         assert!(host.exists(), "entry should exist before drop");
 
@@ -490,7 +491,8 @@ mod tests {
     fn staged_file_guard_skips_removal_in_dry_run() {
         let (temp_dir, ops) = staged_rootfs();
         let path = RelPath::parse("/tmp/staged").unwrap();
-        ops.write_file(&path, b"content", 0o600).unwrap();
+        ops.write_file(&path, b"content", FileMode::new(0o600))
+            .unwrap();
 
         drop(StagedFileGuard::new(&ops, path, true));
 

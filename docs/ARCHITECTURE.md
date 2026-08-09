@@ -187,8 +187,13 @@ patterns run throughout `src/isolation/`:
   They used to be host-path `fs::write`/`fs::copy`/`chmod`/`remove_file` guarded by a
   `symlink_metadata` on `<rootfs>/tmp` that ran once at validation and once more just before
   the write — check-then-use, twice over, in the one place the rest of the crate had stopped
-  doing it. The anchored write also carries its mode from creation, so a staged binary never
-  exists in the rootfs with permissions other than the ones asked for.
+  doing it. The anchored write also lands its mode exactly — `openat`'s mode argument is
+  masked by the process umask, so `write_file` stages the entry owner-only and `fchmod`s the
+  descriptor once the content is final — and it is the final `renameat` that publishes the
+  name, so a staged binary never exists in the rootfs with permissions other than the ones
+  asked for. The mode travels as a `FileMode` rather than a `u32`, which masks the file-type
+  bits off at construction: `take` reads a full `st_mode`, and the value it records is fed
+  straight back to `write_file` by `put_back`.
 
   The host side of that copy stays in the parent and goes through `read_host_file`, which
   opens with `O_NOFOLLOW`, `fstat`s the *opened* descriptor, and reads from it. The earlier
