@@ -52,8 +52,8 @@ impl<'a> Pipeline<'a> {
     /// semantic checks in [`Profile::validate`](crate::config::Profile::validate), so a
     /// pipeline built here may still name a mount target that does not exist or a script
     /// that is not a regular file. Production goes through
-    /// [`Profile::pipeline`](crate::config::Profile::pipeline), which takes the evidence
-    /// that validation ran.
+    /// [`ValidatedProfile::pipeline`](crate::config::ValidatedProfile::pipeline), which
+    /// only the profile those checks ran over can produce.
     ///
     /// # Errors
     ///
