@@ -237,17 +237,23 @@ patterns run throughout `src/isolation/`:
   only the write that failed.
 
   `take` detaches before it reads. It renames the entry to a sibling whose name carries a
-  fresh UUID, and every call after that — the `statat` that chooses the branch, the read,
-  the `unlinkat` — names an entry only that call knows the name of. There is no second
-  resolution of the caller's name for anyone to win, so the inode that is read is
-  necessarily the one that was detached and the one that is removed. Reading first and
-  checking the name again afterwards cannot reach that: Linux has no unlink-by-descriptor,
-  so a check before the unlink narrows the window rather than closing it. Refusing an entry
-  (wrong type, over `MAX_TAKE_SIZE`) therefore has to rename it back, since "refused" has to
-  mean nothing was detached; if that rollback fails, the error names where the entry is.
+  fresh UUID, which takes the caller's name out of play in one syscall: nothing after that
+  can be tricked into acting on whatever appears at `/etc/resolv.conf` next. Reading first
+  and re-checking the name afterwards cannot reach that — Linux has no unlink-by-descriptor,
+  so a check before the unlink narrows the window rather than closing it.
 
-  The read stays bounded even though the size was read from the same inode, because a
-  descriptor opened before the rename still writes to it.
+  The rename does not make the new name *secret*, though: a watcher on the directory is told
+  where a rename lands. So the read binds itself to a descriptor rather than to the name —
+  one `openat` decides the type, the size, the mode and the owner by `fstat`, and a symlink
+  (which cannot be opened for reading) is held by `O_PATH | O_NOFOLLOW` and read back with an
+  empty path to `readlinkat`. The open is non-blocking, because a FIFO left in the way would
+  otherwise wait for a writer that is never coming — for the privileged helper, that is the
+  build hanging with no output.
+
+  Refusing an entry (wrong type, over `MAX_TAKE_SIZE`) has to rename it back, since "refused"
+  has to mean nothing was detached; if that rollback fails, the error names where the entry
+  is. The read stays bounded even though the size came off the same descriptor, because a
+  descriptor opened before the rename still writes to the inode.
 
   What the value carries is what a faithful restore needs: content, mode and owner.
   `put_back` installs a *new* inode — that is what makes it atomic — so an owner it did not

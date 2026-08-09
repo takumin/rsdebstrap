@@ -346,6 +346,12 @@ impl LocalRootfsOps {
     /// Reads the entry `detached` names in `dir`, which [`RootfsOps::take`] has already
     /// renamed out of the way.
     ///
+    /// Everything the returned entry carries comes off one descriptor. The rename is what
+    /// takes the caller's name out of play, but it does not hide the new one -- a watcher
+    /// on the directory is told the name a rename lands on -- so classifying by `statat`
+    /// and then opening by name would still be two resolutions, free to disagree about the
+    /// type, the size, the mode and the owner.
+    ///
     /// `path` is only for error messages: it is the name the caller asked about, which is
     /// no longer the name being read.
     fn read_detached(
@@ -354,78 +360,114 @@ impl LocalRootfsOps {
         detached: &str,
         path: &RelPath,
     ) -> Result<TakenEntry> {
-        let stat = rfs::statat(dir, detached, AtFlags::SYMLINK_NOFOLLOW).map_err(|e| {
+        // `O_NONBLOCK` because opening a FIFO for reading otherwise waits for a writer that
+        // is never coming -- for the privileged helper, that is the build hanging with no
+        // output. It is `fstat` below, not this open, that refuses one.
+        let opened = rfs::openat(
+            dir,
+            detached,
+            OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        );
+
+        let fd = match opened {
+            Ok(fd) => fd,
+            // The one type that cannot be opened for reading, and the reason the caller's
+            // `/etc/resolv.conf` is being detached at all half the time.
+            Err(rustix::io::Errno::LOOP) => return self.read_detached_symlink(dir, detached, path),
+            Err(e) => return Err(open_error(e, &format!("{}{}", self.display_root, path))),
+        };
+
+        let stat = rfs::fstat(&fd).map_err(|e| {
             RsdebstrapError::io(
                 format!("failed to stat {}{}", self.display_root, path),
                 std::io::Error::from(e),
             )
         })?;
-
-        match FileType::from_raw_mode(stat.st_mode as rfs::RawMode) {
-            // Whether the target resolves is deliberately not consulted: a dangling
-            // `/etc/resolv.conf` is the normal state of a systemd rootfs.
-            FileType::Symlink => {
-                let target = rfs::readlinkat(dir, detached, Vec::new()).map_err(|e| {
-                    RsdebstrapError::io(
-                        format!("failed to read symlink {}{}", self.display_root, path),
-                        std::io::Error::from(e),
-                    )
-                })?;
-                Ok(TakenEntry::Symlink {
-                    target: target.to_string_lossy().into_owned(),
-                    owner: Owner::of(&stat),
-                })
-            }
-            FileType::RegularFile => {
-                if stat.st_size as u64 > MAX_TAKE_SIZE {
-                    return Err(RsdebstrapError::Isolation(format!(
-                        "{}{} is {} bytes, refusing to detach an entry over {} bytes",
-                        self.display_root, path, stat.st_size, MAX_TAKE_SIZE
-                    )));
-                }
-
-                let fd = rfs::openat(
-                    dir,
-                    detached,
-                    OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::CLOEXEC,
-                    Mode::empty(),
-                )
-                .map_err(|e| open_error(e, &format!("{}{}", self.display_root, path)))?;
-
-                // Bounded even though the size above was read from this same inode: a
-                // descriptor opened before the rename still writes to it, and an
-                // unbounded `read_to_end` would follow the file as far as that writer
-                // takes it. The limit is what keeps a detached entry small enough to hold
-                // in memory and to serialize over the helper channel.
-                let mut content = Vec::new();
-                File::from(fd)
-                    .take(MAX_TAKE_SIZE + 1)
-                    .read_to_end(&mut content)
-                    .map_err(|e| {
-                        RsdebstrapError::io(
-                            format!("failed to read {}{}", self.display_root, path),
-                            e,
-                        )
-                    })?;
-                if content.len() as u64 > MAX_TAKE_SIZE {
-                    return Err(RsdebstrapError::Isolation(format!(
-                        "{}{} grew past {} bytes while it was being read, refusing to \
-                        detach it",
-                        self.display_root, path, MAX_TAKE_SIZE
-                    )));
-                }
-
-                Ok(TakenEntry::File {
-                    content,
-                    mode: FileMode::new(stat.st_mode),
-                    owner: Owner::of(&stat),
-                })
-            }
-            other => Err(RsdebstrapError::Isolation(format!(
+        let kind = FileType::from_raw_mode(stat.st_mode as rfs::RawMode);
+        if kind != FileType::RegularFile {
+            return Err(RsdebstrapError::Isolation(format!(
                 "{}{} is a {:?}, refusing to detach it",
-                self.display_root, path, other
-            ))),
+                self.display_root, path, kind
+            )));
         }
+        if stat.st_size as u64 > MAX_TAKE_SIZE {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{}{} is {} bytes, refusing to detach an entry over {} bytes",
+                self.display_root, path, stat.st_size, MAX_TAKE_SIZE
+            )));
+        }
+
+        // Bounded on top of the size just read from this same inode: a descriptor opened
+        // before the rename still writes to it, and an unbounded `read_to_end` would follow
+        // the file as far as that writer takes it. The limit is what keeps a detached entry
+        // small enough to hold in memory and to serialize over the helper channel.
+        let mut content = Vec::new();
+        File::from(fd)
+            .take(MAX_TAKE_SIZE + 1)
+            .read_to_end(&mut content)
+            .map_err(|e| {
+                RsdebstrapError::io(format!("failed to read {}{}", self.display_root, path), e)
+            })?;
+        if content.len() as u64 > MAX_TAKE_SIZE {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{}{} grew past {} bytes while it was being read, refusing to detach it",
+                self.display_root, path, MAX_TAKE_SIZE
+            )));
+        }
+
+        Ok(TakenEntry::File {
+            content,
+            mode: FileMode::new(stat.st_mode),
+            owner: Owner::of(&stat),
+        })
+    }
+
+    /// Reads the symlink `detached` names, on a descriptor for the link itself.
+    ///
+    /// `O_PATH | O_NOFOLLOW` is the one way to hold a symlink open, and an empty path to
+    /// `readlinkat` is how the target is read back off it. Whether that target resolves is
+    /// deliberately not consulted: a dangling `/etc/resolv.conf` is the normal state of a
+    /// systemd rootfs before `systemd-resolved` runs.
+    fn read_detached_symlink(
+        &self,
+        dir: BorrowedFd<'_>,
+        detached: &str,
+        path: &RelPath,
+    ) -> Result<TakenEntry> {
+        let fd = rfs::openat(
+            dir,
+            detached,
+            OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| open_error(e, &format!("{}{}", self.display_root, path)))?;
+
+        let stat = rfs::fstat(&fd).map_err(|e| {
+            RsdebstrapError::io(
+                format!("failed to stat {}{}", self.display_root, path),
+                std::io::Error::from(e),
+            )
+        })?;
+        let kind = FileType::from_raw_mode(stat.st_mode as rfs::RawMode);
+        if kind != FileType::Symlink {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{}{} is a {:?}, refusing to detach it",
+                self.display_root, path, kind
+            )));
+        }
+
+        let target = rfs::readlinkat(&fd, "", Vec::new()).map_err(|e| {
+            RsdebstrapError::io(
+                format!("failed to read symlink {}{}", self.display_root, path),
+                std::io::Error::from(e),
+            )
+        })?;
+
+        Ok(TakenEntry::Symlink {
+            target: target.to_string_lossy().into_owned(),
+            owner: Owner::of(&stat),
+        })
     }
 
     /// Takes the whole [`RelPath`] rather than the final component it renames to, so the
@@ -618,11 +660,13 @@ impl RootfsOps for LocalRootfsOps {
         let name = path.file_name();
         let detached = Self::staging_name(name);
 
-        // Detach first, read second. Every call below then names an entry only this call
-        // knows the name of, so the inode that is read, refused or removed is necessarily
-        // the one this rename took -- there is no second resolution of `name` for anyone
-        // to win. A `renameat` on a missing entry is how "it was not there" is reported,
-        // which keeps that answer on the same syscall as the detach.
+        // Detach first, read second: this takes the caller's name out of play in one
+        // syscall, so nothing that follows can be tricked into acting on whatever appears
+        // at `/etc/resolv.conf` next. It does not make the new name secret -- a watcher on
+        // the directory is told where a rename lands -- which is why `read_detached` binds
+        // itself to a descriptor rather than trusting the name it was given. A `renameat`
+        // on a missing entry is also how "it was not there" is reported, which keeps that
+        // answer on the same syscall as the detach.
         match rfs::renameat(dir, name, dir, detached.as_str()) {
             Ok(()) => {}
             Err(rustix::io::Errno::NOENT) => return Ok(None),
