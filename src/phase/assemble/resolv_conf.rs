@@ -133,7 +133,7 @@ impl AssembleResolvConfTask {
         let ops = ctx.rootfs_ops();
         match &self.link {
             Some(target) => {
-                ops.write_symlink(&path, target)?;
+                ops.write_symlink(&path, target.as_bytes())?;
                 info!("created symlink /etc/resolv.conf -> {} in {}", target, rootfs);
             }
             None => {

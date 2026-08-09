@@ -44,7 +44,8 @@ pub enum Request {
     },
     WriteSymlink {
         path: RelPath,
-        target: String,
+        #[serde(with = "crate::rootfs::payload")]
+        target: Vec<u8>,
     },
     Remove {
         path: RelPath,
@@ -350,10 +351,10 @@ impl RootfsOps for PrivilegedRootfsOps {
         })
     }
 
-    fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()> {
+    fn write_symlink(&self, path: &RelPath, target: &[u8]) -> Result<()> {
         self.unit(Request::WriteSymlink {
             path: path.clone(),
-            target: target.to_string(),
+            target: target.to_vec(),
         })
     }
 
@@ -562,6 +563,18 @@ mod tests {
         let entry = TakenEntry::File {
             content: (0..=255u8).collect(),
             mode: FileMode::new(0o600),
+            owner: Owner { uid: 0, gid: 0 },
+        };
+        let encoded = serde_json::to_string(&entry).unwrap();
+        assert_eq!(serde_json::from_str::<TakenEntry>(&encoded).unwrap(), entry);
+    }
+
+    // The same for a symlink's target, which is a path and so has no encoding either. As a
+    // JSON string it could not have crossed the channel at all.
+    #[test]
+    fn a_taken_symlink_round_trips_a_target_that_is_not_utf8() {
+        let entry = TakenEntry::Symlink {
+            target: b"../run/\xff\xfe/resolv.conf".to_vec(),
             owner: Owner { uid: 0, gid: 0 },
         };
         let encoded = serde_json::to_string(&entry).unwrap();

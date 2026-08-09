@@ -130,7 +130,7 @@ impl RootfsOps for RecordingOps {
     fn write_symlink(
         &self,
         path: &RelPath,
-        _target: &str,
+        _target: &[u8],
     ) -> std::result::Result<(), RsdebstrapError> {
         self.writes.lock().unwrap().push(path.to_string());
         Ok(())

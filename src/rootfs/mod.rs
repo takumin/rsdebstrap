@@ -238,7 +238,16 @@ pub enum TakenEntry {
     /// deliberately not consulted: a dangling `/etc/resolv.conf` is the normal
     /// state of a systemd rootfs before `systemd-resolved` runs, and it must be
     /// restored exactly as found.
-    Symlink { target: String, owner: Owner },
+    ///
+    /// The target is bytes, not a `String`, because that is what a link target is: the
+    /// kernel stores whatever was passed to `symlinkat`, and nothing requires it to be
+    /// UTF-8. Rendering it through `to_string_lossy` on the way in would replace those
+    /// bytes with U+FFFD and restore a *different* link.
+    Symlink {
+        #[serde(with = "payload")]
+        target: Vec<u8>,
+        owner: Owner,
+    },
 }
 
 /// Mutations inside a rootfs.
@@ -250,7 +259,11 @@ pub trait RootfsOps: Send + Sync {
     fn write_file(&self, path: &RelPath, content: &[u8], mode: FileMode) -> Result<()>;
 
     /// Replaces `path` with a symlink to `target`, atomically.
-    fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()>;
+    ///
+    /// `target` is bytes for the same reason [`TakenEntry::Symlink`] carries bytes: a link
+    /// target is not required to be UTF-8, and one taken from a rootfs has to go back
+    /// exactly as it came.
+    fn write_symlink(&self, path: &RelPath, target: &[u8]) -> Result<()>;
 
     /// Removes `path`. Succeeds if it does not exist; never follows a symlink.
     fn remove(&self, path: &RelPath) -> Result<()>;
@@ -471,7 +484,7 @@ impl LocalRootfsOps {
 
         Ok((
             TakenEntry::Symlink {
-                target: target.to_string_lossy().into_owned(),
+                target: target.into_bytes(),
                 owner: Owner::of(&stat),
             },
             Identity::of(&stat),
@@ -592,7 +605,7 @@ impl LocalRootfsOps {
         self.promote(dir, &staging, path)
     }
 
-    fn install_symlink(&self, path: &RelPath, target: &str, owner: Option<Owner>) -> Result<()> {
+    fn install_symlink(&self, path: &RelPath, target: &[u8], owner: Option<Owner>) -> Result<()> {
         let parent = self.parent_dir(path)?;
         let dir = parent.fd();
         let name = path.file_name();
@@ -654,7 +667,7 @@ impl RootfsOps for LocalRootfsOps {
         self.install_file(path, content, mode, None)
     }
 
-    fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()> {
+    fn write_symlink(&self, path: &RelPath, target: &[u8]) -> Result<()> {
         self.install_symlink(path, target, None)
     }
 
@@ -783,8 +796,15 @@ impl RootfsOps for DryRunRootfsOps {
         Ok(())
     }
 
-    fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()> {
-        tracing::info!("dry run: symlink {}{} -> {}", self.rootfs, path, target);
+    fn write_symlink(&self, path: &RelPath, target: &[u8]) -> Result<()> {
+        // Lossy because this is the one place the target is *displayed* rather than
+        // written; the byte form is what every other path carries.
+        tracing::info!(
+            "dry run: symlink {}{} -> {}",
+            self.rootfs,
+            path,
+            String::from_utf8_lossy(target)
+        );
         Ok(())
     }
 
@@ -919,7 +939,7 @@ mod tests {
         assert_eq!(
             taken,
             TakenEntry::Symlink {
-                target: "../run/systemd/resolve/stub-resolv.conf".to_string(),
+                target: b"../run/systemd/resolve/stub-resolv.conf".to_vec(),
                 owner
             }
         );
@@ -981,6 +1001,30 @@ mod tests {
 
         assert!(err.contains("refusing to detach"), "unexpected error: {err}");
         assert_eq!(etc_entries(&root), ["resolv.conf"], "refused but still detached");
+    }
+
+    // A link target is whatever bytes were handed to `symlinkat`, and the kernel does not
+    // ask for UTF-8. Carrying it as a `String` meant `to_string_lossy` replaced anything
+    // else with U+FFFD, so `put_back` restored a different link than the one taken.
+    #[test]
+    fn take_preserves_a_symlink_target_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let (_tmp, root) = rootfs();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+        let path = RelPath::parse("/etc/resolv.conf").unwrap();
+        let target = b"../run/\xff\xfe/resolv.conf";
+        std::os::unix::fs::symlink(
+            std::ffi::OsStr::from_bytes(target),
+            root.join("etc/resolv.conf"),
+        )
+        .unwrap();
+
+        let taken = ops.take(&path).unwrap().unwrap();
+        ops.put_back(&path, &taken).unwrap();
+
+        let restored = std::fs::read_link(root.join("etc/resolv.conf")).unwrap();
+        assert_eq!(restored.as_os_str().as_bytes(), target);
     }
 
     #[test]

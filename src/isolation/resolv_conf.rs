@@ -372,7 +372,7 @@ mod tests {
         fn write_symlink(
             &self,
             path: &RelPath,
-            target: &str,
+            target: &[u8],
         ) -> std::result::Result<(), crate::error::RsdebstrapError> {
             self.inner.write_symlink(path, target)
         }

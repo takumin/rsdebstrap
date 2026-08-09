@@ -454,7 +454,7 @@ mod tests {
         fn write_symlink(
             &self,
             path: &rootfs::RelPath,
-            target: &str,
+            target: &[u8],
         ) -> std::result::Result<(), RsdebstrapError> {
             if self.fail == Failure::Symlink {
                 return Err(refused("symlink"));
@@ -537,7 +537,7 @@ mod tests {
         fn write_symlink(
             &self,
             path: &rootfs::RelPath,
-            target: &str,
+            target: &[u8],
         ) -> std::result::Result<(), RsdebstrapError> {
             self.timeline
                 .lock()

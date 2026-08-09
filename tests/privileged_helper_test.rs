@@ -226,7 +226,7 @@ fn the_helper_installs_a_symlink_over_a_root_owned_file() {
     let ops = privileged(&fixture.path);
     let path = RelPath::parse("/etc/resolv.conf").unwrap();
 
-    ops.write_symlink(&path, "../run/systemd/resolve/stub-resolv.conf")
+    ops.write_symlink(&path, b"../run/systemd/resolve/stub-resolv.conf")
         .unwrap();
 
     assert!(fixture.resolv_conf_is_symlink(), "the entry is not a symlink");
