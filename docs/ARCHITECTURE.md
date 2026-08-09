@@ -214,7 +214,10 @@ patterns run throughout `src/isolation/`:
   backup path as a *dangling* symlink defeated both the leftover check and the restore —
   `exists()` and `try_exists()` both follow links, so a dangling backup read as absent and the
   original was silently lost. The trade is that the original only survives as long as the
-  process does.
+  process does — which is why `setup` arms the guard *before* installing the replacement. If
+  the install fails and the rollback fails with it, the restore is still owed and `Drop` is the
+  one thing left holding the entry; the returned error names the detached original rather than
+  only the write that failed.
 
 ## Isolation & command execution
 

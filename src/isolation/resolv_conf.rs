@@ -103,6 +103,8 @@ impl RootfsResolvConf {
     /// Returns an error if the entry cannot be detached or the replacement
     /// cannot be written. On a write failure the detached entry is put back
     /// before returning, so a failed setup leaves the rootfs as it was found.
+    /// If that rollback fails too, the returned error says so and the guard
+    /// stays armed, leaving the retry to `Drop`.
     pub fn setup(&mut self) -> Result<()> {
         let Some(config) = &self.config else {
             return Ok(());
@@ -114,7 +116,12 @@ impl RootfsResolvConf {
         }
 
         let path = resolv_conf_path();
-        let original = self.ops.take(&path)?;
+        // Hand the detached entry to the guard before installing the replacement. `take`
+        // unlinks it, so from here the only copy is this one in memory; if the install
+        // below fails *and* the rollback fails too, `Drop` is the last thing that can put
+        // it back, and it only runs for a guard that is armed.
+        self.original = self.ops.take(&path)?;
+        self.active = self.original.is_some();
 
         // Read the host's copy here rather than in `RootfsOps`: the ops may be served by
         // the privileged helper, and there is no reason for root to be the one resolving a
@@ -135,19 +142,27 @@ impl RootfsResolvConf {
         };
 
         if let Err(write_err) = installed {
-            if let Some(entry) = &original
-                && let Err(rollback_err) = self.ops.put_back(&path, entry)
-            {
-                tracing::error!(
-                    "failed to restore the original resolv.conf after a failed setup: {}",
-                    rollback_err
-                );
+            let Some(entry) = &self.original else {
+                // Nothing was detached, and the failed write left nothing behind, so the
+                // rootfs is already as it was found.
+                return Err(write_err.into());
+            };
+            if let Err(rollback_err) = self.ops.put_back(&path, entry) {
+                // The rootfs now has no resolv.conf and the original exists only in this
+                // guard. Say so in the error rather than only in a log line: the caller
+                // drops the guard on the way out, and that `Drop` is the retry.
+                return Err(anyhow::Error::new(write_err).context(format!(
+                    "the original {}/etc/resolv.conf could not be put back either ({}); \
+                    it is detached and held in memory until cleanup retries the restore",
+                    self.rootfs, rollback_err
+                )));
             }
+            self.original = None;
+            self.active = false;
             return Err(write_err.into());
         }
 
         info!("set up resolv.conf in {}", self.rootfs);
-        self.original = original;
         self.active = true;
         Ok(())
     }
@@ -282,31 +297,40 @@ mod tests {
         assert!(rendered.ends_with(".. }"), "omitted fields are not marked: {rendered}");
     }
 
-    // Fails the *first* write only, so setup's install fails while the rollback
-    // that follows it succeeds. Failing every write would also break the
-    // rollback and the test could not tell the two apart.
-    struct FailFirstWrite {
+    // Fails the first `n` writes and then works. Setup writes twice on the failure
+    // path — the install, then the rollback's `put_back` — and `Drop`'s retry is the
+    // third, so the count is what separates "the install failed" from "the install and
+    // the rollback both failed". Failing every write would collapse the two.
+    struct FailFirstWrites {
         inner: LocalRootfsOps,
-        failed: std::sync::atomic::AtomicBool,
+        remaining: std::sync::atomic::AtomicUsize,
     }
 
-    impl FailFirstWrite {
-        fn new(inner: LocalRootfsOps) -> Self {
+    impl FailFirstWrites {
+        fn new(inner: LocalRootfsOps, n: usize) -> Self {
             Self {
                 inner,
-                failed: std::sync::atomic::AtomicBool::new(false),
+                remaining: std::sync::atomic::AtomicUsize::new(n),
             }
         }
     }
 
-    impl RootfsOps for FailFirstWrite {
+    impl RootfsOps for FailFirstWrites {
         fn write_file(
             &self,
             path: &RelPath,
             content: &[u8],
             mode: FileMode,
         ) -> std::result::Result<(), crate::error::RsdebstrapError> {
-            if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            if self
+                .remaining
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |n| n.checked_sub(1),
+                )
+                .is_ok()
+            {
                 return Err(crate::error::RsdebstrapError::Isolation("write refused".into()));
             }
             self.inner.write_file(path, content, mode)
@@ -500,7 +524,7 @@ mod tests {
         let (_temp, rootfs) = rootfs_with_etc();
         fs::write(resolv_conf(&rootfs), "original\n").unwrap();
 
-        let ops = Arc::new(FailFirstWrite::new(LocalRootfsOps::open(&rootfs).unwrap()));
+        let ops = Arc::new(FailFirstWrites::new(LocalRootfsOps::open(&rootfs).unwrap(), 1));
         let mut g = RootfsResolvConf::new(
             &rootfs,
             Some(generated(&["1.1.1.1"])),
@@ -510,6 +534,35 @@ mod tests {
         );
 
         assert!(g.setup().is_err());
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
+    }
+
+    // The ENOSPC shape: `take` unlinked the original, then both the install and the
+    // rollback failed, so the only copy left is the one the guard holds in memory.
+    // Losing it silently is the failure mode being guarded against — the error has to
+    // name the detached entry, and the guard has to stay armed so `Drop` retries.
+    #[test]
+    fn a_failed_rollback_is_reported_and_retried_on_drop() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
+
+        let ops = Arc::new(FailFirstWrites::new(LocalRootfsOps::open(&rootfs).unwrap(), 2));
+        {
+            let mut g = RootfsResolvConf::new(
+                &rootfs,
+                Some(generated(&["1.1.1.1"])),
+                Utf8Path::new("/etc/resolv.conf"),
+                ops,
+                false,
+            );
+
+            let err = g.setup().unwrap_err();
+            let rendered = format!("{err:#}");
+            assert!(rendered.contains("could not be put back"), "unexpected error: {rendered}");
+            assert!(rendered.contains("write refused"), "the write error was lost: {rendered}");
+            assert!(!resolv_conf(&rootfs).exists(), "the entry should still be detached");
+        }
+
         assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
     }
 
