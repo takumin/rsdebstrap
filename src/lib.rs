@@ -439,7 +439,7 @@ mod tests {
             &self,
             path: &rootfs::RelPath,
             content: &[u8],
-            mode: u32,
+            mode: rootfs::FileMode,
         ) -> std::result::Result<(), RsdebstrapError> {
             let nth = self
                 .writes
@@ -506,7 +506,7 @@ mod tests {
             &self,
             path: &rootfs::RelPath,
             content: &[u8],
-            mode: u32,
+            mode: rootfs::FileMode,
         ) -> std::result::Result<(), RsdebstrapError> {
             self.timeline.lock().unwrap().push("write_file".to_string());
             self.inner.write_file(path, content, mode)

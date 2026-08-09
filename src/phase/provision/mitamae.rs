@@ -234,9 +234,15 @@ impl MitamaeTask {
         if !dry_run {
             info!("copying mitamae binary from {} to rootfs", binary);
             let bytes = crate::phase::read_host_file(binary, "mitamae binary")?;
-            ops.write_file(&staged_binary, &bytes, 0o700)
+            ops.write_file(&staged_binary, &bytes, crate::rootfs::FileMode::new(0o700))
                 .with_context(|| format!("failed to stage mitamae binary at {}", staged_binary))?;
-            crate::phase::stage_source_file(ops, &self.source, &staged_recipe, 0o600, "recipe")?;
+            crate::phase::stage_source_file(
+                ops,
+                &self.source,
+                &staged_recipe,
+                crate::rootfs::FileMode::new(0o600),
+                "recipe",
+            )?;
         }
         let command: Vec<String> = vec![
             binary_path_in_isolation,

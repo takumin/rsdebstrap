@@ -230,7 +230,7 @@ impl ShellTask {
                 context.rootfs_ops(),
                 &self.source,
                 &staged,
-                0o700,
+                crate::rootfs::FileMode::new(0o700),
                 "script",
             )?;
         }

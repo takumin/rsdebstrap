@@ -134,6 +134,37 @@ impl<'de> Deserialize<'de> for RelPath {
     }
 }
 
+/// The permission bits an entry carries.
+///
+/// A `u32` at these call sites is ambiguous: it is either the `st_mode` a `stat`
+/// returned, whose high bits encode the file type, or the permissions to apply.
+/// Handing the first to `chmod` would try to set the type bits. Construction
+/// masks them off, so only the second can exist.
+///
+/// The bits are applied exactly. `openat`'s mode argument is subject to the
+/// process umask, so [`RootfsOps::write_file`] cannot rely on it alone — see the
+/// `fchmod` in [`LocalRootfsOps::write_file`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FileMode(u32);
+
+impl FileMode {
+    /// The permission bits of `bits`, which may be a full `st_mode`.
+    pub const fn new(bits: u32) -> Self {
+        Self(bits & 0o7777)
+    }
+
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for FileMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:o}", self.0)
+    }
+}
+
 /// An entry detached from the rootfs by [`RootfsOps::take`], held in memory.
 ///
 /// Nothing on disk represents a taken entry. A backup *file* would survive a
@@ -143,7 +174,7 @@ impl<'de> Deserialize<'de> for RelPath {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TakenEntry {
     /// A regular file, with the mode it carried.
-    File { content: Vec<u8>, mode: u32 },
+    File { content: Vec<u8>, mode: FileMode },
     /// A symlink, with the target it pointed at. Whether that target resolved is
     /// deliberately not consulted: a dangling `/etc/resolv.conf` is the normal
     /// state of a systemd rootfs before `systemd-resolved` runs, and it must be
@@ -156,8 +187,8 @@ pub enum TakenEntry {
 /// Implemented in-process by [`LocalRootfsOps`] and, when the rootfs needs root
 /// to modify, by a helper process holding the elevated descriptor.
 pub trait RootfsOps: Send + Sync {
-    /// Replaces `path` with a regular file, atomically.
-    fn write_file(&self, path: &RelPath, content: &[u8], mode: u32) -> Result<()>;
+    /// Replaces `path` with a regular file carrying exactly `mode`, atomically.
+    fn write_file(&self, path: &RelPath, content: &[u8], mode: FileMode) -> Result<()>;
 
     /// Replaces `path` with a symlink to `target`, atomically.
     fn write_symlink(&self, path: &RelPath, target: &str) -> Result<()>;
@@ -280,17 +311,21 @@ fn open_error(e: rustix::io::Errno, what: &str) -> RsdebstrapError {
 }
 
 impl RootfsOps for LocalRootfsOps {
-    fn write_file(&self, path: &RelPath, content: &[u8], mode: u32) -> Result<()> {
+    fn write_file(&self, path: &RelPath, content: &[u8], mode: FileMode) -> Result<()> {
         let parent = self.parent_dir(path)?;
         let dir = parent.fd();
         let name = path.file_name();
         let staging = Self::staging_name(name);
 
+        // Created owner-only rather than at `mode`: the staging entry is readable
+        // at its own name for as long as the write takes, and nothing should be
+        // able to read a half-written file that is about to become, say, a 0644
+        // /etc/resolv.conf. `fchmod` below widens it once the content is final.
         let fd = rfs::openat(
             dir,
             staging.as_str(),
             OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
-            Mode::from_raw_mode(mode),
+            Mode::from_raw_mode(0o600),
         )
         .map_err(|e| {
             RsdebstrapError::io(
@@ -302,7 +337,13 @@ impl RootfsOps for LocalRootfsOps {
         let write = (|| {
             let mut file = File::from(fd);
             file.write_all(content)?;
-            file.sync_all()
+            // `openat`'s mode argument is masked by the process umask, so the mode
+            // has to be set on the descriptor to land exactly. It also has to be set
+            // *after* the write: writing to a file clears its setuid/setgid bits, so
+            // a `put_back` restoring a setgid entry would silently drop them.
+            rfs::fchmod(&file, Mode::from_raw_mode(mode.bits()))?;
+            file.sync_all()?;
+            Ok::<(), std::io::Error>(())
         })();
         if let Err(e) = write {
             let _ = rfs::unlinkat(dir, staging.as_str(), AtFlags::empty());
@@ -392,7 +433,7 @@ impl RootfsOps for LocalRootfsOps {
                 })?;
                 TakenEntry::File {
                     content,
-                    mode: stat.st_mode & 0o7777,
+                    mode: FileMode::new(stat.st_mode),
                 }
             }
             other => {
@@ -428,9 +469,9 @@ impl DryRunRootfsOps {
 }
 
 impl RootfsOps for DryRunRootfsOps {
-    fn write_file(&self, path: &RelPath, content: &[u8], mode: u32) -> Result<()> {
+    fn write_file(&self, path: &RelPath, content: &[u8], mode: FileMode) -> Result<()> {
         tracing::info!(
-            "dry run: write {}{} ({} bytes, mode {:o})",
+            "dry run: write {}{} ({} bytes, mode {})",
             self.rootfs,
             path,
             content.len(),
@@ -526,7 +567,7 @@ mod tests {
         let ops = LocalRootfsOps::open(&root).unwrap();
         let path = RelPath::parse("/etc/resolv.conf").unwrap();
 
-        ops.write_file(&path, b"nameserver 1.1.1.1\n", 0o644)
+        ops.write_file(&path, b"nameserver 1.1.1.1\n", FileMode::new(0o644))
             .unwrap();
         let taken = ops.take(&path).unwrap().unwrap();
 
@@ -534,7 +575,7 @@ mod tests {
             taken,
             TakenEntry::File {
                 content: b"nameserver 1.1.1.1\n".to_vec(),
-                mode: 0o644
+                mode: FileMode::new(0o644)
             }
         );
         assert!(!root.join("etc/resolv.conf").exists());
@@ -597,7 +638,7 @@ mod tests {
 
         let ops = LocalRootfsOps::open(&root).unwrap();
         let err = ops
-            .write_file(&RelPath::parse("/etc/resolv.conf").unwrap(), b"x", 0o644)
+            .write_file(&RelPath::parse("/etc/resolv.conf").unwrap(), b"x", FileMode::new(0o644))
             .unwrap_err();
 
         assert!(err.to_string().contains("symlink"), "unexpected error: {err}");
@@ -614,7 +655,7 @@ mod tests {
         std::os::unix::fs::symlink("elsewhere", root.join("etc/resolv.conf")).unwrap();
 
         let ops = LocalRootfsOps::open(&root).unwrap();
-        ops.write_file(&RelPath::parse("/etc/resolv.conf").unwrap(), b"new", 0o644)
+        ops.write_file(&RelPath::parse("/etc/resolv.conf").unwrap(), b"new", FileMode::new(0o644))
             .unwrap();
 
         assert_eq!(std::fs::read(&elsewhere).unwrap(), b"untouched");
