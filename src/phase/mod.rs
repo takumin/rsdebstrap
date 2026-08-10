@@ -211,13 +211,18 @@ const MAX_STAGED_CONTENT_SIZE: u64 = 64 << 20;
 /// before anything runs. It cannot stand in for this one: it resolves a path string, and by
 /// the time the file is read the name may have been repointed. Opening with `O_NOFOLLOW` and
 /// checking the *opened* descriptor makes the check and the use the same inode.
+///
+/// `O_NONBLOCK` because the name could have been repointed at a FIFO, and opening one for
+/// reading otherwise waits for a writer that is never coming — that is the build hanging
+/// with no output. It is the `fstat` below, not this open, that refuses one; the flag only
+/// keeps the refusal reachable, and it means nothing for a regular file.
 pub(crate) fn read_host_file(path: &Utf8Path, label: &str) -> Result<Vec<u8>> {
     use rustix::fs::{self as rfs, CWD, FileType, Mode, OFlags};
 
     let fd = rfs::openat(
         CWD,
         path.as_str(),
-        OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::CLOEXEC,
+        OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
         Mode::empty(),
     )
     .map_err(|e| match e {

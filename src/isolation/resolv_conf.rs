@@ -336,8 +336,29 @@ impl RootfsResolvConf {
         let io_error = |e: std::io::Error| {
             RsdebstrapError::io(format!("failed to read {}", self.host_resolv_conf), e)
         };
-        let file = std::fs::File::open(&self.host_resolv_conf).map_err(io_error)?;
-        let size = file.metadata().map_err(io_error)?.len();
+        // `O_NONBLOCK` because opening a FIFO for reading otherwise waits for a writer that
+        // is never coming, and this runs with the mounts already established -- the build
+        // would hang there with no output. It is the type check below, not this open, that
+        // refuses one; the flag only keeps the refusal reachable.
+        let file = std::fs::File::from(
+            rustix::fs::openat(
+                rustix::fs::CWD,
+                self.host_resolv_conf.as_str(),
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::NONBLOCK
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+            .map_err(|e| io_error(std::io::Error::from(e)))?,
+        );
+        let metadata = file.metadata().map_err(io_error)?;
+        if !metadata.is_file() {
+            return Err(RsdebstrapError::Validation(format!(
+                "{} is not a regular file, refusing to copy it",
+                self.host_resolv_conf
+            )));
+        }
+        let size = metadata.len();
         if size > MAX_HOST_RESOLV_CONF_SIZE {
             return Err(RsdebstrapError::Validation(format!(
                 "{} is {} bytes, refusing to copy a resolver config over {} bytes",
