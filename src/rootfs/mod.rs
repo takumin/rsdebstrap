@@ -373,6 +373,13 @@ impl LocalRootfsOps {
     /// Refusing here also refuses before anything has moved, so a FIFO or an oversized file
     /// leaves the caller's name exactly as it was, with no rollback to get wrong.
     ///
+    /// That descriptor is returned along with what was read off it, because an inode number
+    /// only identifies an inode while something still refers to it. With the descriptor
+    /// closed, a watcher can unlink the entry, let the kernel hand the freed number to an
+    /// inode it controls, and leave the `statat` in [`RootfsOps::take`] agreeing that the
+    /// replacement is what was read. Holding it open is what keeps the number from being
+    /// handed out again, so `take` keeps it until the entry is unlinked.
+    ///
     /// `Ok(None)` is "there is nothing to take": an absent `/etc/resolv.conf` is the normal
     /// state of a fresh rootfs, not a failure.
     fn read_entry(
@@ -380,7 +387,7 @@ impl LocalRootfsOps {
         dir: BorrowedFd<'_>,
         name: &str,
         path: &RelPath,
-    ) -> Result<Option<(TakenEntry, Identity)>> {
+    ) -> Result<Option<(TakenEntry, Identity, OwnedFd)>> {
         // `O_NONBLOCK` because opening a FIFO for reading otherwise waits for a writer that
         // is never coming -- for the privileged helper, that is the build hanging with no
         // output. It is `fstat` below, not this open, that refuses one.
@@ -426,12 +433,10 @@ impl LocalRootfsOps {
         // what keeps a detached entry small enough to hold in memory and to serialize over
         // the helper channel.
         let mut content = Vec::new();
-        File::from(fd)
-            .take(MAX_TAKE_SIZE + 1)
-            .read_to_end(&mut content)
-            .map_err(|e| {
-                RsdebstrapError::io(format!("failed to read {}{}", self.display_root, path), e)
-            })?;
+        let mut reader = File::from(fd).take(MAX_TAKE_SIZE + 1);
+        reader.read_to_end(&mut content).map_err(|e| {
+            RsdebstrapError::io(format!("failed to read {}{}", self.display_root, path), e)
+        })?;
         if content.len() as u64 > MAX_TAKE_SIZE {
             return Err(RsdebstrapError::Isolation(format!(
                 "{}{} grew past {} bytes while it was being read, refusing to detach it",
@@ -446,6 +451,7 @@ impl LocalRootfsOps {
                 owner: Owner::of(&stat),
             },
             Identity::of(&stat),
+            OwnedFd::from(reader.into_inner()),
         )))
     }
 
@@ -460,7 +466,7 @@ impl LocalRootfsOps {
         dir: BorrowedFd<'_>,
         name: &str,
         path: &RelPath,
-    ) -> Result<Option<(TakenEntry, Identity)>> {
+    ) -> Result<Option<(TakenEntry, Identity, OwnedFd)>> {
         let fd = match rfs::openat(
             dir,
             name,
@@ -501,6 +507,7 @@ impl LocalRootfsOps {
                 owner: Owner::of(&stat),
             },
             Identity::of(&stat),
+            fd,
         )))
     }
 
@@ -887,7 +894,7 @@ impl RootfsOps for LocalRootfsOps {
         // chosen: the identity of the descriptor this opened while the entry was still the
         // caller's. Every refusal is behind us by then, so there is no rollback rename to
         // aim at the wrong inode either.
-        let Some((entry, taken)) = self.read_entry(dir, name, path)? else {
+        let Some((entry, taken, read_fd)) = self.read_entry(dir, name, path)? else {
             return Ok(None);
         };
 
@@ -900,10 +907,12 @@ impl RootfsOps for LocalRootfsOps {
         })?;
 
         // A check rather than a binding, twice over: Linux has neither rename-by-descriptor
-        // nor unlink-by-descriptor, so the entry that was read is held open but both
-        // syscalls here can only be given a name. What this rules out is the silent form --
-        // reporting an entry as taken while a different one was moved, and removing
-        // something other than what was returned.
+        // nor unlink-by-descriptor, so both syscalls here can only be given a name. What
+        // this rules out is the silent form -- reporting an entry as taken while a different
+        // one was moved, and removing something other than what was returned. It can rule
+        // that out only because `read_fd` is still open: a closed descriptor would let the
+        // read inode's number be freed and handed to an entry a watcher planted here, and
+        // this comparison would then agree about the wrong inode.
         //
         // Nothing is put back and nothing is removed when it does not hold: the name means
         // someone else's entry at that point, and neither publishing it under the caller's
@@ -933,6 +942,10 @@ impl RootfsOps for LocalRootfsOps {
                 std::io::Error::from(e),
             )
         })?;
+
+        // Held open from the read until here. Past this point the entry has no name left
+        // and nothing compares its identity, so the number is free to be reused.
+        drop(read_fd);
         Ok(Some(entry))
     }
 }

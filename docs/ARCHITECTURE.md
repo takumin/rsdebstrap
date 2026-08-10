@@ -251,6 +251,14 @@ patterns run throughout `src/isolation/`:
   the detached name afterwards instead would describe whatever is there by then, and agree
   with itself no matter who put it there.
 
+  That descriptor stays open until the detached entry is unlinked, because an inode number
+  identifies an inode only while something still refers to it. Closed after the read, it
+  would leave the number free: a watcher could unlink the entry, have the kernel hand the
+  number to an inode it controls, and leave the comparison agreeing about the substitute —
+  the identity check passing while naming the wrong file. Holding the descriptor is what
+  keeps the number from being handed out again. It does not close the window between the
+  `renameat` and the `statat`, which stays open by construction.
+
   It also puts every refusal (wrong type, over `MAX_TAKE_SIZE`) before anything has moved, so
   a refused `take` leaves the caller's name exactly as it was and there is no rollback rename
   to aim at the wrong inode. The read stays bounded even though the size came off the same
