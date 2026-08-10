@@ -79,7 +79,9 @@ fn open_program_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<OwnedFd> {
     let setid = Mode::SUID | Mode::SGID;
     if stat.st_mode & setid.bits() != 0 {
         return Err(crate::error::RsdebstrapError::Isolation(format!(
-            "{}{} is setuid or setgid; refusing to run it without isolation, which would             run it as its owner on the host rather than as the user the task resolved to",
+            "{}{} is setuid or setgid; refusing to run it without isolation, which \
+            would run it as its owner on the host rather than as the user the task \
+            resolved to",
             rootfs, path
         ))
         .into());
