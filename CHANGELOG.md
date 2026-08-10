@@ -35,9 +35,10 @@ and this project adheres to
   release binary. `--no-default-features` no longer produces a schema-less
   build.
 - A provision task's script, recipe, or mitamae binary is staged into the rootfs
-  through the same descriptor-anchored path, which buffers the file to cross the
-  privilege boundary in one request. Files over 64 MiB are refused rather than
-  read into memory in both processes.
+  through the same descriptor-anchored path, which buffers the content to cross
+  the privilege boundary in one request. Anything over 64 MiB is refused rather
+  than read into memory in both processes — a file named by `script:` when it is
+  opened, and a task's inline `content:` when the profile is validated.
 - Profile parse errors name the field path that failed — `provision[0]`,
   `bootstrap` — after the line and column. The untagged `privilege` and
   `isolation` enums report only "data did not match any variant", which on its

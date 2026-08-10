@@ -105,6 +105,17 @@ impl ScriptSource {
                         label,
                     )));
                 }
+                // A host file's size is only knowable once it is opened, so `read_host_file`
+                // applies the limit at staging time. Inline content is already in memory when
+                // the profile parses, so the same limit belongs here — before a rootfs exists.
+                if content.len() as u64 > MAX_STAGED_CONTENT_SIZE {
+                    return Err(RsdebstrapError::Validation(format!(
+                        "inline {} content is {} bytes, refusing to stage over {} bytes",
+                        label,
+                        content.len(),
+                        MAX_STAGED_CONTENT_SIZE
+                    )));
+                }
                 Ok(())
             }
         }
@@ -184,14 +195,15 @@ pub(crate) fn validate_host_file_exists(
     Ok(())
 }
 
-/// Refuses to stage a host file larger than this.
+/// Refuses to stage more than this many bytes, whether they come from a host file or from
+/// a profile's inline `content`.
 ///
-/// Staging buffers the whole file: it crosses the privilege boundary as one helper request,
+/// Staging buffers the whole thing: it crosses the privilege boundary as one helper request,
 /// base64 inside JSON, so the bytes exist several times over at the peak. The largest thing
 /// a profile legitimately names here is a mitamae binary, tens of megabytes; this leaves
 /// room for that and turns "the profile named something enormous" into an error rather than
 /// two processes growing until one of them is killed.
-const MAX_HOST_FILE_SIZE: u64 = 64 << 20;
+const MAX_STAGED_CONTENT_SIZE: u64 = 64 << 20;
 
 /// Reads a host file, refusing a symlink or a non-regular file at the same descriptor.
 ///
@@ -227,10 +239,10 @@ pub(crate) fn read_host_file(path: &Utf8Path, label: &str) -> Result<Vec<u8>> {
         );
     }
 
-    if stat.st_size as u64 > MAX_HOST_FILE_SIZE {
+    if stat.st_size as u64 > MAX_STAGED_CONTENT_SIZE {
         return Err(RsdebstrapError::Validation(format!(
             "{} {} is {} bytes, refusing to stage a file over {} bytes",
-            label, path, stat.st_size, MAX_HOST_FILE_SIZE
+            label, path, stat.st_size, MAX_STAGED_CONTENT_SIZE
         ))
         .into());
     }
@@ -239,13 +251,13 @@ pub(crate) fn read_host_file(path: &Utf8Path, label: &str) -> Result<Vec<u8>> {
     // still extend the file and an unbounded `read_to_end` would follow it.
     let mut content = Vec::new();
     std::fs::File::from(fd)
-        .take(MAX_HOST_FILE_SIZE + 1)
+        .take(MAX_STAGED_CONTENT_SIZE + 1)
         .read_to_end(&mut content)
         .with_context(|| format!("failed to read {} {}", label, path))?;
-    if content.len() as u64 > MAX_HOST_FILE_SIZE {
+    if content.len() as u64 > MAX_STAGED_CONTENT_SIZE {
         return Err(RsdebstrapError::Validation(format!(
             "{} {} grew past {} bytes while it was being read, refusing to stage it",
-            label, path, MAX_HOST_FILE_SIZE
+            label, path, MAX_STAGED_CONTENT_SIZE
         ))
         .into());
     }
@@ -310,14 +322,14 @@ pub(crate) fn stage_source_file(
     mode: FileMode,
     label: &str,
 ) -> Result<()> {
-    let content = match source {
+    let content: Cow<'_, [u8]> = match source {
         ScriptSource::Script(src_path) => {
             info!("copying {} from {} to rootfs", label, src_path);
-            read_host_file(src_path, label)?
+            Cow::Owned(read_host_file(src_path, label)?)
         }
         ScriptSource::Content(content) => {
             info!("writing inline {} to rootfs", label);
-            content.clone().into_bytes()
+            Cow::Borrowed(content.as_bytes())
         }
     };
     ops.write_file(path, &content, mode)

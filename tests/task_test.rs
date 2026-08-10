@@ -70,6 +70,34 @@ fn test_validate_rejects_whitespace_only_inline_content() {
     );
 }
 
+// `MAX_STAGED_CONTENT_SIZE` is private to `src/phase/mod.rs`, so these two spell the
+// 64 MiB limit out. They pin which side of it is refused: staging accepts exactly the
+// limit and refuses one byte past it, matching what `read_host_file` does for a file.
+const MAX_STAGED_CONTENT_SIZE: usize = 64 << 20;
+
+#[test]
+fn test_validate_rejects_oversized_inline_content() {
+    let task = ShellTask::new(ScriptSource::Content("x".repeat(MAX_STAGED_CONTENT_SIZE + 1)));
+    let err = task.validate().unwrap_err();
+    assert!(
+        matches!(err, RsdebstrapError::Validation(_)),
+        "Expected RsdebstrapError::Validation, got: {:?}",
+        err
+    );
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("refusing to stage over"),
+        "Expected 'refusing to stage over', got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_validate_accepts_inline_content_at_the_limit() {
+    let task = ShellTask::new(ScriptSource::Content("x".repeat(MAX_STAGED_CONTENT_SIZE)));
+    assert!(task.validate().is_ok());
+}
+
 #[test]
 fn test_validate_script_only() {
     let temp_dir = tempdir().expect("failed to create temp dir");
