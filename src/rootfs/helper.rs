@@ -345,7 +345,12 @@ impl PrivilegedRootfsOps {
                 &mut channel,
                 std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "helper closed its output"),
             )),
+            // Not this reply going wrong, but a line nothing here sent -- a `sudo` plugin
+            // that prints, a shell wrapper, anything on the helper's stdout that is not a
+            // response. The real reply is still buffered behind it, so leaving the channel
+            // open would keep the stream one reply ahead for the rest of the run.
             Ok(_) => serde_json::from_str(&line).map_err(|e| {
+                channel.close();
                 RsdebstrapError::Isolation(format!("malformed response from helper: {e}"))
             }),
             Err(RsdebstrapError::Io { source, .. }) => Err(self.channel_lost(&mut channel, source)),
@@ -374,17 +379,29 @@ impl PrivilegedRootfsOps {
         )
     }
 
+    /// Reports a reply of a shape this request could not have produced, and closes the
+    /// channel.
+    ///
+    /// The helper answers each request in turn, so a `Taken` where a `Unit` belongs is not
+    /// this request's answer coming out wrong -- it is a different request's, and every
+    /// later request would read the wrong one too. A `Response::Error` is not this: a
+    /// refusal is the answer to *this* request, and the channel stays usable.
+    fn desynchronised(&self) -> RsdebstrapError {
+        // Poisoned means a panic unwound through the channel, which `Channel::drop` still
+        // reaps. Nothing left to close, and no reason to panic again over it.
+        if let Ok(mut channel) = self.channel.lock() {
+            channel.close();
+        }
+        RsdebstrapError::Isolation("privileged helper answered a different request".into())
+    }
+
     fn unit(&self, request: Request) -> Result<()> {
         match self.request(&request)? {
             Response::Unit => Ok(()),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Taken(_) => Err(unexpected_response()),
+            Response::Taken(_) => Err(self.desynchronised()),
         }
     }
-}
-
-fn unexpected_response() -> RsdebstrapError {
-    RsdebstrapError::Isolation("privileged helper answered a different request".into())
 }
 
 impl RootfsOps for PrivilegedRootfsOps {
@@ -418,7 +435,7 @@ impl RootfsOps for PrivilegedRootfsOps {
         match self.request(&Request::Take { path: path.clone() })? {
             Response::Taken(entry) => Ok(entry),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Unit => Err(unexpected_response()),
+            Response::Unit => Err(self.desynchronised()),
         }
     }
 }
@@ -624,5 +641,42 @@ mod tests {
         };
         let encoded = serde_json::to_string(&entry).unwrap();
         assert_eq!(serde_json::from_str::<TakenEntry>(&encoded).unwrap(), entry);
+    }
+
+    // A line on the helper's stdout that is not a response -- a `sudo` plugin's banner, a
+    // shell wrapper's output, a stray `println!` on the helper path -- is read as this
+    // request's reply, and the reply it was meant to have is still buffered behind it.
+    //
+    // Left usable, the channel would stay one reply ahead for the rest of the run, and
+    // `Response::Unit` is legal for every unit-shaped request: `RootfsResolvConf::teardown`
+    // would read the previous request's `Unit`, mark itself torn down, and the run would
+    // exit successfully with the temporary provisioning resolv.conf in the image.
+    //
+    // The stand-in prints its banner and then answers every request with a valid `Unit`, so
+    // the second call succeeds unless the first one closed the channel.
+    #[test]
+    fn a_stray_line_closes_the_channel_rather_than_shifting_every_reply() {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(r#"echo "sudo: a banner"; while IFS= read -r _; do echo '"Unit"'; done"#)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn the stand-in helper");
+        let ops = PrivilegedRootfsOps {
+            channel: Mutex::new(Channel {
+                stdin: Some(child.stdin.take().expect("stdin was piped")),
+                stdout: Some(BufReader::new(child.stdout.take().expect("stdout was piped"))),
+                child,
+            }),
+            method: PrivilegeMethod::Sudo,
+        };
+        let path = RelPath::parse("/etc/resolv.conf").unwrap();
+
+        let first = ops.remove(&path).expect_err("a banner is not a response");
+        assert!(first.to_string().contains("malformed response"), "unexpected: {first}");
+
+        let second = ops.remove(&path).expect_err("the channel must not still be usable");
+        assert!(second.to_string().contains("closed"), "unexpected: {second}");
     }
 }
