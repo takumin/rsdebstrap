@@ -439,6 +439,27 @@ fn direct_context_clamps_a_parent_escape_to_the_rootfs() {
     assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
 }
 
+// A sibling test forking while a just-written program's write descriptor is still open
+// inherits it, and the kernel refuses to exec a file anyone holds open for writing. Nothing
+// in either test can prevent that -- the descriptor belongs to the write and the fork is
+// another thread's -- so the exec waits the window out rather than failing the run. Shared,
+// because the hazard is symmetric between the two tests below: one guarding while the other
+// does not is a flake waiting for whichever interleaving comes first.
+fn exec_past_etxtbsy(
+    context: &dyn rsdebstrap::isolation::IsolationContext,
+    argv: &[String],
+) -> rsdebstrap::executor::ExecutionResult {
+    loop {
+        match context.execute(argv, None) {
+            Ok(result) => break result,
+            Err(e) if format!("{e:#}").contains("Text file busy") => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => panic!("{e:#}"),
+        }
+    }
+}
+
 // The two tests here that really exec. Handing the executor the descriptor the check
 // landed on means the program is named as `/proc/self/fd/N`, and a `#!` program is what
 // makes that name's lifetime observable: the kernel passes the same name to the
@@ -464,7 +485,7 @@ fn direct_context_execs_a_shebang_program_through_the_checked_descriptor() {
         .setup(&rootfs, executor, mock_ops(&rootfs))
         .unwrap();
 
-    let result = context.execute(&["/bin/prog".to_string()], None).unwrap();
+    let result = exec_past_etxtbsy(context.as_ref(), &["/bin/prog".to_string()]);
 
     assert!(
         result
@@ -503,19 +524,7 @@ fn direct_context_gives_an_executed_program_the_argv0_it_was_asked_for() {
         format!("printf '%s' \"$0\" > {reported}"),
     ];
 
-    // A sibling test forking while this copy's write descriptor is still open inherits it,
-    // and the kernel refuses to exec a file anyone holds open for writing. Nothing here can
-    // prevent that -- the descriptor belongs to `fs::copy` and the fork is another thread's
-    // -- so the exec waits the window out rather than failing the run.
-    let result = loop {
-        match context.execute(&argv, None) {
-            Ok(result) => break result,
-            Err(e) if format!("{e:#}").contains("Text file busy") => {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            Err(e) => panic!("{e:#}"),
-        }
-    };
+    let result = exec_past_etxtbsy(context.as_ref(), &argv);
 
     assert!(
         result
