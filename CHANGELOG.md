@@ -51,6 +51,12 @@ and this project adheres to
   `bootstrap` — after the line and column. The untagged `privilege` and
   `isolation` enums report only "data did not match any variant", which on its
   own does not say which entry is malformed.
+- **Breaking (library):** `RootfsMounts::mount` returns a `Mounted`,
+  `RootfsResolvConf::setup` takes one and returns a `Prepared`, and
+  `Pipeline::run_prepare_and_provision` requires that `Prepared`. Provisioning
+  was reachable without arming the guards that hold a prepare task's mounts and
+  temporary resolv.conf; because a prepare item has nothing to run on its own,
+  such a run reported those tasks as done and provisioned without them.
 - `Pipeline::run` refuses a pipeline that declares prepare tasks instead of
   provisioning without them. The mount and the temporary resolv.conf a prepare
   task declares are held by guards that bracket provisioning, and that path is

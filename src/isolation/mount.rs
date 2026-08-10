@@ -22,6 +22,17 @@ use crate::isolation::resolv_conf::Restored;
 use crate::privilege::PrivilegeMethod;
 use crate::rootfs::RelPath;
 
+/// Evidence that the pipeline's mounts are in place.
+///
+/// The front of the same chain [`Unmounted`] ends: provisioning happens with the mounts a
+/// profile's `prepare.mount` declares, so the guard that establishes them hands out the
+/// evidence rather than leaving the ordering to whoever wired the run up. Consumed by
+/// [`RootfsResolvConf::setup`](crate::isolation::resolv_conf::RootfsResolvConf::setup),
+/// which is what puts the mounts before the temporary resolv.conf it writes into them.
+#[must_use]
+#[derive(Debug)]
+pub struct Mounted(());
+
 /// Evidence that the pipeline's mounts have been released.
 ///
 /// [`Pipeline::run_assemble`](crate::pipeline::Pipeline::run_assemble) requires
@@ -187,7 +198,11 @@ impl RootfsMounts {
     /// `O_NOFOLLOW` (skipped in dry-run mode). Verified absolute paths are stored
     /// and reused for `umount` commands.
     /// On failure, automatically unmounts any entries that were successfully mounted.
-    pub fn mount(&mut self) -> Result<()> {
+    ///
+    /// Yields [`Mounted`], which the prepare guard downstream requires: a run cannot reach
+    /// provisioning without having come through here, whether or not it had any entries to
+    /// mount.
+    pub fn mount(&mut self) -> Result<Mounted> {
         if self.torn_down || self.mounted_paths.iter().any(|p| p.is_some()) {
             return Err(RsdebstrapError::Isolation(
                 "mount() called on already-used RootfsMounts".to_string(),
@@ -196,7 +211,7 @@ impl RootfsMounts {
         }
 
         if self.entries.is_empty() {
-            return Ok(());
+            return Ok(Mounted(()));
         }
 
         info!("mounting {} filesystem(s) in rootfs", self.entries.len());
@@ -233,7 +248,7 @@ impl RootfsMounts {
             }
         }
 
-        Ok(())
+        Ok(Mounted(()))
     }
 
     /// Unmounts previously mounted entries and returns the original error.
@@ -479,7 +494,7 @@ mod tests {
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
         let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
         mounts.unmount().unwrap();
 
         let calls = executor.calls();
@@ -500,7 +515,7 @@ mod tests {
         let mut mounts =
             RootfsMounts::new(Utf8Path::new("/tmp/rootfs"), vec![], executor.clone(), None);
         assert!(mounts.is_empty());
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
         mounts.unmount().unwrap();
         assert_eq!(executor.calls().len(), 0);
     }
@@ -531,7 +546,7 @@ mod tests {
 
         {
             let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
-            mounts.mount().unwrap();
+            let _ = mounts.mount().unwrap();
             // Drop without calling unmount()
         }
 
@@ -548,7 +563,7 @@ mod tests {
             executor.clone(),
             None,
         );
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
         mounts.unmount().unwrap();
 
         let calls = executor.calls();
@@ -562,7 +577,7 @@ mod tests {
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
         let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
         mounts.unmount().unwrap();
         mounts.unmount().unwrap();
 
@@ -584,7 +599,7 @@ mod tests {
 
         let mut mounts =
             RootfsMounts::new(&rootfs, entries, executor.clone(), Some(PrivilegeMethod::Sudo));
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
         mounts.unmount().unwrap();
 
         // Both the mount and the matching umount must carry the escalation:
@@ -609,7 +624,7 @@ mod tests {
         }];
 
         let mut mounts = RootfsMounts::new(&rootfs, entries, executor.clone(), None);
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
         mounts.unmount().unwrap();
 
         // Negative control for `mount_with_privilege`: without a configured
@@ -649,7 +664,7 @@ mod tests {
 
         {
             let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
-            mounts.mount().unwrap();
+            let _ = mounts.mount().unwrap();
 
             let err = mounts.unmount();
             assert!(err.is_err(), "first unmount should fail");
@@ -689,7 +704,7 @@ mod tests {
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
         let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
 
         let err = mounts.unmount().unwrap_err();
         let msg = err.to_string();
@@ -705,7 +720,7 @@ mod tests {
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
         let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
 
         let err = mounts.unmount().unwrap_err();
         assert!(err.to_string().contains("1 filesystem"));
@@ -725,7 +740,7 @@ mod tests {
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
         let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
 
         // First unmount: /sys fails, /proc succeeds
         let _ = mounts.unmount();
@@ -844,7 +859,7 @@ mod tests {
         let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 
         let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
-        mounts.mount().unwrap();
+        let _ = mounts.mount().unwrap();
 
         assert!(mounts.mounted_paths[0].is_some());
         assert!(mounts.mounted_paths[1].is_some());

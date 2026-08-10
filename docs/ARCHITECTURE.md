@@ -119,19 +119,31 @@ Key invariants:
   the way the image will — without `/proc`, `/sys` and `/dev` bound over it. Assemble writes
   the rootfs's *final* state, so anything still bound over it is not part of that state.
 
-  That ordering is carried by three token types rather than by comment and convention.
-  `Pipeline::run_prepare_and_provision` yields a `Provisioned`; `RootfsResolvConf::restore`
-  consumes one and yields a `Restored`; `RootfsMounts::unmount_before_assembly` consumes that
+  That ordering is carried by token types rather than by comment and convention, and the
+  chain starts before provisioning rather than after it. `RootfsMounts::mount` yields a
+  `Mounted`; `RootfsResolvConf::setup` consumes one and yields a `Prepared`;
+  `Pipeline::run_prepare_and_provision` requires that. Without it, entering provisioning was
+  a public entry point that armed no guards: a prepare item has nothing to *run* — the
+  guards are what carry a mount or a temporary resolv.conf — so iterating the phase reported
+  those tasks as done for a run that had skipped them, and provisioning proceeded without
+  the mounts or the DNS the profile asked for. `Prepared` says the guards ran, not that they
+  were built from the same `prepare` config as the pipeline; binding that would mean
+  constructing them from it. What it rules out is the case with none at all.
+
+  From there: `Pipeline::run_prepare_and_provision` yields a `Provisioned`;
+  `RootfsResolvConf::restore` consumes one and yields a `Restored`;
+  `RootfsMounts::unmount_before_assembly` consumes that
   and yields an `Unmounted`; `Pipeline::run_assemble` requires an `Unmounted`. Assembling
   before either teardown is therefore a compile error, not a review finding. Each token is
   declared in the module of the guard that produces it, so its constructor is private *there*
   — declared in `pipeline` they would be `pub(crate)` and the orchestration could mint one,
   which is exactly the mistake being prevented. `Pipeline::run` is the one exemption, via
-  named functions that still demand the preceding token. It earns it by refusing a pipeline
-  that declares any prepare task, so "nothing was detached and nothing was mounted" is a
-  property of the pipeline it ran rather than a hope about the caller: a profile asking for
-  a mount or a temporary resolv.conf cannot be provisioned without them and still reported
-  as successful.
+  named functions that still demand the preceding token — `Prepared::nothing_to_prepare` is
+  the front of that set. It earns them by refusing a pipeline that declares any prepare
+  task, so "there was nothing for a guard to do, nothing was detached and nothing was
+  mounted" is a property of the pipeline it ran rather than a hope about the caller: a
+  profile asking for a mount or a temporary resolv.conf cannot be provisioned without them
+  and still reported as successful.
 
   A failed unmount consequently skips assemble, the same way a failed restore does: the
   rootfs is not in the state assemble is defined against. Unmounting itself is still

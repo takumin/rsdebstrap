@@ -12,6 +12,7 @@ use tracing::info;
 
 use crate::config::ResolvConfConfig;
 use crate::error::RsdebstrapError;
+use crate::isolation::mount::Mounted;
 use crate::pipeline::Provisioned;
 use crate::rootfs::{FileMode, RelPath, RootfsOps, TakenEntry};
 
@@ -34,6 +35,33 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
         lines.push(format!("nameserver {}", ns));
     }
     lines.join("\n") + "\n"
+}
+
+/// Evidence that the prepare phase's guards are in place.
+///
+/// [`Pipeline::run_prepare_and_provision`](crate::pipeline::Pipeline::run_prepare_and_provision)
+/// requires one, so provisioning cannot be entered by a caller that skipped them. A prepare
+/// task has nothing to run — what `prepare.mount` and `prepare.resolv_conf` declare is
+/// carried by RAII guards that bracket provisioning — and iterating the phase would
+/// otherwise report those tasks as done while a run that never armed the guards provisioned
+/// without the mounts or the DNS the profile asked for.
+///
+/// It says the guards ran, not that they were built from the same `prepare` config as the
+/// pipeline being provisioned; binding that would mean constructing them from it. What it
+/// rules out is the case with no guards at all.
+#[must_use]
+#[derive(Debug)]
+pub struct Prepared(());
+
+impl Prepared {
+    /// For a pipeline with no prepare phase, where there is nothing for a guard to do.
+    ///
+    /// The only way to obtain a `Prepared` without arming one, and
+    /// [`Pipeline::run`](crate::pipeline::Pipeline::run) — the one caller — earns it by
+    /// refusing a pipeline that declares any prepare task.
+    pub(crate) fn nothing_to_prepare() -> Self {
+        Self(())
+    }
 }
 
 /// Evidence that the rootfs's own resolv.conf is back in place.
@@ -114,14 +142,14 @@ impl RootfsResolvConf {
     /// before returning, so a failed setup leaves the rootfs as it was found.
     /// If that rollback fails too, the returned error says so and the guard
     /// stays armed, leaving the retry to `Drop`.
-    pub fn setup(&mut self) -> Result<()> {
+    pub fn setup(&mut self, _mounted: Mounted) -> Result<Prepared> {
         let Some(config) = &self.config else {
-            return Ok(());
+            return Ok(Prepared(()));
         };
 
         if self.dry_run {
             info!("would set up resolv.conf in {}", self.rootfs);
-            return Ok(());
+            return Ok(Prepared(()));
         }
 
         let path = resolv_conf_path();
@@ -171,7 +199,7 @@ impl RootfsResolvConf {
 
         info!("set up resolv.conf in {}", self.rootfs);
         self.active = true;
-        Ok(())
+        Ok(Prepared(()))
     }
 
     /// Restores the entry setup detached, in exchange for the token
@@ -290,6 +318,20 @@ mod tests {
         (temp, rootfs)
     }
 
+    // The token `setup` requires. Produced by a real mount guard with no entries rather than
+    // by a test-only constructor: `mount()` on an empty guard touches nothing and cannot
+    // fail, so this is the evidence the guard actually hands out.
+    fn mounted() -> Mounted {
+        crate::isolation::mount::RootfsMounts::new(
+            Utf8Path::new("/nonexistent"),
+            Vec::new(),
+            Arc::new(crate::executor::RealCommandExecutor::new(true)),
+            None,
+        )
+        .mount()
+        .expect("an empty mount guard mounts nothing")
+    }
+
     fn guard(rootfs: &Utf8Path, config: Option<ResolvConfConfig>) -> RootfsResolvConf {
         let ops = Arc::new(LocalRootfsOps::open(rootfs).unwrap());
         RootfsResolvConf::new(rootfs, config, Utf8Path::new("/etc/resolv.conf"), ops, false)
@@ -318,7 +360,7 @@ mod tests {
         fs::write(resolv_conf(&rootfs), secret).unwrap();
 
         let mut g = guard(&rootfs, Some(generated(&["192.0.2.1"])));
-        g.setup().unwrap();
+        let _ = g.setup(mounted()).unwrap();
         let rendered = format!("{g:?}");
 
         assert!(rendered.contains("detached: true"), "state is missing: {rendered}");
@@ -459,7 +501,7 @@ mod tests {
         fs::write(resolv_conf(&rootfs), "original\n").unwrap();
 
         let mut g = guard(&rootfs, None);
-        g.setup().unwrap();
+        let _ = g.setup(mounted()).unwrap();
         g.teardown().unwrap();
 
         assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
@@ -478,7 +520,7 @@ mod tests {
             ops,
             true,
         );
-        g.setup().unwrap();
+        let _ = g.setup(mounted()).unwrap();
 
         assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
     }
@@ -488,7 +530,7 @@ mod tests {
         let (_temp, rootfs) = rootfs_with_etc();
         let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
 
-        g.setup().unwrap();
+        let _ = g.setup(mounted()).unwrap();
 
         assert_eq!(
             fs::read_to_string(resolv_conf(&rootfs)).unwrap(),
@@ -509,7 +551,7 @@ mod tests {
             search: vec![],
         };
         let mut g = RootfsResolvConf::new(&rootfs, Some(config), &host, ops, false);
-        g.setup().unwrap();
+        let _ = g.setup(mounted()).unwrap();
 
         assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "nameserver 10.0.0.1\n");
     }
@@ -520,7 +562,7 @@ mod tests {
         fs::write(resolv_conf(&rootfs), "original\n").unwrap();
 
         let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
-        g.setup().unwrap();
+        let _ = g.setup(mounted()).unwrap();
         assert_ne!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
 
         g.teardown().unwrap();
@@ -538,7 +580,7 @@ mod tests {
         std::os::unix::fs::symlink(target, resolv_conf(&rootfs)).unwrap();
 
         let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
-        g.setup().unwrap();
+        let _ = g.setup(mounted()).unwrap();
         assert!(
             fs::symlink_metadata(resolv_conf(&rootfs))
                 .unwrap()
@@ -564,7 +606,7 @@ mod tests {
         let (_temp, rootfs) = rootfs_with_etc();
 
         let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
-        g.setup().unwrap();
+        let _ = g.setup(mounted()).unwrap();
         g.teardown().unwrap();
 
         assert!(!resolv_conf(&rootfs).exists());
@@ -584,7 +626,7 @@ mod tests {
             false,
         );
 
-        assert!(g.setup().is_err());
+        assert!(g.setup(mounted()).is_err());
         assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
     }
 
@@ -607,7 +649,7 @@ mod tests {
                 false,
             );
 
-            let err = g.setup().unwrap_err();
+            let err = g.setup(mounted()).unwrap_err();
             let rendered = format!("{err:#}");
             assert!(rendered.contains("could not be put back"), "unexpected error: {rendered}");
             assert!(rendered.contains("write refused"), "the write error was lost: {rendered}");
@@ -626,7 +668,7 @@ mod tests {
         std::os::unix::fs::symlink(&outside, rootfs.join("etc")).unwrap();
 
         let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
-        let err = g.setup().unwrap_err();
+        let err = g.setup(mounted()).unwrap_err();
 
         assert!(err.to_string().contains("symlink"), "unexpected error: {err}");
         assert!(!outside.join("resolv.conf").exists(), "wrote through the symlink");
@@ -638,7 +680,7 @@ mod tests {
         let rootfs = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
 
         let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
-        assert!(g.setup().is_err());
+        assert!(g.setup(mounted()).is_err());
     }
 
     #[test]
@@ -648,7 +690,7 @@ mod tests {
 
         {
             let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
-            g.setup().unwrap();
+            let _ = g.setup(mounted()).unwrap();
         }
 
         assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
@@ -660,7 +702,7 @@ mod tests {
         fs::write(resolv_conf(&rootfs), "original\n").unwrap();
 
         let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
-        g.setup().unwrap();
+        let _ = g.setup(mounted()).unwrap();
         g.teardown().unwrap();
         fs::write(resolv_conf(&rootfs), "written after teardown\n").unwrap();
         g.teardown().unwrap();

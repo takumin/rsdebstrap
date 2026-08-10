@@ -18,7 +18,7 @@ use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
 use crate::isolation::mount::Unmounted;
-use crate::isolation::resolv_conf::Restored;
+use crate::isolation::resolv_conf::{Prepared, Restored};
 use crate::isolation::{DirectProvider, IsolationProvider, PlainRootfsContext};
 use crate::phase::{
     AssembleConfig, PhaseItem, PrepareConfig, ProvisionItem, ProvisionTask, ResolvedProvisionTask,
@@ -129,7 +129,14 @@ impl<'a> Pipeline<'a> {
         }
 
         let dry_run = executor.dry_run();
-        let provisioned = self.run_prepare_and_provision(rootfs, &executor, &ops)?;
+        // Not a claim that guards were armed: the refusal above is what makes "there is
+        // nothing for one to do" true here.
+        let provisioned = self.run_prepare_and_provision(
+            Prepared::nothing_to_prepare(),
+            rootfs,
+            &executor,
+            &ops,
+        )?;
         // Not a claim that guards were run and found to have done nothing: the refusal
         // above is what makes "nothing was detached, nothing was mounted" true here.
         let restored = Restored::nothing_was_detached(provisioned);
@@ -144,8 +151,14 @@ impl<'a> Pipeline<'a> {
     /// `run_pipeline_phase()` restoring the temporary resolv.conf — call
     /// this, do that work, then call [`Self::run_assemble`]. Returns
     /// immediately if the pipeline has no tasks.
+    ///
+    /// Requires [`Prepared`], so the guards a prepare task's mounts and temporary
+    /// resolv.conf live in are armed before anything is provisioned. Running a prepare item
+    /// is a no-op — the guards are what carry it — and without the token that no-op is
+    /// indistinguishable from a run that skipped them and provisioned anyway.
     pub fn run_prepare_and_provision(
         &self,
+        _prepared: Prepared,
         rootfs: &Utf8Path,
         executor: &Arc<dyn CommandExecutor>,
         ops: &Arc<dyn RootfsOps>,

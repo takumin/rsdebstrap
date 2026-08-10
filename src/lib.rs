@@ -122,7 +122,7 @@ fn run_pipeline_phase_with(
         .unwrap_or_default();
     let privilege = profile.defaults.privilege.as_ref().map(|d| d.method);
     let mut mounts = RootfsMounts::new(&rootfs, mount_entries, executor.clone(), privilege);
-    mounts
+    let mounted = mounts
         .mount()
         .context("failed to mount filesystems in rootfs")?;
 
@@ -143,14 +143,14 @@ fn run_pipeline_phase_with(
         ops.clone(),
         dry_run,
     );
-    resolv_conf
-        .setup()
+    let prepared = resolv_conf
+        .setup(mounted)
         .context("failed to set up resolv.conf in rootfs")?;
 
     // The ordering below is carried by `Provisioned`/`Restored`/`Unmounted`: each stage
     // takes a token only the previous one can produce. Why restore and unmount both have to
     // land before assembly is in `docs/ARCHITECTURE.md` (Phases & the pipeline).
-    let restored = match pipeline.run_prepare_and_provision(&rootfs, &executor, &ops) {
+    let restored = match pipeline.run_prepare_and_provision(prepared, &rootfs, &executor, &ops) {
         Ok(provisioned) => resolv_conf.restore(provisioned).context(
             "failed to restore resolv.conf after provisioning; any assemble tasks were skipped",
         ),
