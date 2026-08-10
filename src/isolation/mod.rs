@@ -43,8 +43,8 @@ impl TaskCommandToken {
 
 pub mod chroot;
 pub mod direct;
-pub mod mount;
-pub mod resolv_conf;
+pub(crate) mod mount;
+pub(crate) mod resolv_conf;
 
 pub use chroot::{ChrootContext, ChrootProvider};
 pub use direct::{DirectContext, DirectProvider};

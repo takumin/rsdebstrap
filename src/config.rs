@@ -213,7 +213,7 @@ impl MountEntry {
     /// Builds a `CommandSpec` for the `mount` command using a pre-validated absolute target path.
     ///
     /// Accepts an already-validated absolute path (e.g., from
-    /// [`safe_create_mount_point()`](crate::isolation::mount::safe_create_mount_point))
+    /// `safe_create_mount_point()`)
     /// instead of computing it from rootfs + target.
     ///
     /// For pseudo-filesystems, generates: `mount -t <source> [-o opts] <source> <abs_target>`
@@ -244,7 +244,7 @@ impl MountEntry {
     /// Builds a `CommandSpec` for the `umount` command using a pre-validated absolute target path.
     ///
     /// Accepts an already-validated absolute path (e.g., stored by
-    /// [`RootfsMounts`](crate::isolation::mount::RootfsMounts) after a successful mount)
+    /// `RootfsMounts` after a successful mount)
     /// instead of computing it from rootfs + target.
     pub fn build_umount_spec_with_path(
         &self,

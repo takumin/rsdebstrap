@@ -51,23 +51,15 @@ and this project adheres to
   `bootstrap` — after the line and column. The untagged `privilege` and
   `isolation` enums report only "data did not match any variant", which on its
   own does not say which entry is malformed.
-- **Breaking (library):** `RootfsMounts::mount` returns a `Mounted`,
-  `RootfsResolvConf::setup` takes one and returns a `Prepared`, and
-  `Pipeline::run_prepare_and_provision` requires that `Prepared`. Provisioning
-  was reachable without arming the guards that hold a prepare task's mounts and
-  temporary resolv.conf; because a prepare item has nothing to run on its own,
-  such a run reported those tasks as done and provisioned without them. Both
-  tokens borrow the guards they came from, so neither can be unmounted, torn
-  down or dropped while the evidence is alive, and both name the rootfs and the
-  declarations the guards were built for, which provisioning compares against
-  the pipeline it is about to run.
-- **Breaking (library):** `RootfsResolvConf::restore` also takes a `Mounted`,
-  obtained from the new `RootfsMounts::still_mounted`, and `RootfsMounts::unmount`
-  is no longer public. The mounts have to stay in place across the restore — with
-  a `prepare.mount` over `/etc`, setup replaced the entry on the mounted
-  filesystem, and restoring after the unmount would put the original on the
-  directory underneath it. The ordered release, `unmount_before_assembly`, is the
-  only one callers outside the crate have.
+- **Breaking (library):** the prepare-phase guards (`RootfsMounts`,
+  `RootfsResolvConf`) and the staged pipeline entry points
+  (`run_prepare_and_provision`, `run_assemble`) are no longer public. Their
+  ordering is carried by tokens — mounts established, prepare guards armed,
+  provisioned, restored, unmounted — and a token is a value: across a public
+  boundary one can be presented for a different guard, rootfs or pipeline than
+  the one it was produced for, which is the ordering it exists to enforce. The
+  public surface is `run_apply` and `Pipeline::run`, which refuses a pipeline
+  that declares prepare tasks.
 - `Pipeline::run` refuses a pipeline that declares prepare tasks instead of
   provisioning without them. The mount and the temporary resolv.conf a prepare
   task declares are held by guards that bracket provisioning, and that path is

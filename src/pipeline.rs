@@ -108,7 +108,7 @@ impl<'a> Pipeline<'a> {
     /// this method is by definition the case with nothing in between to hold them. So it
     /// refuses a pipeline that declares any, rather than provisioning without the mounts or
     /// the DNS the profile asked for and reporting success. Those callers use
-    /// [`Self::run_prepare_and_provision`] and [`Self::run_assemble`], holding the guards
+    /// `run_prepare_and_provision` and `run_assemble`, holding the guards
     /// across the two.
     ///
     /// If the pipeline has no tasks at all, returns immediately.
@@ -156,7 +156,7 @@ impl<'a> Pipeline<'a> {
     /// resolv.conf live in are armed before anything is provisioned. Running a prepare item
     /// is a no-op — the guards are what carry it — and without the token that no-op is
     /// indistinguishable from a run that skipped them and provisioned anyway.
-    pub fn run_prepare_and_provision(
+    pub(crate) fn run_prepare_and_provision(
         &self,
         prepared: Prepared<'_>,
         rootfs: &Utf8Path,
@@ -230,7 +230,7 @@ impl<'a> Pipeline<'a> {
     ///
     /// Call only after a successful [`Self::run_prepare_and_provision`].
     /// Returns immediately if the pipeline has no tasks.
-    pub fn run_assemble(
+    pub(crate) fn run_assemble(
         &self,
         _unmounted: Unmounted,
         rootfs: &Utf8Path,
@@ -256,7 +256,7 @@ impl<'a> Pipeline<'a> {
 /// [`RootfsResolvConf::restore`](crate::isolation::resolv_conf::RootfsResolvConf::restore).
 #[must_use]
 #[derive(Debug)]
-pub struct Provisioned(());
+pub(crate) struct Provisioned(());
 
 impl Provisioned {
     fn new() -> Self {

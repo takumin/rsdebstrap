@@ -155,8 +155,17 @@ Key invariants:
   and restoring after the unmount would put the original on the directory underneath while
   leaving the temporary on the mounted one. So `restore` asks for a `Mounted` *again*, from
   `RootfsMounts::still_mounted`, which a released guard refuses and a dropped one cannot be
-  asked at all. `RootfsMounts::unmount` is `pub(crate)` for the same reason: the only
-  release a caller outside the crate has is the ordered one. Each token is
+  asked at all.
+
+  None of this leaves the crate. The guards and the staged entry points
+  (`run_prepare_and_provision`, `run_assemble`) are `pub(crate)`, because a token is a
+  *value*: outside the crate it can be presented for a different guard, a different rootfs
+  or a different pipeline than the one it was produced for, and each of those is the
+  ordering it exists to enforce. Naming the subject in the token and comparing it — which
+  `Prepared` does — closes the cases that can be compared, but the boundary keeps making new
+  ones, and there is no caller on the far side of it: `run_apply` and `Pipeline::run` are
+  the public surface, and `Pipeline::run` refuses a pipeline with a prepare phase. Each
+  token is
   declared in the module of the guard that produces it, so its constructor is private *there*
   — declared in `pipeline` they would be `pub(crate)` and the orchestration could mint one,
   which is exactly the mistake being prevented. `Pipeline::run` is the one exemption, via

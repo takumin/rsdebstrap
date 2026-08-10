@@ -49,7 +49,7 @@ use crate::rootfs::RelPath;
 /// compares these against what it is about to provision.
 #[must_use]
 #[derive(Debug)]
-pub struct Mounted<'a> {
+pub(crate) struct Mounted<'a> {
     rootfs: &'a Utf8Path,
     entries: &'a [MountEntry],
     guard: PhantomData<&'a RootfsMounts>,
@@ -75,7 +75,7 @@ impl<'a> Mounted<'a> {
 /// `/sys` and `/dev` bound over it.
 #[must_use]
 #[derive(Debug)]
-pub struct Unmounted(());
+pub(crate) struct Unmounted(());
 
 impl Unmounted {
     /// For a run with no mount guard, where nothing was ever mounted.
@@ -125,7 +125,7 @@ fn map_openat_error(err: rustix::io::Errno, path: &Utf8Path, label: &str) -> any
 /// is not a symlink.
 ///
 /// Returns the verified absolute path for use in mount/umount commands.
-pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &RelPath) -> Result<Utf8PathBuf> {
+pub(crate) fn safe_create_mount_point(rootfs: &Utf8Path, target: &RelPath) -> Result<Utf8PathBuf> {
     let rootfs_fd = rfs::openat(
         CWD,
         rootfs.as_str(),
@@ -179,7 +179,7 @@ pub fn safe_create_mount_point(rootfs: &Utf8Path, target: &RelPath) -> Result<Ut
 /// with `O_NOFOLLOW` to prevent TOCTOU races. Verified absolute paths are
 /// stored and reused for `umount` commands, avoiding re-traversal of
 /// potentially-tampered paths.
-pub struct RootfsMounts {
+pub(crate) struct RootfsMounts {
     rootfs: Utf8PathBuf,
     entries: Vec<MountEntry>,
     /// Verified absolute paths for mounted entries (`Some` = mounted, `None` = not mounted).
@@ -201,7 +201,7 @@ impl RootfsMounts {
     /// Takes no `dry_run` of its own: the executor already answers that, and a mount
     /// guard that believed otherwise would either skip the `umount` for mounts that
     /// really happened or issue one for mounts that never did.
-    pub fn new(
+    pub(crate) fn new(
         rootfs: &Utf8Path,
         entries: Vec<MountEntry>,
         executor: Arc<dyn CommandExecutor>,
@@ -226,11 +226,6 @@ impl RootfsMounts {
         self.mounted_paths.iter().filter(|p| p.is_some()).count()
     }
 
-    /// Returns true if there are no mount entries.
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
     /// Mounts all entries in order.
     ///
     /// Creates mount point directories as needed using `openat`/`mkdirat` with
@@ -241,7 +236,7 @@ impl RootfsMounts {
     /// Yields [`Mounted`], which the prepare guard downstream requires: a run cannot reach
     /// provisioning without having come through here, whether or not it had any entries to
     /// mount.
-    pub fn mount(&mut self) -> Result<Mounted<'_>> {
+    pub(crate) fn mount(&mut self) -> Result<Mounted<'_>> {
         if self.torn_down || self.mounted_paths.iter().any(|p| p.is_some()) {
             return Err(RsdebstrapError::Isolation(
                 "mount() called on already-used RootfsMounts".to_string(),
@@ -340,7 +335,7 @@ impl RootfsMounts {
     /// Returns an error if this guard has not mounted yet -- a fresh guard has nothing
     /// missing, and one whose `mount` failed part-way has had the successful entries rolled
     /// back, so neither state can be told from the entry list -- or has already unmounted.
-    pub fn still_mounted(&self) -> Result<Mounted<'_>> {
+    pub(crate) fn still_mounted(&self) -> Result<Mounted<'_>> {
         if !self.mounted {
             return Err(RsdebstrapError::Isolation(
                 "the rootfs mounts have not been established".to_string(),
@@ -373,7 +368,7 @@ impl RootfsMounts {
     /// token, and the token cannot exist before the mounts are gone. A run that
     /// fails to unmount therefore never assembles, because the rootfs is not in
     /// the state assembly is defined against.
-    pub fn unmount_before_assembly(&mut self, _restored: Restored) -> Result<Unmounted> {
+    pub(crate) fn unmount_before_assembly(&mut self, _restored: Restored) -> Result<Unmounted> {
         self.unmount()?;
         Ok(Unmounted(()))
     }
@@ -604,7 +599,7 @@ mod tests {
         let executor = Arc::new(MockMountExecutor::new());
         let mut mounts =
             RootfsMounts::new(Utf8Path::new("/tmp/rootfs"), vec![], executor.clone(), None);
-        assert!(mounts.is_empty());
+        assert!(mounts.entries.is_empty());
         let _ = mounts.mount().unwrap();
         mounts.unmount().unwrap();
         assert_eq!(executor.calls().len(), 0);

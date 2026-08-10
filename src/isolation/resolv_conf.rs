@@ -57,7 +57,7 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
 /// rules out is the case with no guards at all.
 #[must_use]
 #[derive(Debug)]
-pub struct Prepared<'a> {
+pub(crate) struct Prepared<'a> {
     rootfs: &'a Utf8Path,
     mounts: &'a [MountEntry],
     resolv_conf: Option<&'a ResolvConfConfig>,
@@ -105,7 +105,7 @@ impl<'a> Prepared<'a> {
 /// overwrite it — so the orchestration is not free to reorder the two.
 #[must_use]
 #[derive(Debug)]
-pub struct Restored(());
+pub(crate) struct Restored(());
 
 impl Restored {
     /// For a run with no prepare guard, where nothing was ever detached.
@@ -130,7 +130,7 @@ fn resolv_conf_path() -> RelPath {
 ///
 /// The original is held in memory as a [`TakenEntry`] rather
 /// than moved to a backup path; that type documents why.
-pub struct RootfsResolvConf {
+pub(crate) struct RootfsResolvConf {
     ops: Arc<dyn RootfsOps>,
     config: Option<ResolvConfConfig>,
     host_resolv_conf: Utf8PathBuf,
@@ -146,7 +146,7 @@ pub struct RootfsResolvConf {
 impl RootfsResolvConf {
     /// Creates a guard over `rootfs`. If `config` is `None`, setup and teardown
     /// are no-ops.
-    pub fn new(
+    pub(crate) fn new(
         rootfs: &Utf8Path,
         config: Option<ResolvConfConfig>,
         host_resolv_conf: &Utf8Path,
@@ -174,7 +174,7 @@ impl RootfsResolvConf {
     /// before returning, so a failed setup leaves the rootfs as it was found.
     /// If that rollback fails too, the returned error says so and the guard
     /// stays armed, leaving the retry to `Drop`.
-    pub fn setup<'a>(&'a mut self, mounted: Mounted<'a>) -> Result<Prepared<'a>> {
+    pub(crate) fn setup<'a>(&'a mut self, mounted: Mounted<'a>) -> Result<Prepared<'a>> {
         // Two guards for two different rootfs directories would otherwise combine into one
         // token naming neither.
         if mounted.rootfs() != self.rootfs {
@@ -285,7 +285,7 @@ impl RootfsResolvConf {
     ///
     /// Returns an error if the original cannot be written back. `Drop` retries
     /// the restore in that case.
-    pub fn restore(
+    pub(crate) fn restore(
         &mut self,
         _provisioned: Provisioned,
         _mounted: Mounted<'_>,
@@ -295,7 +295,7 @@ impl RootfsResolvConf {
     }
 
     /// Restores the entry setup detached. Idempotent after a successful call.
-    pub fn teardown(&mut self) -> Result<()> {
+    pub(crate) fn teardown(&mut self) -> Result<()> {
         if !self.active || self.torn_down {
             return Ok(());
         }
