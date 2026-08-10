@@ -513,11 +513,18 @@ impl LocalRootfsOps {
 
     /// Publishes the staged entry under the caller's name.
     ///
-    /// `staged` is the inode that was written, checked against what the staging name means
-    /// now. A UUID does not make the name unguessable to anyone watching the directory, and
-    /// `renameat` takes names on both sides -- Linux has no rename-by-descriptor -- so this
-    /// is a check rather than a binding: it narrows the window to these two calls, and what
-    /// it rules out is publishing someone else's inode under a name the caller trusts.
+    /// `staged` is a descriptor for the inode that was staged, checked against what the
+    /// staging name means now. A UUID does not make the name unguessable to anyone watching
+    /// the directory, and `renameat` takes names on both sides -- Linux has no
+    /// rename-by-descriptor -- so this is a check rather than a binding: it narrows the
+    /// window to these two calls, and what it rules out is publishing someone else's inode
+    /// under a name the caller trusts.
+    ///
+    /// It takes the descriptor rather than an [`Identity`] the caller sampled earlier so
+    /// that the caller cannot have let go of it. An inode number identifies an inode only
+    /// while something refers to it: with the staged descriptor closed, a watcher could
+    /// unlink the staged entry, have the freed number handed to an entry of their own, and
+    /// leave the comparison below agreeing about the substitute.
     ///
     /// Takes the whole [`RelPath`] rather than the final component it renames to, so the
     /// error names the entry the caller asked for: interpolating the component alone
@@ -527,8 +534,14 @@ impl LocalRootfsOps {
         dir: BorrowedFd<'_>,
         staging: &str,
         path: &RelPath,
-        staged: &Identity,
+        staged: BorrowedFd<'_>,
     ) -> Result<()> {
+        let staged = rfs::fstat(staged).map(|s| Identity::of(&s)).map_err(|e| {
+            RsdebstrapError::io(
+                format!("failed to stat the entry staged for {}{}", self.display_root, path),
+                std::io::Error::from(e),
+            )
+        })?;
         let current = rfs::statat(dir, staging, AtFlags::SYMLINK_NOFOLLOW)
             .map(|current| Identity::of(&current))
             .map_err(|e| {
@@ -539,7 +552,7 @@ impl LocalRootfsOps {
             })?;
         // Left in place rather than unlinked: the name means someone else's entry now, and
         // removing it is no more ours to do than publishing it was.
-        if current != *staged {
+        if current != staged {
             return Err(RsdebstrapError::Isolation(format!(
                 "{}/{} was replaced while {}{} was being staged, refusing to install it",
                 self.display_root, staging, self.display_root, path
@@ -691,11 +704,12 @@ impl LocalRootfsOps {
             )
         })?;
 
-        let mut staged = None;
+        // Held past `promote` rather than dropped with the write: the identity `promote`
+        // checks is an inode number, and one of those names an inode only while something
+        // refers to it.
+        let mut file = File::from(fd);
         let write = (|| {
-            let mut file = File::from(fd);
             file.write_all(content)?;
-            staged = Some(Identity::of(&rfs::fstat(&file)?));
             if let Some(owner) = owner
                 && Owner::of(&rfs::fstat(&file)?) != owner
             {
@@ -717,8 +731,7 @@ impl LocalRootfsOps {
             ));
         }
 
-        let staged = staged.expect("a successful write records the inode it wrote");
-        self.promote(dir, &staging, path, &staged)
+        self.promote(dir, &staging, path, file.as_fd())
     }
 
     fn install_symlink(&self, path: &RelPath, target: &[u8], owner: Option<Owner>) -> Result<()> {
@@ -750,11 +763,11 @@ impl LocalRootfsOps {
         }
 
         let staged = self.verify_staged_symlink(dir, &staging, path, target, owner)?;
-        self.promote(dir, &staging, path, &staged)
+        self.promote(dir, &staging, path, staged.as_fd())
     }
 
-    /// Checks that `staging` is the symlink this call meant to publish, and returns which
-    /// inode that is.
+    /// Checks that `staging` is the symlink this call meant to publish, and returns the
+    /// descriptor it checked.
     ///
     /// `install_file` binds: `O_CREAT | O_EXCL` hands back a descriptor, and the content,
     /// the mode and the owner all land on it. Creating a symlink hands back nothing to hold,
@@ -767,7 +780,9 @@ impl LocalRootfsOps {
     /// place -- so a link that is a symlink, points where this call asked, and carries the
     /// owner this call restored is not *like* the one that was staged, it is
     /// indistinguishable from it. All three come off one `O_PATH | O_NOFOLLOW` descriptor,
-    /// whose identity is then what [`Self::promote`] rechecks before publishing.
+    /// which is handed to [`Self::promote`] to recheck before publishing -- the descriptor
+    /// rather than the identity read off it, so that the inode it names cannot be freed and
+    /// its number reused between here and there.
     ///
     /// A mismatch leaves the entry alone: the name means someone else's link at that point,
     /// and removing it is no more this call's business than publishing it was.
@@ -778,7 +793,7 @@ impl LocalRootfsOps {
         path: &RelPath,
         target: &[u8],
         owner: Option<Owner>,
-    ) -> Result<Identity> {
+    ) -> Result<OwnedFd> {
         let mismatch = |what: &str| {
             Err(RsdebstrapError::Isolation(format!(
                 "{}/{} is not the symlink staged for {}{} ({}), refusing to install it",
@@ -819,7 +834,7 @@ impl LocalRootfsOps {
             return mismatch("wrong target");
         }
 
-        Ok(Identity::of(&stat))
+        Ok(fd)
     }
 
     /// Chowns the staged entry `name` in `dir` to `owner`, if it is not already there.

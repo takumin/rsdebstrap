@@ -264,6 +264,14 @@ patterns run throughout `src/isolation/`:
   keeps the number from being handed out again. It does not close the window between the
   `renameat` and the `statat`, which stays open by construction.
 
+  Staging has the same requirement from the other end, so `promote` takes the staged
+  *descriptor* rather than an identity a caller sampled earlier: `install_file` holds the
+  `O_CREAT | O_EXCL` descriptor it wrote through, and `install_symlink` hands on the
+  `O_PATH | O_NOFOLLOW` one `verify_staged_symlink` checked. A caller that had let go of it
+  would leave the same gap — the staged entry unlinked, its number reused for an entry a
+  watcher planted at the staging name, and the comparison publishing that one under a name
+  the caller trusts. Taking the descriptor is what makes letting go of it not expressible.
+
   It also puts every refusal (wrong type, over `MAX_TAKE_SIZE`) before anything has moved, so
   a refused `take` leaves the caller's name exactly as it was and there is no rollback rename
   to aim at the wrong inode. The read stays bounded even though the size came off the same
