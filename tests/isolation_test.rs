@@ -439,6 +439,65 @@ fn direct_context_clamps_a_parent_escape_to_the_rootfs() {
     assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
 }
 
+// `ProvisionTask::resolve` refuses `isolation: false` together with any resolved privilege
+// because the rootfs's contents are not trusted with root -- mmdebstrap ran maintainer
+// scripts as root to install them. A setuid bit asks for the same thing by another route:
+// `execve` honours it, so an unprivileged direct task execs a rootfs binary and comes back
+// as its owner. A rootfs `mmdebstrap` built under `sudo` ships several such files already
+// (`sudo`, `newgrp`, `passwd`, `mount`), and a provision task can create more.
+#[test]
+fn direct_context_refuses_a_setuid_program_in_the_rootfs() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&["/bin/sh"]);
+    std::fs::set_permissions(
+        rootfs.join("bin/sh"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o4755),
+    )
+    .unwrap();
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let err = context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("a setuid program must not run without isolation");
+
+    assert!(format!("{err:#}").contains("setuid"), "unexpected error: {err:#}");
+    assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
+// The setgid half, which escalates to a group rather than to a user and is refused for the
+// same reason. Split out because the two bits are separate `stat` bits and a check that
+// tested only one would pass the test above.
+#[test]
+fn direct_context_refuses_a_setgid_program_in_the_rootfs() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&["/bin/sh"]);
+    std::fs::set_permissions(
+        rootfs.join("bin/sh"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o2755),
+    )
+    .unwrap();
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let err = context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("a setgid program must not run without isolation");
+
+    assert!(format!("{err:#}").contains("setgid"), "unexpected error: {err:#}");
+    assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
 // A sibling test forking while a just-written program's write descriptor is still open
 // inherits it, and the kernel refuses to exec a file anyone holds open for writing. Nothing
 // in either test can prevent that -- the descriptor belongs to the write and the fork is

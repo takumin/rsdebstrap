@@ -46,7 +46,10 @@ and this project adheres to
   merged-`/usr` Debian rootfs is two of them — but an absolute target or a `..`
   above the rootfs is reinterpreted against it instead of reaching the host.
   Requires Linux 5.6 or newer; without it, direct execution is refused rather
-  than run unconfined.
+  than run unconfined. A setuid or setgid program is refused as well: `execve`
+  honours those bits, so running one from a rootfs `mmdebstrap` built under
+  `sudo` would come back as its owner — the escalation `isolation: false` with
+  a privilege is already refused for.
 - Profile parse errors name the field path that failed — `provision[0]`,
   `bootstrap` — after the line and column. The untagged `privilege` and
   `isolation` enums report only "data did not match any variant", which on its

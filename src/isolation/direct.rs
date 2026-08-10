@@ -66,6 +66,25 @@ fn open_program_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<OwnedFd> {
         .into());
     }
 
+    // `execve` honours setuid and setgid on the file it lands on, and naming the descriptor
+    // as `/proc/self/fd/N` does not change that -- so a rootfs binary carrying them runs as
+    // its owner, which for a rootfs `mmdebstrap` built under `sudo` is root on the host.
+    //
+    // A task reaching here resolved to no privilege, and that is the whole reason it is
+    // allowed to run a program from inside the rootfs at all: `ProvisionTask::resolve`
+    // refuses `isolation: false` with any privilege because the rootfs's contents are not
+    // trusted with root -- they were installed by maintainer scripts that ran as root. A
+    // mode bit is another way to ask for exactly what that refuses, and a bootstrapped
+    // Debian rootfs ships several files that already carry it.
+    let setid = Mode::SUID | Mode::SGID;
+    if stat.st_mode & setid.bits() != 0 {
+        return Err(crate::error::RsdebstrapError::Isolation(format!(
+            "{}{} is setuid or setgid; refusing to run it without isolation, which would             run it as its owner on the host rather than as the user the task resolved to",
+            rootfs, path
+        ))
+        .into());
+    }
+
     // The executor execs this descriptor by naming it `/proc/self/fd/N`, which is the only
     // way to exec an inode rather than a path here. Said now, against a path the caller
     // wrote, rather than as an `ENOENT` out of `spawn` naming a path they did not.
