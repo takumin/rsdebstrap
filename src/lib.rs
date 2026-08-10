@@ -179,6 +179,14 @@ fn run_pipeline_phase_with(
             ),
         },
         Err(pipeline_err) => {
+            // Dropped before the unmount, not at the end of this function. The guard's
+            // `Drop` is the last retry of a restore that has not landed, and it has to run
+            // inside the mounted window: with a `prepare.mount` over the directory it
+            // writes into, a retry afterwards puts the original on the directory underneath
+            // and leaves the temporary on the mounted filesystem, with nothing reporting a
+            // problem. A guard whose restore already succeeded is torn down, so this costs
+            // that path nothing.
+            drop(resolv_conf);
             if let Err(u) = mounts.unmount() {
                 tracing::error!(
                     "unmount also failed after pipeline error: {:#}. \
@@ -531,6 +539,28 @@ mod tests {
     struct TimelineOps {
         inner: rootfs::LocalRootfsOps,
         timeline: Timeline,
+        // Fails the first `put_back` when set, so the guard's first restore attempt fails
+        // and its `Drop` is what finally lands the original.
+        fail_first_put_back: bool,
+        put_backs: std::sync::atomic::AtomicUsize,
+    }
+
+    impl TimelineOps {
+        fn new(rootfs: &Utf8Path, timeline: Timeline) -> Self {
+            Self {
+                inner: rootfs::LocalRootfsOps::open(rootfs).unwrap(),
+                timeline,
+                fail_first_put_back: false,
+                put_backs: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn failing_first_restore(rootfs: &Utf8Path, timeline: Timeline) -> Self {
+            Self {
+                fail_first_put_back: true,
+                ..Self::new(rootfs, timeline)
+            }
+        }
     }
 
     impl rootfs::RootfsOps for TimelineOps {
@@ -561,6 +591,16 @@ mod tests {
             path: &rootfs::RelPath,
             entry: &rootfs::TakenEntry,
         ) -> std::result::Result<(), RsdebstrapError> {
+            let nth = self
+                .put_backs
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail_first_put_back && nth == 0 {
+                self.timeline
+                    .lock()
+                    .unwrap()
+                    .push("put_back(failed)".to_string());
+                return Err(refused("put_back"));
+            }
             self.timeline.lock().unwrap().push("put_back".to_string());
             self.inner.put_back(path, entry)
         }
@@ -597,10 +637,7 @@ mod tests {
         let executor = Arc::new(TimelineExecutor {
             timeline: timeline.clone(),
         });
-        let ops = Arc::new(TimelineOps {
-            inner: rootfs::LocalRootfsOps::open(&rootfs).unwrap(),
-            timeline: timeline.clone(),
-        });
+        let ops = Arc::new(TimelineOps::new(&rootfs, timeline.clone()));
 
         run_pipeline_phase_with(&profile.validate().unwrap(), executor, Some(ops)).unwrap();
 
@@ -609,6 +646,49 @@ mod tests {
             ["mount", "umount", "write_symlink"],
             "assemble must run after the mounts are released"
         );
+    }
+
+    // The guard's `Drop` is the last retry of a restore that has not landed, and it has to
+    // run while the mounts are still up: a `prepare.mount` over the directory the restore
+    // writes into means the temporary went onto the mounted filesystem, so a retry after
+    // the unmount puts the original on the directory underneath and leaves the temporary
+    // where the rootfs will actually read it. Nothing errors, which is why the order is
+    // pinned here rather than left to the end of the function.
+    #[test]
+    fn the_restore_retry_lands_before_the_unmount() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        let mut yaml = profile_yaml(dir, false, None, false);
+        yaml.push_str("defaults:\n  privilege:\n    method: sudo\n");
+        yaml.push_str("prepare:\n  resolv_conf:\n    name_servers: [192.0.2.1]\n");
+        yaml.push_str("  mount:\n    mounts:\n      - source: /dev\n");
+        yaml.push_str("        target: /dev\n        options: [bind]\n");
+        let profile = load_profile_from(&yaml);
+
+        let timeline: Timeline = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(TimelineExecutor {
+            timeline: timeline.clone(),
+        });
+        let ops = Arc::new(TimelineOps::failing_first_restore(&rootfs, timeline.clone()));
+
+        let err = run_pipeline_phase_with(&profile.validate().unwrap(), executor, Some(ops))
+            .expect_err("the failed restore must fail the run");
+        assert!(
+            format!("{err:#}").contains("failed to restore resolv.conf"),
+            "unexpected error: {err:#}"
+        );
+
+        let recorded = timeline.lock().unwrap().clone();
+        let retry = recorded
+            .iter()
+            .position(|e| e == "put_back")
+            .expect("the guard's Drop retries the restore");
+        let umount = recorded
+            .iter()
+            .position(|e| e == "umount")
+            .expect("the mounts are released on the error path too");
+        assert!(retry < umount, "the retry must land inside the mounted window: {recorded:?}");
     }
 
     #[test]
