@@ -43,6 +43,13 @@ and this project adheres to
   `bootstrap` — after the line and column. The untagged `privilege` and
   `isolation` enums report only "data did not match any variant", which on its
   own does not say which entry is malformed.
+- `Pipeline::run` refuses a pipeline that declares prepare tasks instead of
+  provisioning without them. The mount and the temporary resolv.conf a prepare
+  task declares are held by guards that bracket provisioning, and that path is
+  the one with nothing in between to hold them, so a profile asking for either
+  would have had its provision tasks run without it and still be reported as
+  successful. Callers with a prepare phase use `run_prepare_and_provision` and
+  `run_assemble` and hold the guards across the two.
 
 ### Added
 

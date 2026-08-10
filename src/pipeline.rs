@@ -103,20 +103,35 @@ impl<'a> Pipeline<'a> {
 
     /// Executes all phases of the pipeline with per-task isolation contexts.
     ///
-    /// If the pipeline has no tasks, returns immediately. Equivalent to
-    /// [`Self::run_prepare_and_provision`] followed by [`Self::run_assemble`]
-    /// with nothing in between; callers that must act between provisioning
-    /// and assembly call the two stages themselves.
+    /// For pipelines that declare no prepare tasks. What a prepare task declares — a mount,
+    /// a temporary resolv.conf — is carried by RAII guards that bracket provisioning, and
+    /// this method is by definition the case with nothing in between to hold them. So it
+    /// refuses a pipeline that declares any, rather than provisioning without the mounts or
+    /// the DNS the profile asked for and reporting success. Those callers use
+    /// [`Self::run_prepare_and_provision`] and [`Self::run_assemble`], holding the guards
+    /// across the two.
+    ///
+    /// If the pipeline has no tasks at all, returns immediately.
     pub fn run(
         &self,
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
         ops: Arc<dyn RootfsOps>,
     ) -> Result<()> {
+        if !self.prepare.is_empty() {
+            return Err(RsdebstrapError::Validation(
+                "pipeline declares prepare tasks, which need the mount and resolv.conf \
+                guards held across provisioning: call run_prepare_and_provision, hold them, \
+                then run_assemble"
+                    .to_string(),
+            )
+            .into());
+        }
+
         let dry_run = executor.dry_run();
         let provisioned = self.run_prepare_and_provision(rootfs, &executor, &ops)?;
-        // No prepare guard runs here, so nothing detached the rootfs's own
-        // resolv.conf and nothing was mounted over it.
+        // Not a claim that guards were run and found to have done nothing: the refusal
+        // above is what makes "nothing was detached, nothing was mounted" true here.
         let restored = Restored::nothing_was_detached(provisioned);
         self.run_assemble(Unmounted::nothing_was_mounted(restored), rootfs, &ops, dry_run)
     }
@@ -532,6 +547,37 @@ mod tests {
 
         let result = pipeline.run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops());
         assert!(result.is_ok());
+    }
+
+    // `run` builds the `Restored`/`Unmounted` evidence itself rather than receiving it from
+    // guards. That is only honest with no prepare phase to have skipped, so a pipeline
+    // declaring one has to be refused — provisioning it here would run the tasks without the
+    // resolv.conf the profile asked for and still report success.
+    #[test]
+    fn run_refuses_a_pipeline_that_declares_prepare_tasks() {
+        let prepare = PrepareConfig {
+            mount: None,
+            resolv_conf: Some(crate::phase::ResolvConfTask {
+                copy: true,
+                name_servers: Vec::new(),
+                search: Vec::new(),
+            }),
+        };
+        let tasks = [inline_task("echo 1")];
+        let pipeline =
+            Pipeline::new(&prepare, &tasks, &EMPTY_ASSEMBLE, None, &IsolationConfig::default())
+                .expect("no task declares `privilege: true`, so resolution cannot fail");
+        let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
+
+        let err = pipeline
+            .run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops())
+            .expect_err("a pipeline with a prepare task must not run through this path");
+
+        assert!(
+            err.to_string().contains("run_prepare_and_provision"),
+            "expected the error to name the two-stage path, got: {}",
+            err
+        );
     }
 
     #[test]

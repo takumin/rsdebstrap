@@ -124,9 +124,12 @@ Key invariants:
   before either teardown is therefore a compile error, not a review finding. Each token is
   declared in the module of the guard that produces it, so its constructor is private *there*
   — declared in `pipeline` they would be `pub(crate)` and the orchestration could mint one,
-  which is exactly the mistake being prevented. `Pipeline::run` (no guards, so nothing was
-  detached and nothing was mounted) is the one exemption, via named functions that still
-  demand the preceding token.
+  which is exactly the mistake being prevented. `Pipeline::run` is the one exemption, via
+  named functions that still demand the preceding token. It earns it by refusing a pipeline
+  that declares any prepare task, so "nothing was detached and nothing was mounted" is a
+  property of the pipeline it ran rather than a hope about the caller: a profile asking for
+  a mount or a temporary resolv.conf cannot be provisioned without them and still reported
+  as successful.
 
   A failed unmount consequently skips assemble, the same way a failed restore does: the
   rootfs is not in the state assemble is defined against. Unmounting itself is still
