@@ -176,6 +176,7 @@ impl AssembleItem for AssembleResolvConfTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::isolation::PlainRootfsContext;
     use std::sync::Arc;
 
     #[test]
@@ -400,7 +401,7 @@ mod tests {
     #[test]
     fn execute_generate_writes_the_file() {
         let (_temp, rootfs) = assemble_rootfs();
-        let ctx = MockAssembleContext::new(&rootfs, false);
+        let ctx = assemble_context(&rootfs, false);
 
         generate_task(&["1.1.1.1"]).execute(&ctx).unwrap();
 
@@ -413,7 +414,7 @@ mod tests {
     #[test]
     fn execute_link_creates_the_symlink() {
         let (_temp, rootfs) = assemble_rootfs();
-        let ctx = MockAssembleContext::new(&rootfs, false);
+        let ctx = assemble_context(&rootfs, false);
 
         link_task("../run/systemd/resolve/stub-resolv.conf")
             .execute(&ctx)
@@ -435,7 +436,7 @@ mod tests {
     #[test]
     fn execute_dry_run_creates_nothing() {
         let (_temp, rootfs) = assemble_rootfs();
-        let ctx = MockAssembleContext::new(&rootfs, true);
+        let ctx = assemble_context(&rootfs, true);
 
         generate_task(&["1.1.1.1"]).execute(&ctx).unwrap();
 
@@ -446,7 +447,7 @@ mod tests {
     fn execute_replaces_an_existing_file() {
         let (_temp, rootfs) = assemble_rootfs();
         std::fs::write(rootfs.join("etc/resolv.conf"), "stale\n").unwrap();
-        let ctx = MockAssembleContext::new(&rootfs, false);
+        let ctx = assemble_context(&rootfs, false);
 
         generate_task(&["1.1.1.1"]).execute(&ctx).unwrap();
 
@@ -464,7 +465,7 @@ mod tests {
         let pointee = rootfs.join("etc/pointee");
         std::fs::write(&pointee, "untouched\n").unwrap();
         std::os::unix::fs::symlink("pointee", rootfs.join("etc/resolv.conf")).unwrap();
-        let ctx = MockAssembleContext::new(&rootfs, false);
+        let ctx = assemble_context(&rootfs, false);
 
         generate_task(&["1.1.1.1"]).execute(&ctx).unwrap();
 
@@ -479,7 +480,7 @@ mod tests {
     fn execute_replaces_a_symlink_with_a_symlink() {
         let (_temp, rootfs) = assemble_rootfs();
         std::os::unix::fs::symlink("old-target", rootfs.join("etc/resolv.conf")).unwrap();
-        let ctx = MockAssembleContext::new(&rootfs, false);
+        let ctx = assemble_context(&rootfs, false);
 
         link_task("new-target").execute(&ctx).unwrap();
 
@@ -499,7 +500,7 @@ mod tests {
         std::fs::create_dir(&outside).unwrap();
         std::fs::remove_dir(rootfs.join("etc")).unwrap();
         std::os::unix::fs::symlink(&outside, rootfs.join("etc")).unwrap();
-        let ctx = MockAssembleContext::new(&rootfs, false);
+        let ctx = assemble_context(&rootfs, false);
 
         let err = generate_task(&["1.1.1.1"]).execute(&ctx).unwrap_err();
 
@@ -507,44 +508,14 @@ mod tests {
         assert!(!outside.join("resolv.conf").exists(), "wrote through the symlink");
     }
 
-    // Implements `RootfsContext` and nothing else, which is the assertion: if
-    // `execute` ever asked for an `IsolationContext` again, these tests would
-    // stop compiling rather than quietly grant the assemble phase a way to run
-    // programs.
-    struct MockAssembleContext {
-        rootfs: camino::Utf8PathBuf,
-        dry_run: bool,
-        ops: Arc<dyn crate::rootfs::RootfsOps>,
-    }
-
-    impl MockAssembleContext {
-        fn new(rootfs: &camino::Utf8Path, dry_run: bool) -> Self {
-            // Real ops over the temp rootfs, so the tests assert what the task
-            // actually left on disk. A dry-run context never touches them.
-            let ops: Arc<dyn crate::rootfs::RootfsOps> =
-                match crate::rootfs::LocalRootfsOps::open(rootfs) {
-                    Ok(ops) => Arc::new(ops),
-                    Err(_) => Arc::new(crate::rootfs::DryRunRootfsOps::new(rootfs)),
-                };
-            Self {
-                rootfs: rootfs.to_owned(),
-                dry_run,
-                ops,
-            }
-        }
-    }
-
-    impl RootfsContext for MockAssembleContext {
-        fn rootfs(&self) -> &camino::Utf8Path {
-            &self.rootfs
-        }
-
-        fn dry_run(&self) -> bool {
-            self.dry_run
-        }
-
-        fn rootfs_ops(&self) -> &dyn crate::rootfs::RootfsOps {
-            &*self.ops
-        }
+    // The production context, which implements `RootfsContext` and nothing else. Using it
+    // rather than a look-alike is the assertion: if `execute` ever asked for an
+    // `IsolationContext` again, these tests would stop compiling rather than quietly grant
+    // the assemble phase a way to run programs.
+    fn assemble_context(rootfs: &camino::Utf8Path, dry_run: bool) -> PlainRootfsContext {
+        // Real ops over the temp rootfs, so the tests assert what the task actually left on
+        // disk. Anything else and an assertion about the rootfs would hold vacuously.
+        let ops = crate::rootfs::LocalRootfsOps::open(rootfs).expect("fixture rootfs opens");
+        PlainRootfsContext::new(rootfs, Arc::new(ops), dry_run)
     }
 }
