@@ -325,17 +325,38 @@ pub(crate) fn stage_source_file(
     mode: FileMode,
     label: &str,
 ) -> Result<()> {
-    let content: Cow<'_, [u8]> = match source {
-        ScriptSource::Script(src_path) => {
-            info!("copying {} from {} to rootfs", label, src_path);
-            Cow::Owned(read_host_file(src_path, label)?)
-        }
+    match source {
+        ScriptSource::Script(src_path) => stage_host_file(ops, src_path, path, mode, label),
         ScriptSource::Content(content) => {
             info!("writing inline {} to rootfs", label);
-            Cow::Borrowed(content.as_bytes())
+            stage_bytes(ops, content.as_bytes(), path, mode, label)
         }
-    };
-    ops.write_file(path, &content, mode)
+    }
+}
+
+/// Stages a host file inside the rootfs at `path` with `mode`.
+///
+/// Shared with the mitamae binary, which is a host file with no [`ScriptSource`] around it;
+/// staging it inline here once meant two spellings of one operation that could drift.
+pub(crate) fn stage_host_file(
+    ops: &dyn RootfsOps,
+    src_path: &Utf8Path,
+    path: &RelPath,
+    mode: FileMode,
+    label: &str,
+) -> Result<()> {
+    info!("copying {} from {} to rootfs", label, src_path);
+    stage_bytes(ops, &read_host_file(src_path, label)?, path, mode, label)
+}
+
+fn stage_bytes(
+    ops: &dyn RootfsOps,
+    content: &[u8],
+    path: &RelPath,
+    mode: FileMode,
+    label: &str,
+) -> Result<()> {
+    ops.write_file(path, content, mode)
         .with_context(|| format!("failed to stage {} at {}", label, path))?;
     Ok(())
 }

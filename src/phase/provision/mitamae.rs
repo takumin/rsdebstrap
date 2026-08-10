@@ -239,10 +239,13 @@ impl MitamaeTask {
         let _recipe_guard = StagedFileGuard::new(ops, staged_recipe.clone(), dry_run);
 
         if !dry_run {
-            info!("copying mitamae binary from {} to rootfs", binary);
-            let bytes = crate::phase::read_host_file(binary, "mitamae binary")?;
-            ops.write_file(&staged_binary, &bytes, crate::rootfs::FileMode::new(0o700))
-                .with_context(|| format!("failed to stage mitamae binary at {}", staged_binary))?;
+            crate::phase::stage_host_file(
+                ops,
+                binary,
+                &staged_binary,
+                crate::rootfs::FileMode::new(0o700),
+                "mitamae binary",
+            )?;
             crate::phase::stage_source_file(
                 ops,
                 &self.source,
