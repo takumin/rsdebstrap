@@ -117,9 +117,10 @@ impl Restored {
     }
 }
 
-/// The entry this guard replaces and restores.
-fn resolv_conf_path() -> RelPath {
-    RelPath::parse("/etc/resolv.conf").expect("literal path is valid")
+/// The entry this guard replaces and restores, and the one the assemble phase installs
+/// permanently. Both writers name it here so neither can drift from the other.
+pub(crate) fn resolv_conf_path() -> RelPath {
+    crate::config::rootfs_path("/etc/resolv.conf")
 }
 
 /// RAII guard for resolv.conf within a rootfs.

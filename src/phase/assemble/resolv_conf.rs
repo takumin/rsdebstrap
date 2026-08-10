@@ -15,9 +15,9 @@ use tracing::info;
 use crate::config::ResolvConfConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::RootfsContext;
-use crate::isolation::resolv_conf::generate_resolv_conf;
+use crate::isolation::resolv_conf::{generate_resolv_conf, resolv_conf_path};
 use crate::phase::{AssembleItem, PhaseItem};
-use crate::rootfs::{FileMode, RelPath};
+use crate::rootfs::FileMode;
 
 /// Assemble phase resolv_conf task for writing a permanent `/etc/resolv.conf`.
 ///
@@ -100,15 +100,20 @@ impl AssembleResolvConfTask {
                 ));
             }
         } else {
-            let config = ResolvConfConfig {
-                copy: false,
-                name_servers: self.name_servers.clone(),
-                search: self.search.clone(),
-            };
-            config.validate()?;
+            self.config().validate()?;
         }
 
         Ok(())
+    }
+
+    /// The generated file's configuration. Never `copy`: the assemble phase writes the
+    /// image's permanent resolver config, not a copy of the build host's.
+    fn config(&self) -> ResolvConfConfig {
+        ResolvConfConfig {
+            copy: false,
+            name_servers: self.name_servers.clone(),
+            search: self.search.clone(),
+        }
     }
 
     /// Executes the assemble resolv_conf task.
@@ -118,7 +123,7 @@ impl AssembleResolvConfTask {
     /// previous entry in place rather than a half-written one.
     pub fn execute(&self, ctx: &dyn RootfsContext) -> anyhow::Result<()> {
         let rootfs = ctx.rootfs();
-        let path = RelPath::parse("/etc/resolv.conf").expect("literal path is valid");
+        let path = resolv_conf_path();
 
         if ctx.dry_run() {
             match &self.link {
@@ -137,14 +142,9 @@ impl AssembleResolvConfTask {
                 info!("created symlink /etc/resolv.conf -> {} in {}", target, rootfs);
             }
             None => {
-                let config = ResolvConfConfig {
-                    copy: false,
-                    name_servers: self.name_servers.clone(),
-                    search: self.search.clone(),
-                };
                 ops.write_file(
                     &path,
-                    generate_resolv_conf(&config).as_bytes(),
+                    generate_resolv_conf(&self.config()).as_bytes(),
                     FileMode::new(0o644),
                 )?;
                 info!("wrote resolv.conf in {}", rootfs);
