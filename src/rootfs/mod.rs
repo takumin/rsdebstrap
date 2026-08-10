@@ -172,9 +172,23 @@ pub(crate) mod payload {
 /// The bits are applied exactly. `openat`'s mode argument is subject to the
 /// process umask, so [`RootfsOps::write_file`] cannot rely on it alone — see the
 /// `fchmod` in [`LocalRootfsOps::write_file`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct FileMode(u32);
+
+// Hand-written rather than derived, because a derived one would build `FileMode(raw)`
+// directly and skip `new`'s masking -- and every `FileMode` that crosses the helper channel
+// is built by deserializing one. `33188` (a whole `st_mode` for a 0644 regular file) would
+// arrive at the helper's `fchmod` as `0o100644` with the type bits still on it, so the
+// type's only stated guarantee would hold for every value except the ones from outside this
+// process.
+impl<'de> Deserialize<'de> for FileMode {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        u32::deserialize(deserializer).map(Self::new)
+    }
+}
 
 impl FileMode {
     /// The permission bits of `bits`, which may be a full `st_mode`.
@@ -1395,5 +1409,33 @@ mod tests {
             .to_string();
 
         assert!(err.contains("/etc/resolv.conf"), "unexpected error: {err}");
+    }
+
+    // Every `FileMode` the privileged helper acts on is decoded from the channel, and a
+    // derived `Deserialize` would build one without going through `new` -- so a whole
+    // `st_mode` would arrive with its type bits still set. `33188` is `0o100644`: a regular
+    // file at 0644.
+    //
+    // The kernel masks `chmod` to the permission bits, so nothing lands wrong today. What
+    // this pins is the guarantee the type states, which any `bits()` consumer that is not
+    // `chmod` would otherwise inherit as false -- `DryRunRootfsOps::write_file` already
+    // prints it.
+    #[test]
+    fn a_file_mode_decoded_from_a_whole_st_mode_keeps_only_its_permission_bits() {
+        let decoded: FileMode = serde_json::from_str("33188").expect("a mode is a u32");
+
+        assert_eq!(decoded, FileMode::new(0o644));
+        assert_eq!(format!("{decoded}"), "644");
+    }
+
+    // And the round trip a request really makes is lossless for a value that was already
+    // permissions, setuid and sticky bits included -- `new` masks off the type bits, not
+    // these.
+    #[test]
+    fn a_file_mode_round_trips_through_the_channel_encoding() {
+        let mode = FileMode::new(0o4755);
+        let encoded = serde_json::to_string(&mode).unwrap();
+
+        assert_eq!(serde_json::from_str::<FileMode>(&encoded).unwrap(), mode);
     }
 }
