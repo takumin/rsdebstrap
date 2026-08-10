@@ -1587,6 +1587,57 @@ mod tests {
         );
     }
 
+    // `build_pipeline` handing `defaults.privilege` to `Pipeline::new` is the only place the
+    // profile's escalation reaches a provision task, and every `Pipeline::new` in the
+    // pipeline module's own tests passes `None` there -- so nothing observed the wiring.
+    // Replacing the argument with `None` used to leave the workspace green while every task
+    // ran unescalated against a root-owned rootfs.
+    #[test]
+    fn defaults_privilege_reaches_the_command_a_provision_task_runs() {
+        use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Debug)]
+        struct Recorder(Mutex<Vec<Option<PrivilegeMethod>>>);
+
+        impl CommandExecutor for Recorder {
+            fn dry_run(&self) -> bool {
+                true
+            }
+
+            fn execute(&self, spec: &CommandSpec) -> anyhow::Result<ExecutionResult> {
+                self.0.lock().unwrap().push(spec.privilege());
+                Ok(ExecutionResult { status: None })
+            }
+        }
+
+        let yaml = minimal_profile_yaml(concat!(
+            "defaults:\n",
+            "  privilege:\n",
+            "    method: sudo\n",
+            "provision:\n",
+            "  - type: shell\n",
+            "    content: 'echo hi'\n",
+        ));
+        let profile = parse_profile(&yaml);
+        let pipeline = profile.build_pipeline().expect("resolution succeeds");
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        pipeline
+            .run(
+                Utf8Path::new("/tmp/rootfs"),
+                recorder.clone() as Arc<dyn CommandExecutor>,
+                crate::rootfs::open(Utf8Path::new("/tmp/rootfs"), None, true).unwrap(),
+            )
+            .expect("a dry run reaches the executor");
+
+        assert_eq!(
+            recorder.0.lock().unwrap().as_slice(),
+            [Some(PrivilegeMethod::Sudo)],
+            "the profile's defaults.privilege never reached the task's command"
+        );
+    }
+
     // The two privilege settings answer different questions and nothing else makes them
     // agree, so an escalated bootstrap with unprivileged rootfs ops has to be caught here --
     // otherwise the run bootstraps a root-owned tree and only fails at the first staged file.
