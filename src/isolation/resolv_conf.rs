@@ -143,6 +143,17 @@ impl RootfsResolvConf {
     /// If that rollback fails too, the returned error says so and the guard
     /// stays armed, leaving the retry to `Drop`.
     pub fn setup(&mut self, _mounted: Mounted) -> Result<Prepared> {
+        // The detached original exists only in `self.original`. A second `take` would find
+        // the temporary this guard installed, overwrite the original with it, and leave
+        // teardown restoring the temporary as if it were the rootfs's own -- losing the
+        // real one for good, with nothing left to notice it by.
+        if self.active || self.torn_down {
+            return Err(RsdebstrapError::Isolation(
+                "setup() called on an already-used RootfsResolvConf".to_string(),
+            )
+            .into());
+        }
+
         let Some(config) = &self.config else {
             return Ok(Prepared(()));
         };
@@ -504,6 +515,45 @@ mod tests {
         let _ = g.setup(mounted()).unwrap();
         g.teardown().unwrap();
 
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
+    }
+
+    // The original exists only in the guard's memory once setup has run, so a second setup
+    // would `take` the temporary this one installed, overwrite the original with it, and
+    // leave teardown restoring the temporary under the original's name. Nothing downstream
+    // could tell: the file would be there, with plausible content.
+    #[test]
+    fn setup_refuses_to_run_twice_and_keeps_the_original() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
+
+        let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+        let _ = g.setup(mounted()).unwrap();
+
+        let err = g
+            .setup(mounted())
+            .expect_err("a second setup must not take the temporary it installed");
+        assert!(err.to_string().contains("already-used"), "unexpected error: {err:#}");
+
+        g.teardown().unwrap();
+        assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
+    }
+
+    // A guard that has been torn down has nothing left to restore, so a setup after it
+    // would arm one whose `original` is empty while the rootfs holds a temporary.
+    #[test]
+    fn setup_refuses_to_run_after_teardown() {
+        let (_temp, rootfs) = rootfs_with_etc();
+        fs::write(resolv_conf(&rootfs), "original\n").unwrap();
+
+        let mut g = guard(&rootfs, Some(generated(&["1.1.1.1"])));
+        let _ = g.setup(mounted()).unwrap();
+        g.teardown().unwrap();
+
+        let err = g
+            .setup(mounted())
+            .expect_err("a torn-down guard must not be armed again");
+        assert!(err.to_string().contains("already-used"), "unexpected error: {err:#}");
         assert_eq!(fs::read_to_string(resolv_conf(&rootfs)).unwrap(), "original\n");
     }
 

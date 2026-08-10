@@ -73,6 +73,11 @@ and this project adheres to
 
 ### Fixed
 
+- `RootfsResolvConf::setup` refuses to run a second time on the same guard
+  instead of losing the rootfs's original `/etc/resolv.conf`. The original is
+  held in memory by the first call; a second one detached the temporary that
+  call had installed, replaced the original with it, and left teardown restoring
+  the temporary under the original's name.
 - A dangling `/etc/resolv.conf` symlink — the normal state of a systemd rootfs
   before `systemd-resolved` runs — is now restored intact after provisioning.
   The backup was previously probed with a call that follows symlinks, so a
