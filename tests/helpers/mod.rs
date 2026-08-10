@@ -505,61 +505,31 @@ impl MockContext {
 
     pub fn new_dry_run(rootfs: &Utf8Path) -> Self {
         Self {
-            rootfs: rootfs.to_owned(),
-            ops: mock_rootfs_ops(rootfs),
             dry_run: true,
-            should_fail: false,
-            exit_code: None,
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: false,
+            ..Self::new(rootfs)
         }
     }
 
     pub fn with_failure(rootfs: &Utf8Path, exit_code: i32) -> Self {
         Self {
-            rootfs: rootfs.to_owned(),
-            ops: mock_rootfs_ops(rootfs),
-            dry_run: false,
             should_fail: true,
             exit_code: Some(exit_code),
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: false,
+            ..Self::new(rootfs)
         }
     }
 
     pub fn with_error(rootfs: &Utf8Path, message: &str) -> Self {
         Self {
-            rootfs: rootfs.to_owned(),
-            ops: mock_rootfs_ops(rootfs),
-            dry_run: false,
-            should_fail: false,
-            exit_code: None,
             should_error: true,
             error_message: Some(message.to_string()),
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: false,
+            ..Self::new(rootfs)
         }
     }
 
     pub fn with_no_status(rootfs: &Utf8Path) -> Self {
         Self {
-            rootfs: rootfs.to_owned(),
-            ops: mock_rootfs_ops(rootfs),
-            dry_run: false,
-            should_fail: false,
-            exit_code: None,
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
             return_no_status: true,
+            ..Self::new(rootfs)
         }
     }
 
