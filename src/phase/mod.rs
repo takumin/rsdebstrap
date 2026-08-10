@@ -14,8 +14,8 @@
 //!
 //! Adding a new task to a named-field phase requires:
 //! 1. Adding an `Option<...>` field to the phase config struct
-//! 2. Implementing `PhaseItem` plus that phase's item trait (`PrepareItem` or
-//!    `AssembleItem`) for the task struct
+//! 2. Implementing `PhaseItem` for the task struct, plus that phase's item trait
+//!    where it has one (`AssembleItem`); prepare has none
 //! 3. Emitting it from the config's `items()` in the desired execution order
 
 pub mod assemble;
@@ -125,12 +125,12 @@ impl ScriptSource {
 /// What every phase item shares: a name to log and a configuration to validate.
 ///
 /// This is not an extension point, but for internal convenience only. What an
-/// item can *do* is not here — it differs per phase, and the three traits below
-/// say so:
+/// item can *do* is not here — it differs per phase, and the traits below say so:
 ///
-/// - [`PrepareItem`] adds nothing. Prepare tasks are declarations; the mount and
-///   resolv.conf lifecycles are driven by the pipeline's RAII guards, which
-///   bracket the whole run rather than a single task.
+/// - Prepare has no trait of its own, because its items add nothing to this one.
+///   Prepare tasks are declarations; the mount and resolv.conf lifecycles are
+///   driven by the pipeline's RAII guards, which bracket the whole run rather
+///   than a single task.
 /// - [`ProvisionItem`] runs programs, and is the only phase whose items carry an
 ///   isolation setting.
 /// - [`AssembleItem`] writes the rootfs's final state through
@@ -139,8 +139,6 @@ pub(crate) trait PhaseItem: std::fmt::Debug {
     fn name(&self) -> Cow<'_, str>;
     fn validate(&self) -> Result<(), RsdebstrapError>;
 }
-
-pub(crate) trait PrepareItem: PhaseItem {}
 
 pub(crate) trait ProvisionItem: PhaseItem {
     fn resolved_isolation_config(&self) -> Option<&IsolationConfig>;

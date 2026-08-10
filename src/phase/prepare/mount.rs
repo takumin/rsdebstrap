@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{MountEntry, MountPreset};
 use crate::error::RsdebstrapError;
-use crate::phase::{PhaseItem, PrepareItem};
+use crate::phase::PhaseItem;
 use crate::rootfs::RelPath;
 
 /// Mount task for declaring filesystem mounts in the prepare phase.
@@ -142,8 +142,6 @@ impl PhaseItem for MountTask {
         MountTask::validate(self)
     }
 }
-
-impl PrepareItem for MountTask {}
 
 #[cfg(test)]
 mod tests {

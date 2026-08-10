@@ -85,11 +85,11 @@ backend (bwrap, nspawn, …) means adding a variant with its own payload struct.
 `Pipeline` (`src/pipeline.rs`) borrows `prepare: &PrepareConfig`, `provision: &[ProvisionTask]`,
 and `assemble: &AssembleConfig`. `PhaseItem` (`src/phase/mod.rs`, `pub(crate)`) carries only
 what all three share — `name` and `validate`. What an item can *do* differs per phase, and
-three sub-traits say so:
+the sub-traits say so:
 
 | trait           | adds                                            |
 | --------------- | ----------------------------------------------- |
-| `PrepareItem`   | nothing                                         |
+| (prepare)       | nothing — no trait of its own                   |
 | `ProvisionItem` | `resolved_isolation_config`, `execute(&dyn IsolationContext)` |
 | `AssembleItem`  | `execute(&dyn RootfsContext)`                   |
 
@@ -97,7 +97,7 @@ three sub-traits say so:
 cannot be run until its settings have been resolved, because the type the pipeline runs is
 the one resolution produces.
 
-Each phase is flattened to a `&[&dyn <phase>Item]` before running: `PrepareConfig::items()` and
+Each phase is flattened to a slice of trait objects before running: `PrepareConfig::items()` and
 `AssembleConfig::items()` emit their present `Option` fields in a **fixed execution order**
 (`mount → resolv_conf`), and provision maps its `Vec` to trait objects. `run_phase_items` and
 `validate_phase_items` are generic over `T: PhaseItem + ?Sized`, so the shared logging and
@@ -111,8 +111,8 @@ Key invariants:
   [Known test gaps](#known-test-gaps)). Provision is the only phase that does this;
   the other two have no isolation to set up.
 - **Prepare tasks are declarative.** `MountTask` and (prepare) `ResolvConfTask` implement
-  `PrepareItem`, which has no `execute` at all — there is nothing to run, rather than
-  something that runs and does nothing. Their real effect comes from the RAII managers below,
+  `PhaseItem` and nothing more — there is no `execute` to call at all, rather than one that
+  runs and does nothing. Their real effect comes from the RAII managers below,
   set up in `run_pipeline_phase()`. Both brackets close before assemble: the temporary
   resolv.conf is torn down (the original restored) so an assemble `resolv_conf` task's
   permanent file/symlink survives, and the mounts are released so assemble sees the rootfs

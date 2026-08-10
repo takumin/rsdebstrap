@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::ResolvConfConfig;
 use crate::error::RsdebstrapError;
-use crate::phase::{PhaseItem, PrepareItem};
+use crate::phase::PhaseItem;
 
 /// resolv_conf task for declaring DNS configuration in the prepare phase.
 ///
@@ -81,8 +81,6 @@ impl PhaseItem for ResolvConfTask {
         ResolvConfTask::validate(self)
     }
 }
-
-impl PrepareItem for ResolvConfTask {}
 
 #[cfg(test)]
 mod tests {
