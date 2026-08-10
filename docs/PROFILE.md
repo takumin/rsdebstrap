@@ -105,9 +105,14 @@ on the host. Two consequences follow, and both are enforced rather than document
   `defaults.privilege` and sets `isolation: false` is rejected at load time, because
   escalating it would run rootfs-supplied code as root on the host. Say `privilege: false`
   on the task if that is what you mean.
-- The program's path must resolve inside the rootfs. If any component of it is a symlink,
-  execution fails: the kernel resolves the path when it execs, and a symlink there would
-  silently run a host binary instead.
+- The program's path is resolved inside the rootfs, not by the host. Symlinks are followed
+  — `/bin/sh` is one on any merged-`/usr` Debian rootfs — but they are resolved as if the
+  rootfs were `/`, so a link whose target is absolute or climbs above the rootfs lands
+  inside it rather than on the host. A path that ends up naming nothing, or naming
+  something that is not a regular file, fails instead of running. Resolution ends on a
+  descriptor and the task runs *that*, so the name cannot be repointed between the check
+  and the exec. It needs Linux 5.6 or newer; on an older kernel the task is refused rather
+  than run with a path the host would resolve.
 
 ## `resolv_conf` task fields (prepare phase)
 
