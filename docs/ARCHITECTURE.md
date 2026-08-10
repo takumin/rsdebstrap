@@ -122,7 +122,11 @@ Key invariants:
   That ordering is carried by token types rather than by comment and convention, and the
   chain starts before provisioning rather than after it. `RootfsMounts::mount` yields a
   `Mounted`; `RootfsResolvConf::setup` consumes one and yields a `Prepared`;
-  `Pipeline::run_prepare_and_provision` requires that. Without it, entering provisioning was
+  `Pipeline::run_prepare_and_provision` requires that. Both borrow the guard they came from,
+  the way `ValidatedProfile` borrows its profile: `RootfsMounts::unmount` is public and
+  `Drop` releases the mounts anyway, so a token that only *stood for* them could be held
+  across an unmount and presented afterwards. Borrowing means neither guard can be touched
+  or dropped while the evidence is alive. Without any of this, entering provisioning was
   a public entry point that armed no guards: a prepare item has nothing to *run* — the
   guards are what carry a mount or a temporary resolv.conf — so iterating the phase reported
   those tasks as done for a run that had skipped them, and provisioning proceeded without

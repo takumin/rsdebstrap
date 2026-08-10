@@ -56,7 +56,9 @@ and this project adheres to
   `Pipeline::run_prepare_and_provision` requires that `Prepared`. Provisioning
   was reachable without arming the guards that hold a prepare task's mounts and
   temporary resolv.conf; because a prepare item has nothing to run on its own,
-  such a run reported those tasks as done and provisioned without them.
+  such a run reported those tasks as done and provisioned without them. Both
+  tokens borrow the guards they came from, so neither can be unmounted, torn
+  down or dropped while the evidence is alive.
 - `Pipeline::run` refuses a pipeline that declares prepare tasks instead of
   provisioning without them. The mount and the temporary resolv.conf a prepare
   task declares are held by guards that bracket provisioning, and that path is

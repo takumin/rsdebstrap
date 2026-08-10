@@ -158,7 +158,7 @@ impl<'a> Pipeline<'a> {
     /// indistinguishable from a run that skipped them and provisioned anyway.
     pub fn run_prepare_and_provision(
         &self,
-        _prepared: Prepared,
+        _prepared: Prepared<'_>,
         rootfs: &Utf8Path,
         executor: &Arc<dyn CommandExecutor>,
         ops: &Arc<dyn RootfsOps>,

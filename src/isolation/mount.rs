@@ -7,6 +7,7 @@
 //! Mount point directories are created using `openat`/`mkdirat` with `O_NOFOLLOW`
 //! to prevent TOCTOU races between symlink validation and directory creation.
 
+use std::marker::PhantomData;
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
@@ -29,9 +30,16 @@ use crate::rootfs::RelPath;
 /// evidence rather than leaving the ordering to whoever wired the run up. Consumed by
 /// [`RootfsResolvConf::setup`](crate::isolation::resolv_conf::RootfsResolvConf::setup),
 /// which is what puts the mounts before the temporary resolv.conf it writes into them.
+///
+/// It borrows the guard it came from rather than standing for it. A token that did not
+/// would say only that *some* mounts were established once: [`RootfsMounts::unmount`] is
+/// public and `Drop` releases them anyway, so a caller could unmount, or let the guard fall
+/// out of scope, and still present the token. Borrowing means the guard cannot be touched
+/// or dropped while the evidence is alive, so "the mounts are in place" describes now
+/// rather than then.
 #[must_use]
 #[derive(Debug)]
-pub struct Mounted(());
+pub struct Mounted<'a>(PhantomData<&'a RootfsMounts>);
 
 /// Evidence that the pipeline's mounts have been released.
 ///
@@ -202,7 +210,7 @@ impl RootfsMounts {
     /// Yields [`Mounted`], which the prepare guard downstream requires: a run cannot reach
     /// provisioning without having come through here, whether or not it had any entries to
     /// mount.
-    pub fn mount(&mut self) -> Result<Mounted> {
+    pub fn mount(&mut self) -> Result<Mounted<'_>> {
         if self.torn_down || self.mounted_paths.iter().any(|p| p.is_some()) {
             return Err(RsdebstrapError::Isolation(
                 "mount() called on already-used RootfsMounts".to_string(),
@@ -211,7 +219,7 @@ impl RootfsMounts {
         }
 
         if self.entries.is_empty() {
-            return Ok(Mounted(()));
+            return Ok(Mounted(PhantomData));
         }
 
         info!("mounting {} filesystem(s) in rootfs", self.entries.len());
@@ -248,7 +256,7 @@ impl RootfsMounts {
             }
         }
 
-        Ok(Mounted(()))
+        Ok(Mounted(PhantomData))
     }
 
     /// Unmounts previously mounted entries and returns the original error.
