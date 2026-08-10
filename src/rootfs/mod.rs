@@ -324,6 +324,36 @@ impl LocalRootfsOps {
         self.root.as_fd()
     }
 
+    /// Renders `path` as the operator would find it: the rootfs the way they named it,
+    /// followed by the path inside it.
+    fn at(&self, path: &RelPath) -> String {
+        format!("{}{}", self.display_root, path)
+    }
+
+    /// Renders a staging sibling of `path`.
+    ///
+    /// The staging entry is created *next to* the entry it will replace, so rendering it
+    /// against the rootfs root alone names a directory it was never in -- `<rootfs>/
+    /// .resolv.conf.rsdebstrap-<uuid>` for a leftover that is really under `<rootfs>/etc`.
+    /// These messages exist to tell an operator where the leftover is, which is the one
+    /// thing that spelling cannot do.
+    fn staging_at(&self, path: &RelPath, staging: &str) -> String {
+        let mut out = self.display_root.clone();
+        for component in path.parent_components() {
+            out.push('/');
+            out.push_str(component);
+        }
+        out.push('/');
+        out.push_str(staging);
+        out
+    }
+
+    /// The one place that decides how a failed syscall on a rootfs entry reads.
+    fn io_err(&self, verb: &str, at: &str, e: rustix::io::Errno) -> RsdebstrapError {
+        let _ = self;
+        RsdebstrapError::io(format!("failed to {} {}", verb, at), std::io::Error::from(e))
+    }
+
     /// Walks to the directory holding `path`'s final component.
     ///
     /// Each component is opened with `O_NOFOLLOW`, so a symlink anywhere along
@@ -407,12 +437,7 @@ impl LocalRootfsOps {
             Err(e) => return Err(open_error(e, &format!("{}{}", self.display_root, path))),
         };
 
-        let stat = rfs::fstat(&fd).map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to stat {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            )
-        })?;
+        let stat = rfs::fstat(&fd).map_err(|e| self.io_err("stat", &self.at(path), e))?;
         let kind = FileType::from_raw_mode(stat.st_mode as rfs::RawMode);
         if kind != FileType::RegularFile {
             return Err(RsdebstrapError::Isolation(format!(
@@ -480,12 +505,7 @@ impl LocalRootfsOps {
             Err(e) => return Err(open_error(e, &format!("{}{}", self.display_root, path))),
         };
 
-        let stat = rfs::fstat(&fd).map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to stat {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            )
-        })?;
+        let stat = rfs::fstat(&fd).map_err(|e| self.io_err("stat", &self.at(path), e))?;
         let kind = FileType::from_raw_mode(stat.st_mode as rfs::RawMode);
         if kind != FileType::Symlink {
             return Err(RsdebstrapError::Isolation(format!(
@@ -494,12 +514,8 @@ impl LocalRootfsOps {
             )));
         }
 
-        let target = rfs::readlinkat(&fd, "", Vec::new()).map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to read symlink {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            )
-        })?;
+        let target = rfs::readlinkat(&fd, "", Vec::new())
+            .map_err(|e| self.io_err("read symlink", &self.at(path), e))?;
 
         Ok(Some((
             TakenEntry::Symlink {
@@ -536,35 +552,25 @@ impl LocalRootfsOps {
         path: &RelPath,
         staged: BorrowedFd<'_>,
     ) -> Result<()> {
-        let staged = rfs::fstat(staged).map(|s| Identity::of(&s)).map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to stat the entry staged for {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            )
-        })?;
+        let staged = rfs::fstat(staged)
+            .map(|s| Identity::of(&s))
+            .map_err(|e| self.io_err("stat the entry staged for", &self.at(path), e))?;
         let current = rfs::statat(dir, staging, AtFlags::SYMLINK_NOFOLLOW)
             .map(|current| Identity::of(&current))
-            .map_err(|e| {
-                RsdebstrapError::io(
-                    format!("failed to stat {}/{}", self.display_root, staging),
-                    std::io::Error::from(e),
-                )
-            })?;
+            .map_err(|e| self.io_err("stat", &self.staging_at(path, staging), e))?;
         // Left in place rather than unlinked: the name means someone else's entry now, and
         // removing it is no more ours to do than publishing it was.
         if current != staged {
             return Err(RsdebstrapError::Isolation(format!(
-                "{}/{} was replaced while {}{} was being staged, refusing to install it",
-                self.display_root, staging, self.display_root, path
+                "{} was replaced while {} was being staged, refusing to install it",
+                self.staging_at(path, staging),
+                self.at(path)
             )));
         }
 
         rfs::renameat(dir, staging, dir, path.file_name()).map_err(|e| {
             let _ = rfs::unlinkat(dir, staging, AtFlags::empty());
-            RsdebstrapError::io(
-                format!("failed to install {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            )
+            self.io_err("install", &self.at(path), e)
         })
     }
 }
@@ -697,12 +703,7 @@ impl LocalRootfsOps {
             OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
             Mode::from_raw_mode(0o600),
         )
-        .map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to stage {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            )
-        })?;
+        .map_err(|e| self.io_err("stage", &self.at(path), e))?;
 
         // Held past `promote` rather than dropped with the write: the identity `promote`
         // checks is an inode number, and one of those names an inode only while something
@@ -740,12 +741,8 @@ impl LocalRootfsOps {
         let name = path.file_name();
         let staging = Self::staging_name(name);
 
-        rfs::symlinkat(target, dir, staging.as_str()).map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to stage symlink {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            )
-        })?;
+        rfs::symlinkat(target, dir, staging.as_str())
+            .map_err(|e| self.io_err("stage symlink", &self.at(path), e))?;
 
         // Checked before the chown, not after. There is no syscall that creates a symlink
         // and hands back a descriptor, and the staging name is not a secret -- a watcher on
@@ -759,10 +756,7 @@ impl LocalRootfsOps {
             && let Err(e) = Self::chown_if_different(staged.as_fd(), &stat, owner)
         {
             let _ = rfs::unlinkat(dir, staging.as_str(), AtFlags::empty());
-            return Err(RsdebstrapError::io(
-                format!("failed to restore ownership of {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            ));
+            return Err(self.io_err("restore ownership of", &self.at(path), e));
         }
 
         self.promote(dir, &staging, path, staged.as_fd())
@@ -801,8 +795,10 @@ impl LocalRootfsOps {
     ) -> Result<(OwnedFd, rfs::Stat)> {
         let mismatch = |what: &str| {
             Err(RsdebstrapError::Isolation(format!(
-                "{}/{} is not the symlink staged for {}{} ({}), refusing to install it",
-                self.display_root, staging, self.display_root, path, what
+                "{} is not the symlink staged for {} ({}), refusing to install it",
+                self.staging_at(path, staging),
+                self.at(path),
+                what
             )))
         };
 
@@ -812,23 +808,15 @@ impl LocalRootfsOps {
             OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
         )
-        .map_err(|e| open_error(e, &format!("{}/{}", self.display_root, staging)))?;
+        .map_err(|e| open_error(e, &self.staging_at(path, staging)))?;
 
-        let stat = rfs::fstat(&fd).map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to stat {}/{}", self.display_root, staging),
-                std::io::Error::from(e),
-            )
-        })?;
+        let stat =
+            rfs::fstat(&fd).map_err(|e| self.io_err("stat", &self.staging_at(path, staging), e))?;
         if FileType::from_raw_mode(stat.st_mode as rfs::RawMode) != FileType::Symlink {
             return mismatch("no longer a symlink");
         }
-        let staged_target = rfs::readlinkat(&fd, "", Vec::new()).map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to read symlink {}/{}", self.display_root, staging),
-                std::io::Error::from(e),
-            )
-        })?;
+        let staged_target = rfs::readlinkat(&fd, "", Vec::new())
+            .map_err(|e| self.io_err("read symlink", &self.staging_at(path, staging), e))?;
         if staged_target.as_bytes() != target {
             return mismatch("wrong target");
         }
@@ -893,10 +881,7 @@ impl RootfsOps for LocalRootfsOps {
         let parent = self.parent_dir(path)?;
         match rfs::unlinkat(parent.fd(), path.file_name(), AtFlags::empty()) {
             Ok(()) | Err(rustix::io::Errno::NOENT) => Ok(()),
-            Err(e) => Err(RsdebstrapError::io(
-                format!("failed to remove {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            )),
+            Err(e) => Err(self.io_err("remove", &self.at(path), e)),
         }
     }
 
@@ -916,12 +901,8 @@ impl RootfsOps for LocalRootfsOps {
         };
 
         let detached = Self::staging_name(name);
-        rfs::renameat(dir, name, dir, detached.as_str()).map_err(|e| {
-            RsdebstrapError::io(
-                format!("failed to detach {}{}", self.display_root, path),
-                std::io::Error::from(e),
-            )
-        })?;
+        rfs::renameat(dir, name, dir, detached.as_str())
+            .map_err(|e| self.io_err("detach", &self.at(path), e))?;
 
         // A check rather than a binding, twice over: Linux has neither rename-by-descriptor
         // nor unlink-by-descriptor, so both syscalls here can only be given a name. What
@@ -936,25 +917,22 @@ impl RootfsOps for LocalRootfsOps {
         // name nor deleting it is ours to do.
         let current = rfs::statat(dir, detached.as_str(), AtFlags::SYMLINK_NOFOLLOW)
             .map(|current| Identity::of(&current))
-            .map_err(|e| {
-                RsdebstrapError::io(
-                    format!("failed to stat {}/{}", self.display_root, detached),
-                    std::io::Error::from(e),
-                )
-            })?;
+            .map_err(|e| self.io_err("stat", &self.staging_at(path, detached.as_str()), e))?;
         if current != taken {
             return Err(RsdebstrapError::Isolation(format!(
-                "{}{} was replaced while it was being detached: {}/{} is not the entry \
+                "{} was replaced while it was being detached: {} is not the entry \
                 that was read, so it was left there",
-                self.display_root, path, self.display_root, detached
+                self.at(path),
+                self.staging_at(path, &detached)
             )));
         }
 
         rfs::unlinkat(dir, detached.as_str(), AtFlags::empty()).map_err(|e| {
             RsdebstrapError::io(
                 format!(
-                    "detached {}{} but failed to remove it from {}/{}",
-                    self.display_root, path, self.display_root, detached
+                    "detached {} but failed to remove it from {}",
+                    self.at(path),
+                    self.staging_at(path, &detached)
                 ),
                 std::io::Error::from(e),
             )
