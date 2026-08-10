@@ -39,6 +39,14 @@ and this project adheres to
   the privilege boundary in one request. Anything over 64 MiB is refused rather
   than read into memory in both processes — a file named by `script:` when it is
   opened, and a task's inline `content:` when the profile is validated.
+- A task with `isolation: false` runs the inode its program path resolves to
+  inside the rootfs, not whatever the host resolves that path to at exec time.
+  The path is resolved against a descriptor for the rootfs with
+  `openat2(RESOLVE_IN_ROOT)`, so symlinks are followed — `/bin/sh` on a
+  merged-`/usr` Debian rootfs is two of them — but an absolute target or a `..`
+  above the rootfs is reinterpreted against it instead of reaching the host.
+  Requires Linux 5.6 or newer; without it, direct execution is refused rather
+  than run unconfined.
 - Profile parse errors name the field path that failed — `provision[0]`,
   `bootstrap` — after the line and column. The untagged `privilege` and
   `isolation` enums report only "data did not match any variant", which on its

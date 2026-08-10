@@ -207,8 +207,19 @@ patterns run throughout `src/isolation/`:
   straight back to `write_file` by `put_back`.
 
   **Direct execution names an inode too.** With `isolation: false` the program a task
-  declares is resolved by the kernel on the host, so the walk that refuses a symlinked
-  component now ends by returning the descriptor it landed on, and `CommandSpec` carries it.
+  declares would otherwise be resolved by the kernel on the host, so it is resolved against
+  a descriptor for the rootfs first and `CommandSpec` carries the descriptor that lands on.
+  Resolution follows symlinks rather than refusing them, because refusing them makes a real
+  rootfs unrunnable — merged-`/usr` makes `/bin` a link to `usr/bin`, and `/bin/sh` a link
+  to the shell providing it, so the default is two links deep before a profile says
+  anything. What they must not do is leave the rootfs, and `openat2` with `RESOLVE_IN_ROOT`
+  is what enforces that in the kernel rather than in a walk of ours: the anchor is the
+  resolution root, so an absolute target is reinterpreted against it and `..` at the top
+  stays there — the clamping a chroot would apply, which is what direct execution stands in
+  for. That anchor is still opened one component at a time with `O_NOFOLLOW`, by the same
+  `open_anchor` the rootfs helper uses, since everything below is confined to *it*. The
+  syscall is Linux 5.6 and newer; on an older kernel direct execution is refused rather than
+  falling back to a resolution that cannot be confined.
   The executor execs `/proc/self/fd/N` and sets argv[0] back to the path, which is the only
   way here to exec an inode rather than a name. Two things fall out of that and are pinned
   by tests: the descriptor must not be close-on-exec, because a `#!` program's interpreter

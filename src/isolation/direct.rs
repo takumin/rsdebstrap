@@ -10,51 +10,60 @@ use crate::privilege::PrivilegeMethod;
 use crate::rootfs::{RelPath, RootfsOps};
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use rustix::fs::{self as rfs, FileType, Mode, OFlags};
+use rustix::fs::{self as rfs, FileType, Mode, OFlags, ResolveFlags};
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
-/// Walks `program` inside `rootfs` with `O_NOFOLLOW`, refusing a symlink at any component,
-/// and returns the descriptor it ends on.
+/// Resolves `program` inside `rootfs`, following symlinks but confining them to it, and
+/// returns the descriptor it lands on.
 ///
 /// The descriptor is the point. The kernel resolves a program path when it execs, so a
 /// check that ends with a path lets the name be repointed in between — including at a
 /// component that leaves the rootfs. The executor names this descriptor instead, and what
-/// runs is the inode the walk landed on.
+/// runs is the inode this landed on.
+///
+/// Symlinks have to be followed rather than refused, because a Debian rootfs cannot be run
+/// otherwise: `/bin` is a link to `usr/bin` under merged-`/usr` and `/bin/sh` is a link to
+/// `dash`, so the default shell is two links deep before any profile says anything. What
+/// they must not do is leave the rootfs, and `openat2` with `RESOLVE_IN_ROOT` is what makes
+/// that the kernel's problem rather than a walk of ours: the anchor is the resolution root,
+/// so an absolute link target is reinterpreted against it and `..` at the top stays there.
+/// That is the same clamping a chroot would apply, which is what direct execution is
+/// standing in for.
 fn open_program_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<OwnedFd> {
     let path = RelPath::parse(program)?;
-    // The anchor is walked the same way the rest of the path is, and by the same code: a
-    // whole-path `openat` would follow an intermediate symlink and start this walk outside
-    // the rootfs, which is the one thing every component below is checked for.
-    let mut dir = crate::rootfs::open_anchor(rootfs)?;
+    // Walked a component at a time with `O_NOFOLLOW`, by the same code the rest of the crate
+    // anchors with: resolution below is only confined to this descriptor, so opening it
+    // through a symlinked component would confine it to the wrong directory.
+    let anchor = crate::rootfs::open_anchor(rootfs)?;
 
-    let components = path.components();
-    let (last, parents) = components.split_last().expect("RelPath is never empty");
-    for (depth, component) in parents.iter().enumerate() {
-        dir = rfs::openat(
-            &dir,
-            component.as_str(),
-            OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        // The components walked so far, not just this one: `<rootfs>/usr/bin` names the
-        // entry that failed when `/usr/bin/env` is refused, while `<rootfs>/bin` names
-        // something else entirely, or nothing.
-        .map_err(|e| {
-            let so_far = components[..=depth].join("/");
-            symlink_error(e, &format!("{}/{}", rootfs, so_far))
-        })?;
-    }
     // `O_PATH` because an executable need not be readable, and this descriptor is only
-    // ever named, never read. It also opens a symlink as the *link itself* rather than
-    // failing, so whether the final component is one is decided by `fstat` below rather
-    // than by the open.
-    let program = rfs::openat(&dir, last.as_str(), OFlags::PATH | OFlags::NOFOLLOW, Mode::empty())
-        .map_err(|e| symlink_error(e, &format!("{}{}", rootfs, path)))?;
+    // ever named, never read. Deliberately *not* `O_CLOEXEC`: the executor execs it as
+    // `/proc/self/fd/N`, and for a `#!` program the kernel hands that same name to the
+    // interpreter, which opens it after the exec -- a close-on-exec descriptor would be
+    // gone by then. `direct_context_execs_a_shebang_program_through_the_checked_descriptor`
+    // fails if this is added back.
+    //
+    // `RESOLVE_NO_MAGICLINKS` on top of the confinement: a `/proc/self/fd` entry in a
+    // rootfs that has `/proc` mounted names an inode resolution never walked to, so it is
+    // refused rather than clamped.
+    let program = rfs::openat2(
+        &anchor,
+        path.components().join("/"),
+        OFlags::PATH,
+        Mode::empty(),
+        ResolveFlags::IN_ROOT | ResolveFlags::NO_MAGICLINKS,
+    )
+    .map_err(|e| resolve_error(e, &format!("{}{}", rootfs, path)))?;
     let stat =
-        rfs::fstat(&program).map_err(|e| symlink_error(e, &format!("{}{}", rootfs, path)))?;
-    if FileType::from_raw_mode(stat.st_mode) == FileType::Symlink {
-        return Err(symlink_error(rustix::io::Errno::LOOP, &format!("{}{}", rootfs, path)));
+        rfs::fstat(&program).map_err(|e| resolve_error(e, &format!("{}{}", rootfs, path)))?;
+    let kind = FileType::from_raw_mode(stat.st_mode);
+    if kind != FileType::RegularFile {
+        return Err(crate::error::RsdebstrapError::Isolation(format!(
+            "{}{} is a {:?}, not a program; refusing to run it without isolation",
+            rootfs, path, kind
+        ))
+        .into());
     }
 
     // The executor execs this descriptor by naming it `/proc/self/fd/N`, which is the only
@@ -73,16 +82,23 @@ fn open_program_in_rootfs(rootfs: &Utf8Path, program: &str) -> Result<OwnedFd> {
     Ok(program)
 }
 
-fn symlink_error(e: rustix::io::Errno, what: &str) -> anyhow::Error {
+fn resolve_error(e: rustix::io::Errno, what: &str) -> anyhow::Error {
     match e {
-        rustix::io::Errno::LOOP | rustix::io::Errno::NOTDIR => {
-            crate::error::RsdebstrapError::Isolation(format!(
-                "{} is a symlink or not a directory; refusing to run it without isolation, \
-                because the kernel would resolve it and could leave the rootfs",
-                what
-            ))
-            .into()
-        }
+        // The confinement is the check, so there is no unconfined path to fall back to: a
+        // kernel without `openat2` gets a refusal that names what is missing, not a walk
+        // that follows symlinks and hopes they stay inside.
+        rustix::io::Errno::NOSYS => crate::error::RsdebstrapError::Isolation(format!(
+            "cannot resolve {} without isolation: openat2(RESOLVE_IN_ROOT) is unavailable \
+            on this kernel (Linux 5.6 or newer), and a program path cannot be confined to \
+            the rootfs without it",
+            what
+        ))
+        .into(),
+        rustix::io::Errno::LOOP => crate::error::RsdebstrapError::Isolation(format!(
+            "{} does not resolve inside the rootfs; refusing to run it without isolation",
+            what
+        ))
+        .into(),
         _ => crate::error::RsdebstrapError::io(
             format!("failed to open {}", what),
             std::io::Error::from(e),

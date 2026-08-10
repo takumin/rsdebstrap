@@ -19,9 +19,9 @@ struct RecordingExecutor {
 }
 
 impl CommandExecutor for RecordingExecutor {
-    // A live run: `DirectProvider` skips its symlinked-program check in a dry run, and
-    // `direct_context_refuses_a_program_symlinked_out_of_the_rootfs` is here to exercise it.
-    // Nothing is executed for real because this executor only records.
+    // A live run: `DirectProvider` skips its program resolution in a dry run, and the
+    // `direct_context_*_the_rootfs` tests are here to exercise it. Nothing is executed for
+    // real because this executor only records.
     fn dry_run(&self) -> bool {
         false
     }
@@ -370,13 +370,18 @@ fn test_direct_context_propagates_sudo_privilege() {
 // `test_direct_context_execute_translates_absolute_paths`, which asserts the
 // same recorded privilege for the same call.
 
+// The shape every Debian rootfs has: merged-`/usr` makes `/bin` a link to `usr/bin`, and
+// `/bin/sh` is a link to the shell that provides it. Refusing symlinked programs made the
+// default shell unrunnable on any real rootfs, so following them is the whole point of
+// resolving with `RESOLVE_IN_ROOT` rather than walking with `O_NOFOLLOW`.
 #[test]
-fn direct_context_refuses_a_program_symlinked_out_of_the_rootfs() {
+fn direct_context_follows_a_program_symlinked_inside_the_rootfs() {
     let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
-    let outside = tempfile::tempdir().unwrap();
-    let evil = outside.path().join("evil");
-    std::fs::write(&evil, "#!/bin/sh\n").unwrap();
-    std::os::unix::fs::symlink(&evil, rootfs.join("bin/sh")).unwrap();
+    std::fs::remove_dir(rootfs.join("bin")).unwrap();
+    std::fs::create_dir_all(rootfs.join("usr/bin")).unwrap();
+    std::fs::write(rootfs.join("usr/bin/dash"), "#!/bin/sh\n").unwrap();
+    std::os::unix::fs::symlink("dash", rootfs.join("usr/bin/sh")).unwrap();
+    std::os::unix::fs::symlink("usr/bin", rootfs.join("bin")).unwrap();
 
     let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
@@ -386,10 +391,51 @@ fn direct_context_refuses_a_program_symlinked_out_of_the_rootfs() {
         .setup(&rootfs, executor, mock_ops(&rootfs))
         .unwrap();
 
-    let err = context
+    context
         .execute(&["/bin/sh".to_string()], None)
-        .expect_err("a symlinked program must be refused");
-    assert!(format!("{err:#}").contains("is a symlink"), "unexpected error: {err:#}");
+        .expect("a program reached through symlinks that stay inside the rootfs must run");
+    assert_eq!(calls.lock().unwrap().len(), 1, "the resolved program should have been executed");
+}
+
+// Both escapes are checked against `/etc/passwd`, which exists on the host and not in the
+// fixture rootfs. That is what makes the clamping observable rather than merely asserted:
+// a resolution that left the rootfs would find a regular file and succeed, so the refusal
+// is evidence the link was reinterpreted against the anchor.
+#[test]
+fn direct_context_clamps_an_absolute_symlink_to_the_rootfs() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    std::os::unix::fs::symlink("/etc/passwd", rootfs.join("bin/sh")).unwrap();
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("an absolute link target must resolve against the rootfs, not the host");
+    assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
+#[test]
+fn direct_context_clamps_a_parent_escape_to_the_rootfs() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    std::os::unix::fs::symlink("../../../../../etc/passwd", rootfs.join("bin/sh")).unwrap();
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("`..` above the rootfs must stay at it");
     assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
 }
 
@@ -530,9 +576,10 @@ fn direct_context_refuses_a_rootfs_reached_through_a_symlinked_component() {
     assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
 }
 
-// The refusal has to name the component that failed, and it walks more than one deep for a
-// program like `/usr/bin/env`. Interpolating the current component alone onto the rootfs
-// reported `<rootfs>/bin` for a symlinked `<rootfs>/usr/bin` — a path that does not exist.
+// An escape does not have to be the last component: `<rootfs>/usr/bin` linked out of the
+// rootfs is clamped the same way, and `/usr/bin/env` then names nothing. The refusal has to
+// say which path the caller asked for -- the whole of it, since a resolution that is
+// reinterpreted mid-path has no single component to blame.
 #[test]
 fn a_refused_intermediate_component_is_named_in_full() {
     let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
