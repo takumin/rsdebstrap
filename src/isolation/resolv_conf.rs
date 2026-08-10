@@ -11,7 +11,7 @@ use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use tracing::info;
 
-use crate::config::ResolvConfConfig;
+use crate::config::{MountEntry, ResolvConfConfig};
 use crate::error::RsdebstrapError;
 use crate::isolation::mount::Mounted;
 use crate::pipeline::Provisioned;
@@ -57,16 +57,42 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
 /// rules out is the case with no guards at all.
 #[must_use]
 #[derive(Debug)]
-pub struct Prepared<'a>(PhantomData<&'a RootfsResolvConf>);
+pub struct Prepared<'a> {
+    rootfs: &'a Utf8Path,
+    mounts: &'a [MountEntry],
+    resolv_conf: Option<&'a ResolvConfConfig>,
+    guard: PhantomData<&'a RootfsResolvConf>,
+}
 
-impl Prepared<'_> {
+impl<'a> Prepared<'a> {
     /// For a pipeline with no prepare phase, where there is nothing for a guard to do.
     ///
     /// The only way to obtain a `Prepared` without arming one, and
     /// [`Pipeline::run`](crate::pipeline::Pipeline::run) — the one caller — earns it by
-    /// refusing a pipeline that declares any prepare task.
-    pub(crate) fn nothing_to_prepare() -> Self {
-        Self(PhantomData)
+    /// refusing a pipeline that declares any prepare task. It still names the rootfs, so it
+    /// cannot be presented for a different one.
+    pub(crate) fn nothing_to_prepare(rootfs: &'a Utf8Path) -> Self {
+        Self {
+            rootfs,
+            mounts: &[],
+            resolv_conf: None,
+            guard: PhantomData,
+        }
+    }
+
+    /// The rootfs both guards were built for.
+    pub(crate) fn rootfs(&self) -> &'a Utf8Path {
+        self.rootfs
+    }
+
+    /// The mount entries the mount guard was built for.
+    pub(crate) fn mounts(&self) -> &'a [MountEntry] {
+        self.mounts
+    }
+
+    /// The resolver config the resolv.conf guard was built for, if any.
+    pub(crate) fn resolv_conf(&self) -> Option<&'a ResolvConfConfig> {
+        self.resolv_conf
     }
 }
 
@@ -148,7 +174,24 @@ impl RootfsResolvConf {
     /// before returning, so a failed setup leaves the rootfs as it was found.
     /// If that rollback fails too, the returned error says so and the guard
     /// stays armed, leaving the retry to `Drop`.
-    pub fn setup<'a>(&'a mut self, _mounted: Mounted<'a>) -> Result<Prepared<'a>> {
+    pub fn setup<'a>(&'a mut self, mounted: Mounted<'a>) -> Result<Prepared<'a>> {
+        // Two guards for two different rootfs directories would otherwise combine into one
+        // token naming neither.
+        if mounted.rootfs() != self.rootfs {
+            return Err(RsdebstrapError::Isolation(format!(
+                "the mounts were established for {} but this guard is over {}",
+                mounted.rootfs(),
+                self.rootfs
+            ))
+            .into());
+        }
+        let prepared = Prepared {
+            rootfs: mounted.rootfs(),
+            mounts: mounted.entries(),
+            resolv_conf: self.config.as_ref(),
+            guard: PhantomData,
+        };
+
         // The detached original exists only in `self.original`. A second `take` would find
         // the temporary this guard installed, overwrite the original with it, and leave
         // teardown restoring the temporary as if it were the rootfs's own -- losing the
@@ -161,12 +204,12 @@ impl RootfsResolvConf {
         }
 
         let Some(config) = &self.config else {
-            return Ok(Prepared(PhantomData));
+            return Ok(prepared);
         };
 
         if self.dry_run {
             info!("would set up resolv.conf in {}", self.rootfs);
-            return Ok(Prepared(PhantomData));
+            return Ok(prepared);
         }
 
         let path = resolv_conf_path();
@@ -216,7 +259,7 @@ impl RootfsResolvConf {
 
         info!("set up resolv.conf in {}", self.rootfs);
         self.active = true;
-        Ok(Prepared(PhantomData))
+        Ok(prepared)
     }
 
     /// Restores the entry setup detached, in exchange for the token
@@ -358,8 +401,11 @@ mod tests {
     // entries instead: `mount()` on one touches nothing and cannot fail, and there is no
     // `#[cfg(test)]` way around the mounts.
     fn setup_guard(g: &mut RootfsResolvConf) -> Result<()> {
+        // Over the same rootfs as `g`: the token names what it is evidence about, and
+        // `setup` refuses one armed over a different directory.
+        let rootfs = g.rootfs.clone();
         let mut mounts = crate::isolation::mount::RootfsMounts::new(
-            Utf8Path::new("/nonexistent"),
+            &rootfs,
             Vec::new(),
             Arc::new(crate::executor::RealCommandExecutor::new(true)),
             None,

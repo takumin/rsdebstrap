@@ -41,9 +41,31 @@ use crate::rootfs::RelPath;
 /// the unmount that has to follow the restore, and `&mut self` cannot be taken while it is.
 /// [`RootfsMounts::still_mounted`] is how the same claim is made at a point a borrow cannot
 /// reach.
+///
+/// It also names what it is evidence *about* -- the rootfs and the entries the guard was
+/// built for. A token is otherwise interchangeable between guards, so one from an empty
+/// guard over an unrelated directory would satisfy a pipeline that declares real mounts;
+/// [`Pipeline::run_prepare_and_provision`](crate::pipeline::Pipeline::run_prepare_and_provision)
+/// compares these against what it is about to provision.
 #[must_use]
 #[derive(Debug)]
-pub struct Mounted<'a>(PhantomData<&'a RootfsMounts>);
+pub struct Mounted<'a> {
+    rootfs: &'a Utf8Path,
+    entries: &'a [MountEntry],
+    guard: PhantomData<&'a RootfsMounts>,
+}
+
+impl<'a> Mounted<'a> {
+    /// The rootfs the guard that produced this was built for.
+    pub(crate) fn rootfs(&self) -> &'a Utf8Path {
+        self.rootfs
+    }
+
+    /// The mount entries that guard was built for.
+    pub(crate) fn entries(&self) -> &'a [MountEntry] {
+        self.entries
+    }
+}
 
 /// Evidence that the pipeline's mounts have been released.
 ///
@@ -229,7 +251,7 @@ impl RootfsMounts {
 
         if self.entries.is_empty() {
             self.mounted = true;
-            return Ok(Mounted(PhantomData));
+            return Ok(self.evidence());
         }
 
         info!("mounting {} filesystem(s) in rootfs", self.entries.len());
@@ -267,7 +289,7 @@ impl RootfsMounts {
         }
 
         self.mounted = true;
-        Ok(Mounted(PhantomData))
+        Ok(self.evidence())
     }
 
     /// Unmounts previously mounted entries and returns the original error.
@@ -331,7 +353,17 @@ impl RootfsMounts {
             )
             .into());
         }
-        Ok(Mounted(PhantomData))
+        Ok(self.evidence())
+    }
+
+    /// The token for this guard, with no claim about its state. Both producers check that
+    /// first; this is only what they hand back.
+    fn evidence(&self) -> Mounted<'_> {
+        Mounted {
+            rootfs: &self.rootfs,
+            entries: &self.entries,
+            guard: PhantomData,
+        }
     }
 
     /// Unmounts everything in exchange for the token the assemble phase requires.

@@ -58,7 +58,9 @@ and this project adheres to
   temporary resolv.conf; because a prepare item has nothing to run on its own,
   such a run reported those tasks as done and provisioned without them. Both
   tokens borrow the guards they came from, so neither can be unmounted, torn
-  down or dropped while the evidence is alive.
+  down or dropped while the evidence is alive, and both name the rootfs and the
+  declarations the guards were built for, which provisioning compares against
+  the pipeline it is about to run.
 - **Breaking (library):** `RootfsResolvConf::restore` also takes a `Mounted`,
   obtained from the new `RootfsMounts::still_mounted`, and `RootfsMounts::unmount`
   is no longer public. The mounts have to stay in place across the restore — with

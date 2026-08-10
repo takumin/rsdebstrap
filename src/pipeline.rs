@@ -132,7 +132,7 @@ impl<'a> Pipeline<'a> {
         // Not a claim that guards were armed: the refusal above is what makes "there is
         // nothing for one to do" true here.
         let provisioned = self.run_prepare_and_provision(
-            Prepared::nothing_to_prepare(),
+            Prepared::nothing_to_prepare(rootfs),
             rootfs,
             &executor,
             &ops,
@@ -158,11 +158,13 @@ impl<'a> Pipeline<'a> {
     /// indistinguishable from a run that skipped them and provisioned anyway.
     pub fn run_prepare_and_provision(
         &self,
-        _prepared: Prepared<'_>,
+        prepared: Prepared<'_>,
         rootfs: &Utf8Path,
         executor: &Arc<dyn CommandExecutor>,
         ops: &Arc<dyn RootfsOps>,
     ) -> Result<Provisioned> {
+        self.check_prepared(&prepared, rootfs)?;
+
         if self.is_empty() {
             return Ok(Provisioned::new());
         }
@@ -176,6 +178,51 @@ impl<'a> Pipeline<'a> {
             run_provision_item(task, rootfs, executor, ops)
         })?;
         Ok(Provisioned::new())
+    }
+
+    /// Checks that the armed guards are the ones this pipeline's prepare phase declares.
+    ///
+    /// The token proves guards were armed; it does not on its own say *which*. Guards for a
+    /// different rootfs, or an empty pair built for a profile with no prepare phase, would
+    /// otherwise let a pipeline that declares mounts and DNS provision without them and
+    /// report its prepare items as done -- the case the token exists to rule out, reached by
+    /// presenting someone else's.
+    ///
+    /// Compared by value rather than by identity: a caller may reasonably have cloned the
+    /// profile, and guards built from an equal declaration establish the same thing.
+    fn check_prepared(&self, prepared: &Prepared<'_>, rootfs: &Utf8Path) -> Result<()> {
+        let mismatch = |what: &str| {
+            Err(RsdebstrapError::Validation(format!(
+                "the prepare guards do not match this pipeline: {}",
+                what
+            ))
+            .into())
+        };
+
+        if prepared.rootfs() != rootfs {
+            return mismatch(&format!(
+                "they were armed over {} and this run is over {}",
+                prepared.rootfs(),
+                rootfs
+            ));
+        }
+
+        let declared_mounts = self
+            .prepare
+            .mount
+            .as_ref()
+            .map(|m| m.resolved_mounts())
+            .unwrap_or_default();
+        if prepared.mounts() != declared_mounts.as_slice() {
+            return mismatch("the mount guard was built for different entries");
+        }
+
+        let declared_resolv_conf = self.prepare.resolv_conf.as_ref().map(|t| t.config());
+        if prepared.resolv_conf() != declared_resolv_conf.as_ref() {
+            return mismatch("the resolv.conf guard was built for a different configuration");
+        }
+
+        Ok(())
     }
 
     /// Executes the assemble phase (the second pipeline stage) and logs
@@ -330,6 +377,8 @@ mod tests {
 
     use anyhow::Result;
     use camino::{Utf8Path, Utf8PathBuf};
+
+    use crate::isolation::resolv_conf::Prepared;
 
     use super::Pipeline;
     use crate::RsdebstrapError;
@@ -566,6 +615,73 @@ mod tests {
     // guards. That is only honest with no prepare phase to have skipped, so a pipeline
     // declaring one has to be refused — provisioning it here would run the tasks without the
     // resolv.conf the profile asked for and still report success.
+    // A token proves guards were armed, not which. An empty pair -- the shape a profile
+    // with no prepare phase produces -- would otherwise carry a pipeline that declares
+    // mounts and DNS straight through provisioning, with its prepare items reported as
+    // done and neither applied.
+    #[test]
+    fn provisioning_refuses_guards_armed_for_a_different_prepare_phase() {
+        let prepare = PrepareConfig {
+            mount: None,
+            resolv_conf: Some(crate::phase::ResolvConfTask {
+                copy: true,
+                name_servers: Vec::new(),
+                search: Vec::new(),
+            }),
+        };
+        let tasks = [inline_task("echo 1")];
+        let pipeline =
+            Pipeline::new(&prepare, &tasks, &EMPTY_ASSEMBLE, None, &IsolationConfig::default())
+                .expect("no task declares `privilege: true`, so resolution cannot fail");
+        let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
+        let rootfs = Utf8Path::new("/tmp/rootfs");
+
+        let err = pipeline
+            .run_prepare_and_provision(
+                Prepared::nothing_to_prepare(rootfs),
+                rootfs,
+                &executor,
+                &dry_run_ops(),
+            )
+            .expect_err("guards that armed nothing cannot stand for a declared resolv.conf");
+
+        assert!(
+            err.to_string()
+                .contains("resolv.conf guard was built for a different"),
+            "expected the error to name the mismatch, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn provisioning_refuses_guards_armed_over_a_different_rootfs() {
+        let tasks = [inline_task("echo 1")];
+        let pipeline = Pipeline::new(
+            &EMPTY_PREPARE,
+            &tasks,
+            &EMPTY_ASSEMBLE,
+            None,
+            &IsolationConfig::default(),
+        )
+        .expect("no task declares `privilege: true`, so resolution cannot fail");
+        let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
+
+        let err = pipeline
+            .run_prepare_and_provision(
+                Prepared::nothing_to_prepare(Utf8Path::new("/tmp/other")),
+                Utf8Path::new("/tmp/rootfs"),
+                &executor,
+                &dry_run_ops(),
+            )
+            .expect_err("guards armed over another directory say nothing about this run");
+
+        assert!(
+            err.to_string().contains("/tmp/other"),
+            "expected the error to name the rootfs the guards were armed over, got: {}",
+            err
+        );
+    }
+
     #[test]
     fn run_refuses_a_pipeline_that_declares_prepare_tasks() {
         let prepare = PrepareConfig {

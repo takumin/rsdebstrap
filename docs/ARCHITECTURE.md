@@ -130,9 +130,16 @@ Key invariants:
   a public entry point that armed no guards: a prepare item has nothing to *run* — the
   guards are what carry a mount or a temporary resolv.conf — so iterating the phase reported
   those tasks as done for a run that had skipped them, and provisioning proceeded without
-  the mounts or the DNS the profile asked for. `Prepared` says the guards ran, not that they
-  were built from the same `prepare` config as the pipeline; binding that would mean
-  constructing them from it. What it rules out is the case with none at all.
+  the mounts or the DNS the profile asked for.
+
+  Both tokens also name what they are evidence *about* — the rootfs, the mount entries and
+  the resolver config the guards were built for — and `run_prepare_and_provision` compares
+  those against what it is about to provision. Without that they are interchangeable, and an
+  empty pair (which is what a profile with no prepare phase produces) would carry a pipeline
+  that declares mounts and DNS straight through, its prepare items reported as done and
+  neither applied. The comparison is by value rather than by identity: a caller may
+  reasonably have cloned the profile, and guards built from an equal declaration establish
+  the same thing.
 
   From there: `Pipeline::run_prepare_and_provision` yields a `Provisioned`;
   `RootfsResolvConf::restore` consumes one and yields a `Restored`;
