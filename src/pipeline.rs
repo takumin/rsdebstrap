@@ -107,9 +107,8 @@ impl<'a> Pipeline<'a> {
     /// a temporary resolv.conf — is carried by RAII guards that bracket provisioning, and
     /// this method is by definition the case with nothing in between to hold them. So it
     /// refuses a pipeline that declares any, rather than provisioning without the mounts or
-    /// the DNS the profile asked for and reporting success. Those callers use
-    /// `run_prepare_and_provision` and `run_assemble`, holding the guards
-    /// across the two.
+    /// the DNS the profile asked for and reporting success. [`run_apply`](crate::run_apply)
+    /// is the entry point that holds the guards across the phases.
     ///
     /// If the pipeline has no tasks at all, returns immediately.
     pub fn run(
@@ -119,10 +118,12 @@ impl<'a> Pipeline<'a> {
         ops: Arc<dyn RootfsOps>,
     ) -> Result<()> {
         if !self.prepare.is_empty() {
+            // Names `run_apply`, not the staged entry points: those and both guards are
+            // crate-private, so an instruction to call them is one the reader cannot follow.
             return Err(RsdebstrapError::Validation(
                 "pipeline declares prepare tasks, which need the mount and resolv.conf \
-                guards held across provisioning: call run_prepare_and_provision, hold them, \
-                then run_assemble"
+                guards held across provisioning: use rsdebstrap::run_apply, which holds \
+                them for the whole run"
                     .to_string(),
             )
             .into());
@@ -228,7 +229,6 @@ impl<'a> Pipeline<'a> {
     /// Executes the assemble phase (the second pipeline stage) and logs
     /// pipeline completion.
     ///
-    /// Call only after a successful [`Self::run_prepare_and_provision`].
     /// Returns immediately if the pipeline has no tasks.
     pub(crate) fn run_assemble(
         &self,
@@ -702,9 +702,11 @@ mod tests {
             .run(Utf8Path::new("/tmp/rootfs"), executor, dry_run_ops())
             .expect_err("a pipeline with a prepare task must not run through this path");
 
+        // Names `run_apply` and not the staged entry points: those are crate-private, so an
+        // external caller -- the only one who can reach this method -- cannot act on them.
         assert!(
-            err.to_string().contains("run_prepare_and_provision"),
-            "expected the error to name the two-stage path, got: {}",
+            err.to_string().contains("run_apply"),
+            "expected the error to name an entry point the caller can reach, got: {}",
             err
         );
     }
