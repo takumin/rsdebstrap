@@ -67,6 +67,13 @@ and this project adheres to
   would have had its provision tasks run without it and still be reported as
   successful. Callers with a prepare phase use `run_prepare_and_provision` and
   `run_assemble` and hold the guards across the two.
+- A profile whose `bootstrap` escalates while `defaults.privilege` is unset is
+  refused when it is loaded. The two answer different questions — who builds the
+  rootfs, and who modifies it afterwards — and nothing made them agree: the
+  bootstrap ran under `sudo` and left a root-owned tree, then the rootfs helper
+  opened it unprivileged and the run failed at the first staged file with a bare
+  `EACCES`, after the expensive part. The other direction is untouched; a run may
+  deliberately escalate only its rootfs writes.
 
 ### Added
 

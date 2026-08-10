@@ -519,6 +519,8 @@ impl Profile {
         let pipeline = self.build_pipeline()?;
         pipeline.validate()?;
 
+        self.validate_rootfs_privilege(&pipeline)?;
+
         if !pipeline.is_empty() {
             let backend = self.bootstrap.as_backend();
             let output = backend
@@ -534,6 +536,34 @@ impl Profile {
         }
 
         Ok(ValidatedProfile { profile: self })
+    }
+
+    /// Refuses a profile that bootstraps with privilege but modifies the rootfs without it.
+    ///
+    /// Two settings answer two different questions — `bootstrap.privilege` decides who builds
+    /// the rootfs, `defaults.privilege` decides who modifies it afterwards — and nothing
+    /// makes them agree. Escalated bootstrap plus unset defaults means `mmdebstrap` runs under
+    /// `sudo` and leaves a root-owned tree, then the rootfs helper opens it unprivileged: the
+    /// run gets through bootstrap and fails at the first staged file with a bare `EACCES`,
+    /// after the expensive part. The other direction is harmless — a run may deliberately
+    /// escalate only its rootfs writes — so only this one is refused.
+    fn validate_rootfs_privilege(&self, pipeline: &Pipeline<'_>) -> Result<(), RsdebstrapError> {
+        if pipeline.is_empty() || self.defaults.privilege.is_some() {
+            return Ok(());
+        }
+        let Some(method) = self
+            .bootstrap
+            .resolve_privilege(self.defaults.privilege.as_ref())?
+        else {
+            return Ok(());
+        };
+        Err(RsdebstrapError::Validation(format!(
+            "bootstrap runs with `privilege: {}`, so the rootfs it builds is root-owned, \
+            but `defaults.privilege` is unset and every pipeline task writes to that rootfs \
+            unprivileged. Set `defaults.privilege.method: {}`, or drop the privilege from \
+            `bootstrap`",
+            method, method
+        )))
     }
 
     /// Validates mount-related configuration.
@@ -1555,6 +1585,68 @@ mod tests {
                 .contains("defaults.privilege must be configured"),
             "unexpected: {err}"
         );
+    }
+
+    // The two privilege settings answer different questions and nothing else makes them
+    // agree, so an escalated bootstrap with unprivileged rootfs ops has to be caught here --
+    // otherwise the run bootstraps a root-owned tree and only fails at the first staged file.
+    #[test]
+    fn escalated_bootstrap_with_unprivileged_rootfs_ops_is_refused() {
+        let yaml = minimal_profile_yaml(concat!(
+            "provision:\n",
+            "  - type: shell\n",
+            "    content: 'echo hi'\n",
+        ))
+        .replace("  target: rootfs\n", "  target: rootfs\n  privilege:\n    method: sudo\n");
+        let profile = parse_profile(&yaml);
+
+        let err = profile.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("defaults.privilege"), "unexpected: {msg}");
+        assert!(msg.contains("root-owned"), "unexpected: {msg}");
+    }
+
+    #[test]
+    fn matching_privilege_on_both_sides_is_accepted() {
+        let yaml = minimal_profile_yaml(concat!(
+            "defaults:\n",
+            "  privilege:\n",
+            "    method: sudo\n",
+            "provision:\n",
+            "  - type: shell\n",
+            "    content: 'echo hi'\n",
+        ))
+        .replace("  target: rootfs\n", "  target: rootfs\n  privilege:\n    method: sudo\n");
+        let profile = parse_profile(&yaml);
+
+        assert!(profile.validate().is_ok(), "{:?}", profile.validate().err());
+    }
+
+    // The other direction: only the rootfs writes escalate. A user may own the tree
+    // `mmdebstrap --mode=unshare` built and still want the pipeline's writes done as root.
+    #[test]
+    fn unprivileged_bootstrap_with_privileged_rootfs_ops_is_accepted() {
+        let yaml = minimal_profile_yaml(concat!(
+            "defaults:\n",
+            "  privilege:\n",
+            "    method: sudo\n",
+            "provision:\n",
+            "  - type: shell\n",
+            "    content: 'echo hi'\n",
+        ));
+        let profile = parse_profile(&yaml);
+
+        assert!(profile.validate().is_ok(), "{:?}", profile.validate().err());
+    }
+
+    // Nothing writes to the rootfs, so nothing needs the identity to match.
+    #[test]
+    fn escalated_bootstrap_with_no_pipeline_is_accepted() {
+        let yaml = minimal_profile_yaml("")
+            .replace("  target: rootfs\n", "  target: rootfs\n  privilege:\n    method: sudo\n");
+        let profile = parse_profile(&yaml);
+
+        assert!(profile.validate().is_ok(), "{:?}", profile.validate().err());
     }
 
     #[test]
