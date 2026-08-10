@@ -292,19 +292,27 @@ fn the_helper_installs_a_symlink_over_a_root_owned_file() {
     assert!(fixture.resolv_conf_is_symlink(), "the entry is not a symlink");
 }
 
-// The escalation is scoped by the request type, not by what root could reach:
-// even running as root, the helper will not accept a path outside its rootfs.
+// Root does not get past the entry-type refusals the unprivileged implementation applies:
+// the helper serves `LocalRootfsOps`, so what it will detach is bounded the same way, and a
+// FIFO where a config file should be is refused rather than opened and read as root.
+//
+// The `..` half of the boundary is not testable from here — `RelPath::parse` refuses one
+// before a request can be built — and its server side is covered unprivileged by
+// `tests/rootfs_helper_test.rs::a_request_escaping_the_rootfs_is_refused`.
 #[test]
 #[ignore = "requires passwordless sudo"]
-fn the_helper_refuses_to_escape_its_rootfs_even_as_root() {
+fn the_helper_refuses_a_non_regular_entry_even_as_root() {
     require_sudo!();
     let fixture = RootOwnedRootfs::new();
     let ops = privileged(&fixture.path);
+    let path = RelPath::parse("/etc/fifo").unwrap();
 
-    let err = RelPath::parse("/etc/../../../../etc/shadow").unwrap_err();
+    sudo(&["mkfifo", fixture.path.join("etc/fifo").as_str()]);
 
-    assert!(err.to_string().contains(".."), "unexpected error: {err}");
-    // And nothing in the fixture changed while proving it.
+    let err = ops.take(&path).expect_err("a FIFO must not be detached");
+
+    assert!(err.to_string().contains("refusing to detach"), "unexpected error: {err}");
+    // And the entry the run really cares about was left alone while proving it.
     drop(ops);
     assert_eq!(fixture.read_resolv_conf(), ORIGINAL);
 }
