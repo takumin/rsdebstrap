@@ -52,9 +52,12 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
 /// while it is alive. A token that outlived them would say the prepare phase *had been* set
 /// up, which is not what provisioning needs to know.
 ///
-/// It says the guards ran, not that they were built from the same `prepare` config as the
-/// pipeline being provisioned; binding that would mean constructing them from it. What it
-/// rules out is the case with no guards at all.
+/// It also names what the guards were built from — the rootfs, the resolved mount entries,
+/// the resolv.conf config — so that
+/// [`check_prepared`](crate::pipeline::Pipeline::check_prepared) can hold it against what
+/// the pipeline's own `prepare` phase declares. Without that, guards armed for a different
+/// prepare config would carry a pipeline through provisioning with its prepare items
+/// reported done.
 #[must_use]
 #[derive(Debug)]
 pub(crate) struct Prepared<'a> {
