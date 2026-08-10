@@ -165,6 +165,10 @@ pub struct RootfsMounts {
     executor: Arc<dyn CommandExecutor>,
     privilege: Option<PrivilegeMethod>,
     dry_run: bool,
+    /// Set once `mount` has established every entry. Distinct from "no entry is missing":
+    /// a guard that has not been mounted yet has none missing either, and a guard whose
+    /// `mount` failed part-way has had its cleanup roll the successful ones back.
+    mounted: bool,
     torn_down: bool,
 }
 
@@ -190,6 +194,7 @@ impl RootfsMounts {
             executor,
             privilege,
             dry_run,
+            mounted: false,
             torn_down: false,
         }
     }
@@ -223,6 +228,7 @@ impl RootfsMounts {
         }
 
         if self.entries.is_empty() {
+            self.mounted = true;
             return Ok(Mounted(PhantomData));
         }
 
@@ -260,6 +266,7 @@ impl RootfsMounts {
             }
         }
 
+        self.mounted = true;
         Ok(Mounted(PhantomData))
     }
 
@@ -308,8 +315,16 @@ impl RootfsMounts {
     ///
     /// # Errors
     ///
-    /// Returns an error if this guard has already been unmounted.
+    /// Returns an error if this guard has not mounted yet -- a fresh guard has nothing
+    /// missing, and one whose `mount` failed part-way has had the successful entries rolled
+    /// back, so neither state can be told from the entry list -- or has already unmounted.
     pub fn still_mounted(&self) -> Result<Mounted<'_>> {
+        if !self.mounted {
+            return Err(RsdebstrapError::Isolation(
+                "the rootfs mounts have not been established".to_string(),
+            )
+            .into());
+        }
         if self.torn_down {
             return Err(RsdebstrapError::Isolation(
                 "the rootfs mounts have already been released".to_string(),
@@ -898,6 +913,37 @@ mod tests {
     // The restore asks for this token, and the point of asking again rather than carrying
     // one is that a guard whose mounts are gone cannot produce it. A `prepare.mount` over
     // the directory the restore writes into is the case that makes the ordering matter.
+    // A fresh guard has no entry missing, and one whose `mount` failed has had the
+    // successful entries rolled back, so "nothing is unmounted" is true in both states and
+    // is not the question. The token has to mean the mounts were established.
+    #[test]
+    fn still_mounted_refuses_before_the_mounts_are_established() {
+        let executor = Arc::new(MockMountExecutor::new());
+        let temp_dir = tempfile::tempdir().unwrap();
+        let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
+        let err = mounts
+            .still_mounted()
+            .expect_err("a guard that has not mounted cannot claim its mounts are in place");
+        assert!(err.to_string().contains("have not been established"), "unexpected: {err:#}");
+    }
+
+    #[test]
+    fn still_mounted_refuses_after_a_failed_mount() {
+        let executor = Arc::new(MockMountExecutor::failing_on(1));
+        let temp_dir = tempfile::tempdir().unwrap();
+        let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
+        mounts.mount().expect_err("the second entry fails");
+
+        let err = mounts
+            .still_mounted()
+            .expect_err("a partly-mounted guard has rolled back and has nothing to claim");
+        assert!(err.to_string().contains("have not been established"), "unexpected: {err:#}");
+    }
+
     #[test]
     fn still_mounted_refuses_once_the_mounts_are_released() {
         let executor = Arc::new(MockMountExecutor::new());
