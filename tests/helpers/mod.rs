@@ -459,14 +459,19 @@ impl Drop for CwdGuard {
     }
 }
 
-// Real descriptor-anchored ops over the mock's rootfs, so tests can assert what
-// a task actually left on disk. Falls back to the dry-run implementation for the
-// tests whose rootfs path is a fixture that was never created.
+// Real descriptor-anchored ops over the mock's rootfs, so tests can assert what a task
+// actually left on disk.
+//
+// Panics rather than degrading to `DryRunRootfsOps`: the mock reports `dry_run() == false`,
+// so a silent substitution would leave every "the script was staged" and "the staged script
+// was cleaned up" assertion trivially true about a file that was never written. `open`
+// refuses a symlinked component, which a `TMPDIR` pointing through one would trip for every
+// fixture at once -- exactly the case that has to be loud.
 pub fn mock_rootfs_ops(rootfs: &Utf8Path) -> std::sync::Arc<dyn rsdebstrap::rootfs::RootfsOps> {
-    match rsdebstrap::rootfs::LocalRootfsOps::open(rootfs) {
-        Ok(ops) => std::sync::Arc::new(ops),
-        Err(_) => std::sync::Arc::new(rsdebstrap::rootfs::DryRunRootfsOps::new(rootfs)),
-    }
+    std::sync::Arc::new(
+        rsdebstrap::rootfs::LocalRootfsOps::open(rootfs)
+            .unwrap_or_else(|e| panic!("fixture rootfs {rootfs} must open: {e}")),
+    )
 }
 
 pub struct MockContext {
