@@ -196,17 +196,38 @@ pub struct PrivilegedRootfsOps {
 #[derive(Debug)]
 struct Channel {
     child: Child,
-    // `None` once `Drop` has closed it to end the helper's read loop.
+    // Both `None` once the channel has been closed -- by `Drop`, or by `close` after a
+    // failed exchange left the stream at an unknown offset.
     stdin: Option<ChildStdin>,
-    stdout: BufReader<ChildStdout>,
+    stdout: Option<BufReader<ChildStdout>>,
 }
 
 impl Channel {
     fn stdin(&mut self) -> Result<&mut ChildStdin> {
-        self.stdin.as_mut().ok_or_else(|| {
-            RsdebstrapError::Isolation("the privileged helper channel is closed".into())
-        })
+        self.stdin.as_mut().ok_or_else(closed)
     }
+
+    fn stdout(&mut self) -> Result<&mut BufReader<ChildStdout>> {
+        self.stdout.as_mut().ok_or_else(closed)
+    }
+
+    /// Closes both halves, ending the helper's read loop and freeing it from a write that
+    /// nothing is draining.
+    ///
+    /// Called on any failed exchange, because a request that did not get its whole reply
+    /// leaves the stream at an unknown offset: the tail of that line is still buffered, and
+    /// the next request would be answered by it. `Response::Unit` is legal for every
+    /// unit-shaped request, so a stream off by one reply would go unnoticed -- the resolv.conf
+    /// teardown would consume setup's stale `Unit`, mark itself done, and leave the temporary
+    /// resolv.conf in the image. A closed channel makes every later request say so instead.
+    fn close(&mut self) {
+        drop(self.stdin.take());
+        drop(self.stdout.take());
+    }
+}
+
+fn closed() -> RsdebstrapError {
+    RsdebstrapError::Isolation("the privileged helper channel is closed".into())
 }
 
 /// Reaping lives here, on the value that owns the child, rather than on
@@ -282,7 +303,7 @@ impl PrivilegedRootfsOps {
             channel: Mutex::new(Channel {
                 child,
                 stdin: Some(stdin),
-                stdout,
+                stdout: Some(stdout),
             }),
             method,
         })
@@ -308,7 +329,12 @@ impl PrivilegedRootfsOps {
         }
 
         let mut line = String::new();
-        match channel.stdout.read_line(&mut line) {
+        let read = channel.stdout().and_then(|stdout| {
+            stdout
+                .read_line(&mut line)
+                .map_err(|e| RsdebstrapError::io("failed to read the response", e))
+        });
+        match read {
             Ok(0) => Err(self.channel_lost(
                 &mut channel,
                 std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "helper closed its output"),
@@ -316,7 +342,8 @@ impl PrivilegedRootfsOps {
             Ok(_) => serde_json::from_str(&line).map_err(|e| {
                 RsdebstrapError::Isolation(format!("malformed response from helper: {e}"))
             }),
-            Err(e) => Err(self.channel_lost(&mut channel, e)),
+            Err(RsdebstrapError::Io { source, .. }) => Err(self.channel_lost(&mut channel, source)),
+            Err(other) => Err(other),
         }
     }
 
@@ -325,7 +352,12 @@ impl PrivilegedRootfsOps {
     /// A failed `sudo` (wrong password, no rule for this command) shows up as a
     /// closed pipe, which is unreadable on its own — the exit status is what
     /// tells the user their escalation was refused.
+    ///
+    /// Closes the channel on the way out: an exchange that did not complete leaves the
+    /// stream at an offset nothing can recover, and reporting the failure while leaving the
+    /// channel usable is how the next request comes to be answered by this one's reply.
     fn channel_lost(&self, channel: &mut Channel, cause: std::io::Error) -> RsdebstrapError {
+        channel.close();
         let status = match channel.child.try_wait() {
             Ok(Some(status)) => format!(" (helper exited with {status})"),
             _ => String::new(),
@@ -511,7 +543,7 @@ mod tests {
         let pid = child.id();
         let channel = Mutex::new(Channel {
             stdin: Some(child.stdin.take().expect("stdin was piped")),
-            stdout: BufReader::new(child.stdout.take().expect("stdout was piped")),
+            stdout: Some(BufReader::new(child.stdout.take().expect("stdout was piped"))),
             child,
         });
 
