@@ -91,7 +91,9 @@ pub enum Commands {
     RootfsHelper(RootfsHelperArgs),
 }
 
-/// Arguments for the internal privileged helper.
+// Arguments for the internal privileged helper. `//` rather than `///` for the same
+// reason as the variant above: clap lifts a doc comment into the subcommand's `--help`
+// text and into the generated shell completions, which `hide = true` does not cover.
 #[derive(Args, Debug)]
 pub struct RootfsHelperArgs {
     // The only path the helper ever opens by name. Everything it does afterwards
