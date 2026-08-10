@@ -288,8 +288,20 @@ impl RootfsResolvConf {
     pub(crate) fn restore(
         &mut self,
         _provisioned: Provisioned,
-        _mounted: Mounted<'_>,
+        mounted: Mounted<'_>,
     ) -> Result<Restored> {
+        // The same comparison `setup` makes. Asking for a `Mounted` is only worth anything
+        // if it is evidence about *these* mounts: a token from a second guard -- an empty
+        // one over an unrelated directory hands one out for free -- would otherwise satisfy
+        // the window this restore has to land inside.
+        if mounted.rootfs() != self.rootfs {
+            return Err(RsdebstrapError::Isolation(format!(
+                "the mounts still in place are for {} but this guard is over {}",
+                mounted.rootfs(),
+                self.rootfs
+            ))
+            .into());
+        }
         self.teardown()?;
         Ok(Restored(()))
     }
