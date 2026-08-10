@@ -207,7 +207,14 @@ impl MitamaeTask {
         let rootfs = context.rootfs();
         let dry_run = context.dry_run();
 
-        let binary = self.binary.as_ref().unwrap();
+        // `validate` has a written-out error for this and is the only thing that fills the
+        // field in from `defaults.mitamae.binary`. Reached without it -- `execute` is `pub`
+        // -- an unwrap would abort the process over a value that is `Option` precisely
+        // because a profile may not have named one.
+        let binary = self.binary.as_ref().ok_or_else(|| {
+            self.validate()
+                .expect_err("binary is None, which validate refuses")
+        })?;
 
         // Unlike ShellTask, no validate_rootfs() is needed here because the mitamae
         // binary is copied from the host side — there is no rootfs-resident binary
