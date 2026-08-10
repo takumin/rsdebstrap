@@ -676,7 +676,9 @@ mod tests {
         let first = ops.remove(&path).expect_err("a banner is not a response");
         assert!(first.to_string().contains("malformed response"), "unexpected: {first}");
 
-        let second = ops.remove(&path).expect_err("the channel must not still be usable");
+        let second = ops
+            .remove(&path)
+            .expect_err("the channel must not still be usable");
         assert!(second.to_string().contains("closed"), "unexpected: {second}");
     }
 }
