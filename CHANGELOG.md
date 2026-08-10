@@ -59,6 +59,13 @@ and this project adheres to
   such a run reported those tasks as done and provisioned without them. Both
   tokens borrow the guards they came from, so neither can be unmounted, torn
   down or dropped while the evidence is alive.
+- **Breaking (library):** `RootfsResolvConf::restore` also takes a `Mounted`,
+  obtained from the new `RootfsMounts::still_mounted`, and `RootfsMounts::unmount`
+  is no longer public. The mounts have to stay in place across the restore — with
+  a `prepare.mount` over `/etc`, setup replaced the entry on the mounted
+  filesystem, and restoring after the unmount would put the original on the
+  directory underneath it. The ordered release, `unmount_before_assembly`, is the
+  only one callers outside the crate have.
 - `Pipeline::run` refuses a pipeline that declares prepare tasks instead of
   provisioning without them. The mount and the temporary resolv.conf a prepare
   task declares are held by guards that bracket provisioning, and that path is

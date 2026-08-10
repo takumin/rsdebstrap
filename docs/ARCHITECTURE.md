@@ -123,10 +123,10 @@ Key invariants:
   chain starts before provisioning rather than after it. `RootfsMounts::mount` yields a
   `Mounted`; `RootfsResolvConf::setup` consumes one and yields a `Prepared`;
   `Pipeline::run_prepare_and_provision` requires that. Both borrow the guard they came from,
-  the way `ValidatedProfile` borrows its profile: `RootfsMounts::unmount` is public and
-  `Drop` releases the mounts anyway, so a token that only *stood for* them could be held
-  across an unmount and presented afterwards. Borrowing means neither guard can be touched
-  or dropped while the evidence is alive. Without any of this, entering provisioning was
+  the way `ValidatedProfile` borrows its profile: `Drop` releases the mounts whatever the
+  caller does, so a token that only *stood for* them could outlive them and still be
+  presented. Borrowing means neither guard can be touched or dropped while the evidence is
+  alive. Without any of this, entering provisioning was
   a public entry point that armed no guards: a prepare item has nothing to *run* — the
   guards are what carry a mount or a temporary resolv.conf — so iterating the phase reported
   those tasks as done for a run that had skipped them, and provisioning proceeded without
@@ -138,7 +138,18 @@ Key invariants:
   `RootfsResolvConf::restore` consumes one and yields a `Restored`;
   `RootfsMounts::unmount_before_assembly` consumes that
   and yields an `Unmounted`; `Pipeline::run_assemble` requires an `Unmounted`. Assembling
-  before either teardown is therefore a compile error, not a review finding. Each token is
+  before either teardown is therefore a compile error, not a review finding.
+
+  Those three carry no borrow, and cannot. A borrow taken at `mount` and threaded through
+  `Provisioned` and `Restored` would still be alive at `unmount_before_assembly`, which
+  takes `&mut self` — evidence that borrows a guard can never be handed back to it, whether
+  the borrow is shared or exclusive. But the mounts do have to stay up across the restore:
+  a `prepare.mount` over `/etc` means setup replaced the entry on the mounted filesystem,
+  and restoring after the unmount would put the original on the directory underneath while
+  leaving the temporary on the mounted one. So `restore` asks for a `Mounted` *again*, from
+  `RootfsMounts::still_mounted`, which a released guard refuses and a dropped one cannot be
+  asked at all. `RootfsMounts::unmount` is `pub(crate)` for the same reason: the only
+  release a caller outside the crate has is the ordered one. Each token is
   declared in the module of the guard that produces it, so its constructor is private *there*
   — declared in `pipeline` they would be `pub(crate)` and the orchestration could mint one,
   which is exactly the mistake being prevented. `Pipeline::run` is the one exemption, via

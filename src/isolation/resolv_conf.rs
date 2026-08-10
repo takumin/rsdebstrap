@@ -227,11 +227,26 @@ impl RootfsResolvConf {
     /// between provisioning and assembly: assembly cannot be called without the
     /// token, and the token cannot exist before this returns.
     ///
+    /// It also asks for [`Mounted`] again, rather than one carried from setup. A
+    /// `prepare.mount` may sit over the directory this restores into -- `/etc` is a
+    /// plausible target -- in which case setup replaced the entry on the mounted
+    /// filesystem, and restoring after the unmount would put the original on the
+    /// directory underneath while leaving the temporary on the mounted one. The token
+    /// cannot be carried here: a borrow taken at
+    /// [`RootfsMounts::mount`](crate::isolation::mount::RootfsMounts::mount) would still be
+    /// alive at the unmount that has to follow this. Asked for again through
+    /// [`still_mounted`](crate::isolation::mount::RootfsMounts::still_mounted), it also
+    /// rules out the guard having been dropped, which no borrow reaching this far could.
+    ///
     /// # Errors
     ///
     /// Returns an error if the original cannot be written back. `Drop` retries
     /// the restore in that case.
-    pub fn restore(&mut self, _provisioned: Provisioned) -> Result<Restored> {
+    pub fn restore(
+        &mut self,
+        _provisioned: Provisioned,
+        _mounted: Mounted<'_>,
+    ) -> Result<Restored> {
         self.teardown()?;
         Ok(Restored(()))
     }

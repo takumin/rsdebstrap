@@ -32,11 +32,15 @@ use crate::rootfs::RelPath;
 /// which is what puts the mounts before the temporary resolv.conf it writes into them.
 ///
 /// It borrows the guard it came from rather than standing for it. A token that did not
-/// would say only that *some* mounts were established once: [`RootfsMounts::unmount`] is
-/// public and `Drop` releases them anyway, so a caller could unmount, or let the guard fall
-/// out of scope, and still present the token. Borrowing means the guard cannot be touched
-/// or dropped while the evidence is alive, so "the mounts are in place" describes now
-/// rather than then.
+/// would say only that *some* mounts were established once: `Drop` releases them whatever
+/// the caller does, so the guard could be gone by the time the token is presented.
+/// Borrowing means the guard cannot be touched or dropped while the evidence is alive, so
+/// "the mounts are in place" describes now rather than then.
+///
+/// The borrow cannot reach every point that needs it, though: it would still be alive at
+/// the unmount that has to follow the restore, and `&mut self` cannot be taken while it is.
+/// [`RootfsMounts::still_mounted`] is how the same claim is made at a point a borrow cannot
+/// reach.
 #[must_use]
 #[derive(Debug)]
 pub struct Mounted<'a>(PhantomData<&'a RootfsMounts>);
@@ -273,7 +277,16 @@ impl RootfsMounts {
     /// subsequent calls will re-attempt only the entries that remain mounted.
     /// Errors from individual unmounts are collected and reported together
     /// after all entries have been attempted.
-    pub fn unmount(&mut self) -> Result<()> {
+    ///
+    /// Not public. Releasing the mounts before the resolv.conf restore is a real error --
+    /// with a `prepare.mount` over `/etc`, setup replaced the entry on the mounted
+    /// filesystem and the restore would land on the directory underneath it -- and there is
+    /// no way to state "not yet" in a type here: evidence that borrows this guard cannot be
+    /// handed back to a method that takes `&mut self`. So the ordered release is the only
+    /// one callers outside the crate have, and it is
+    /// [`unmount_before_assembly`](Self::unmount_before_assembly), which demands the
+    /// restore's own token. Error paths inside the crate still need the unordered one.
+    pub(crate) fn unmount(&mut self) -> Result<()> {
         if self.torn_down {
             return Ok(());
         }
@@ -282,6 +295,28 @@ impl RootfsMounts {
             self.torn_down = true;
         }
         result
+    }
+
+    /// Re-presents [`Mounted`] for a guard whose mounts are still in place.
+    ///
+    /// [`RootfsResolvConf::restore`](crate::isolation::resolv_conf::RootfsResolvConf::restore)
+    /// asks for one, which is what keeps the mounts up across the restore. A borrow taken at
+    /// [`mount`](Self::mount) and carried through provisioning could not do that job: it
+    /// would still be alive at the unmount that has to follow, and `&mut self` cannot be
+    /// taken while it is. Asking again at the point it matters can, and it catches the case
+    /// a borrow never could -- a guard that was dropped has no `&self` left to ask.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this guard has already been unmounted.
+    pub fn still_mounted(&self) -> Result<Mounted<'_>> {
+        if self.torn_down {
+            return Err(RsdebstrapError::Isolation(
+                "the rootfs mounts have already been released".to_string(),
+            )
+            .into());
+        }
+        Ok(Mounted(PhantomData))
     }
 
     /// Unmounts everything in exchange for the token the assemble phase requires.
@@ -858,6 +893,29 @@ mod tests {
             .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("symlink detected"), "should detect rootfs symlink: {}", msg);
+    }
+
+    // The restore asks for this token, and the point of asking again rather than carrying
+    // one is that a guard whose mounts are gone cannot produce it. A `prepare.mount` over
+    // the directory the restore writes into is the case that makes the ordering matter.
+    #[test]
+    fn still_mounted_refuses_once_the_mounts_are_released() {
+        let executor = Arc::new(MockMountExecutor::new());
+        let temp_dir = tempfile::tempdir().unwrap();
+        let rootfs = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+
+        let mut mounts = RootfsMounts::new(&rootfs, test_entries(), executor.clone(), None);
+        let _ = mounts.mount().unwrap();
+        let _ = mounts
+            .still_mounted()
+            .expect("a mounted guard still has its mounts");
+
+        mounts.unmount().unwrap();
+
+        let err = mounts
+            .still_mounted()
+            .expect_err("an unmounted guard cannot claim its mounts are in place");
+        assert!(err.to_string().contains("already been released"), "unexpected error: {err:#}");
     }
 
     #[test]

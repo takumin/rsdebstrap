@@ -151,9 +151,13 @@ fn run_pipeline_phase_with(
     // takes a token only the previous one can produce. Why restore and unmount both have to
     // land before assembly is in `docs/ARCHITECTURE.md` (Phases & the pipeline).
     let restored = match pipeline.run_prepare_and_provision(prepared, &rootfs, &executor, &ops) {
-        Ok(provisioned) => resolv_conf.restore(provisioned).context(
-            "failed to restore resolv.conf after provisioning; any assemble tasks were skipped",
-        ),
+        Ok(provisioned) => mounts
+            .still_mounted()
+            .and_then(|mounted| resolv_conf.restore(provisioned, mounted))
+            .context(
+                "failed to restore resolv.conf after provisioning; \
+                any assemble tasks were skipped",
+            ),
         Err(run_err) => {
             // `Drop` would restore too, but only after the unmount below; the
             // restore belongs inside the mounted window.
