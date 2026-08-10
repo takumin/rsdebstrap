@@ -60,7 +60,9 @@ a pipeline. The semantic checks — a mount target that must be a reachable dire
 declared script that must be a regular file, a backend output that must be a directory when
 there are pipeline tasks — cannot be stated in the config types, so "this profile was
 validated" is carried as a value rather than as a convention `run_apply` happens to follow.
-(`Pipeline::new` remains public as the unvalidated low-level constructor, and says so.)
+(`Pipeline::new` is still the unvalidated constructor, but it is `pub(crate)`: the tests
+that need to drive an unvalidated pipeline sit next to it, and nothing outside the crate can
+reach it.)
 
 It borrows the profile it was produced from rather than standing for it. A bare token says
 only that *some* profile passed, and can be presented for a second one whose mount targets,
