@@ -99,6 +99,13 @@ fn open_dir_nofollow(dirfd: &OwnedFd, path: &str) -> rustix::io::Result<OwnedFd>
     )
 }
 
+/// The mode a mount point this code creates is left with, since it outlives the mount.
+const MOUNT_POINT_MODE: Mode = Mode::RWXU
+    .union(Mode::RGRP)
+    .union(Mode::XGRP)
+    .union(Mode::ROTH)
+    .union(Mode::XOTH);
+
 /// Maps an `openat`/`mkdirat` error to a typed `RsdebstrapError`.
 fn map_openat_error(err: rustix::io::Errno, path: &Utf8Path, label: &str) -> anyhow::Error {
     match err {
@@ -140,20 +147,27 @@ pub(crate) fn safe_create_mount_point(rootfs: &Utf8Path, target: &RelPath) -> Re
                 current_fd = fd;
             }
             Err(rustix::io::Errno::NOENT) => {
-                match rfs::mkdirat(
-                    &current_fd,
-                    name,
-                    Mode::RWXU | Mode::RGRP | Mode::XGRP | Mode::ROTH | Mode::XOTH,
-                ) {
-                    Ok(()) => {}
+                let created = match rfs::mkdirat(&current_fd, name, MOUNT_POINT_MODE) {
+                    Ok(()) => true,
                     Err(rustix::io::Errno::EXIST) => {
                         // Race: another process created it between our check and create.
                         // Re-open it (still with O_NOFOLLOW for safety).
+                        false
                     }
                     Err(e) => return Err(map_openat_error(e, &current_path, "mount point")),
-                }
-                current_fd = open_dir_nofollow(&current_fd, name)
+                };
+                let fd = open_dir_nofollow(&current_fd, name)
                     .map_err(|e| map_openat_error(e, &current_path, "mount point"))?;
+                // `mkdirat`'s mode argument is masked by the process umask, so the mode has
+                // to be set on the descriptor to land exactly. A mount point survives the
+                // `umount` and ships in the image, so a directory the build's umask made
+                // 0700 is one the built system's users cannot traverse. Only for the one
+                // this call created: an existing directory's mode is the rootfs's business.
+                if created {
+                    rfs::fchmod(&fd, MOUNT_POINT_MODE)
+                        .map_err(|e| map_openat_error(e, &current_path, "mount point"))?;
+                }
+                current_fd = fd;
             }
             Err(e) => {
                 return Err(map_openat_error(e, &current_path, "mount point"));
