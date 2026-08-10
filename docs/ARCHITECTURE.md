@@ -290,6 +290,23 @@ patterns run throughout `src/isolation/`:
   where it stands. When one fails, nothing is published and nothing is removed: the name
   means someone else's entry at that point, and neither is ours to do.
 
+  Staging outside the rootfs is the recurring suggestion for removing the source side of
+  those windows — a directory a chrooted process cannot name is one it cannot plant an entry
+  in — and it is rejected. `renameat` does not cross filesystems, so such a directory would
+  have to sit on the same filesystem as every target directory in the rootfs, which one
+  submount breaks; and it would mean resolving against something other than the rootfs
+  descriptor, which is the one thing `RelPath` exists to make unrepresentable. The
+  destination side would still be a name regardless, so this buys the source side only.
+  It is also worth being clear about what the residual window costs, because the checks are
+  narrower than they look: winning one of these races means already being able to write the
+  directory, which mid-provision means being root inside the rootfs. What that buys is
+  publishing an inode of one's own under a name in a tree one can already write, or having
+  one's own planted entry unlinked from it — `take` still returns the content it read, off
+  the descriptor it held. These checks are for the silent form, where the caller is told one
+  inode was handled and a different one was; they are not a defence against an adversary who
+  is already inside, and containment — every resolution anchored to the rootfs descriptor —
+  is what bounds that one.
+
   What the value carries is what a faithful restore needs: content, mode and owner.
   `put_back` installs a *new* inode — that is what makes it atomic — so an owner it did not
   record would be replaced by the writer's, which is root for the whole of a privileged run.
