@@ -306,10 +306,18 @@ patterns run throughout `src/isolation/`:
   Staging a *symlink* cannot bind at all: no syscall creates one and hands back a descriptor,
   and the staging name is announced to anyone watching the directory. Checking is enough
   there for a reason that does not generalize — a symlink has nothing to it but its target,
-  which is fixed at creation, so a link that is a symlink, points where the call asked, and
-  carries the owner it restored is not merely *like* the staged one, it is indistinguishable
-  from it. All three come off one `O_PATH | O_NOFOLLOW` descriptor, and its identity is what
-  the promoting rename rechecks.
+  which is fixed at creation, so a link that is a symlink and points where the call asked is
+  not merely *like* the staged one, it is indistinguishable from it once the owner the call
+  restores is put on it. Both checks come off one `O_PATH | O_NOFOLLOW` descriptor, and its
+  identity is what the promoting rename rechecks.
+
+  The order of those two — check, then chown — is the point rather than a detail. The chown
+  is the one privileged *mutation* in the symlink path, and doing it by name first would put
+  it on whatever the staging name meant at that moment: a hard link planted there is an
+  ownership change on the linked inode, and the refusal for "no longer a symlink" would
+  arrive after it. It goes through the descriptor instead, `AT_EMPTY_PATH` against the
+  `O_PATH` one, which is the form that names an inode rather than a path. The owner is
+  therefore not among the things checked — it is not established until the chown lands.
 
   The steps that name an entry rather than holding one are where binding stops being
   achievable, and there are three: the `renameat` that detaches, the `unlinkat` that removes

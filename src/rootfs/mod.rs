@@ -747,22 +747,24 @@ impl LocalRootfsOps {
             )
         })?;
 
-        // By name because there is no syscall that creates a symlink and hands back a
-        // descriptor for it, and the staging name is not a secret -- a watcher on the
-        // directory is told about the creation. So this cannot bind the way `install_file`
-        // does, and it does not try to: `verify_staged_symlink` checks instead.
-        if let Some(owner) = owner {
-            let chowned = self.chown_if_different(dir, staging.as_str(), owner);
-            if let Err(e) = chowned {
-                let _ = rfs::unlinkat(dir, staging.as_str(), AtFlags::empty());
-                return Err(RsdebstrapError::io(
-                    format!("failed to restore ownership of {}{}", self.display_root, path),
-                    std::io::Error::from(e),
-                ));
-            }
+        // Checked before the chown, not after. There is no syscall that creates a symlink
+        // and hands back a descriptor, and the staging name is not a secret -- a watcher on
+        // the directory is told about the creation -- so what sits at that name is a
+        // question until this opens it. Chowning by name first would answer it with a
+        // privileged mutation: a hard link planted there would be the inode whose ownership
+        // changed, and the refusal would arrive after the damage.
+        let (staged, stat) = self.verify_staged_symlink(dir, &staging, path, target)?;
+
+        if let Some(owner) = owner
+            && let Err(e) = Self::chown_if_different(staged.as_fd(), &stat, owner)
+        {
+            let _ = rfs::unlinkat(dir, staging.as_str(), AtFlags::empty());
+            return Err(RsdebstrapError::io(
+                format!("failed to restore ownership of {}{}", self.display_root, path),
+                std::io::Error::from(e),
+            ));
         }
 
-        let staged = self.verify_staged_symlink(dir, &staging, path, target, owner)?;
         self.promote(dir, &staging, path, staged.as_fd())
     }
 
@@ -777,12 +779,16 @@ impl LocalRootfsOps {
     ///
     /// What makes checking sufficient here rather than merely narrowing is that a symlink
     /// has nothing else to it. Its target is fixed at creation -- no syscall edits one in
-    /// place -- so a link that is a symlink, points where this call asked, and carries the
-    /// owner this call restored is not *like* the one that was staged, it is
-    /// indistinguishable from it. All three come off one `O_PATH | O_NOFOLLOW` descriptor,
-    /// which is handed to [`Self::promote`] to recheck before publishing -- the descriptor
+    /// place -- so a link that is a symlink and points where this call asked is not *like*
+    /// the one that was staged, it is indistinguishable from it once the owner this call
+    /// restores is put on it. Both checks come off one `O_PATH | O_NOFOLLOW` descriptor,
+    /// which is what the chown and then [`Self::promote`] operate through -- the descriptor
     /// rather than the identity read off it, so that the inode it names cannot be freed and
     /// its number reused between here and there.
+    ///
+    /// The owner is not among the checks because it is not yet established: the caller
+    /// chowns *through* the descriptor this returns, and doing that first would mean a
+    /// privileged mutation landing on whatever the staging name happened to mean.
     ///
     /// A mismatch leaves the entry alone: the name means someone else's link at that point,
     /// and removing it is no more this call's business than publishing it was.
@@ -792,8 +798,7 @@ impl LocalRootfsOps {
         staging: &str,
         path: &RelPath,
         target: &[u8],
-        owner: Option<Owner>,
-    ) -> Result<OwnedFd> {
+    ) -> Result<(OwnedFd, rfs::Stat)> {
         let mismatch = |what: &str| {
             Err(RsdebstrapError::Isolation(format!(
                 "{}/{} is not the symlink staged for {}{} ({}), refusing to install it",
@@ -818,12 +823,6 @@ impl LocalRootfsOps {
         if FileType::from_raw_mode(stat.st_mode as rfs::RawMode) != FileType::Symlink {
             return mismatch("no longer a symlink");
         }
-        if let Some(owner) = owner
-            && Owner::of(&stat) != owner
-        {
-            return mismatch("wrong owner");
-        }
-
         let staged_target = rfs::readlinkat(&fd, "", Vec::new()).map_err(|e| {
             RsdebstrapError::io(
                 format!("failed to read symlink {}/{}", self.display_root, staging),
@@ -834,10 +833,15 @@ impl LocalRootfsOps {
             return mismatch("wrong target");
         }
 
-        Ok(fd)
+        Ok((fd, stat))
     }
 
-    /// Chowns the staged entry `name` in `dir` to `owner`, if it is not already there.
+    /// Chowns the entry `staged` refers to, if `stat` does not already show it there.
+    ///
+    /// Takes the descriptor and the `fstat` already read off it rather than a name in a
+    /// directory: this is a privileged mutation, and a name would let it land on an entry
+    /// substituted since the checks ran. `AT_EMPTY_PATH` against an `O_PATH` descriptor is
+    /// the form that operates on an inode rather than on a path.
     ///
     /// The comparison is not an optimization. A setgid directory hands a staged entry the
     /// directory's group, which the caller need not be a member of, and `chown` refuses a
@@ -846,21 +850,19 @@ impl LocalRootfsOps {
     /// leaves every `EPERM` that does reach it meaning what it says: the recorded owner
     /// was not restored, which `put_back` must not report as success.
     fn chown_if_different(
-        &self,
-        dir: BorrowedFd<'_>,
-        name: &str,
+        staged: BorrowedFd<'_>,
+        stat: &rfs::Stat,
         owner: Owner,
     ) -> rustix::io::Result<()> {
-        let stat = rfs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)?;
-        if Owner::of(&stat) == owner {
+        if Owner::of(stat) == owner {
             return Ok(());
         }
         rfs::chownat(
-            dir,
-            name,
+            staged,
+            "",
             Some(Uid::from_raw(owner.uid)),
             Some(Gid::from_raw(owner.gid)),
-            AtFlags::SYMLINK_NOFOLLOW,
+            AtFlags::EMPTY_PATH,
         )
     }
 }
