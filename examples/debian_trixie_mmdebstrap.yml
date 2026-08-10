@@ -89,8 +89,13 @@ provision:
   # Per-task overrides (optional):
   #   privilege: false        # Disable privilege for this task
   #   privilege: { method: doas }  # Use a different method
-  #   isolation: false        # Run directly on host (no chroot)
   #   shell: /bin/bash        # Use a different shell
+  # `isolation: false` runs the task directly on the host instead of in a chroot.
+  # It is refused together with any resolved privilege — running a program from
+  # inside the half-built rootfs as root hands it the host — so with the
+  # `defaults.privilege` above it takes both lines:
+  #   privilege: false
+  #   isolation: false
   # External script alternative:
   #   script: ./scripts/setup.sh
 

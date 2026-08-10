@@ -67,6 +67,11 @@ and this project adheres to
   would have had its provision tasks run without it and still be reported as
   successful. Callers with a prepare phase use `run_prepare_and_provision` and
   `run_assemble` and hold the guards across the two.
+- A profile that declares `isolation: false` on a provision task while that task
+  resolves to a privilege is refused when it is loaded, rather than run. Direct
+  execution runs a program from *inside* the rootfs on the host, so escalating it
+  hands root to whatever the half-built rootfs contains. A task that wants direct
+  execution under `defaults.privilege` writes `privilege: false` on the same task.
 - A profile whose `bootstrap` escalates while `defaults.privilege` is unset is
   refused when it is loaded. The two answer different questions — who builds the
   rootfs, and who modifies it afterwards — and nothing made them agree: the
