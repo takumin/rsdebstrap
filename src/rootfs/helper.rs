@@ -243,7 +243,13 @@ impl Drop for Channel {
         // Closing stdin ends the helper's read loop, so it exits on its own and
         // `wait` reaps it. Without this the child would outlive us as a zombie
         // holding a root-owned descriptor into the rootfs.
-        drop(self.stdin.take());
+        //
+        // stdout closes too, and before the `wait`. A helper part-way through a reply larger
+        // than the pipe buffer is blocked in `write`, not in the read loop, and closing only
+        // stdin would leave it there with nothing draining it -- `wait` would never return.
+        // Closed, its write fails with `EPIPE` and it exits. Fields drop after this body, so
+        // it has to be taken here rather than left to that.
+        self.close();
         match self.child.wait() {
             Ok(status) if status.success() => tracing::debug!("privileged helper exited"),
             Ok(status) => tracing::warn!("privileged helper exited with {status}"),
