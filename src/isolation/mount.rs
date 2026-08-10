@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use rustix::fs::{self as rfs, CWD, Mode, OFlags};
+use rustix::fs::{self as rfs, Mode, OFlags};
 use tracing::info;
 
 use crate::config::MountEntry;
@@ -121,20 +121,14 @@ fn map_openat_error(err: rustix::io::Errno, path: &Utf8Path, label: &str) -> any
 /// This function atomically validates that no path component is a symlink and creates
 /// directories as needed, preventing TOCTOU races between symlink checks and `create_dir_all`.
 ///
-/// The rootfs directory itself is also verified (opened with `O_NOFOLLOW`) to ensure it
-/// is not a symlink.
+/// The rootfs itself is walked a component at a time by [`crate::rootfs::open_anchor`]: a
+/// single `openat` of the whole path applies `O_NOFOLLOW` to the final component only, so an
+/// intermediate directory swapped for a symlink would be followed and every `mkdirat` below
+/// would be anchored wherever it points.
 ///
 /// Returns the verified absolute path for use in mount/umount commands.
 pub(crate) fn safe_create_mount_point(rootfs: &Utf8Path, target: &RelPath) -> Result<Utf8PathBuf> {
-    let rootfs_fd = rfs::openat(
-        CWD,
-        rootfs.as_str(),
-        OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|e| map_openat_error(e, rootfs, "rootfs directory"))?;
-
-    let mut current_fd = rootfs_fd;
+    let mut current_fd = crate::rootfs::open_anchor(rootfs)?;
     let mut current_path = rootfs.to_path_buf();
 
     for name in target.components() {
@@ -933,8 +927,32 @@ mod tests {
 
         let err = safe_create_mount_point(&rootfs_link, &crate::config::rootfs_path("/proc"))
             .unwrap_err();
+        // The refusal comes from `open_anchor`, which walks the rootfs a component at a
+        // time; a single `openat` of the whole path would have caught this final component
+        // but not a symlink at any of the ones before it.
         let msg = err.to_string();
-        assert!(msg.contains("symlink detected"), "should detect rootfs symlink: {}", msg);
+        assert!(msg.contains("symlink"), "should detect rootfs symlink: {}", msg);
+    }
+
+    // The component `O_NOFOLLOW` on a whole-path `openat` would have missed: it applies to
+    // the last one only, so an intermediate directory swapped for a symlink is followed and
+    // every mount point below it is created somewhere else entirely.
+    #[test]
+    fn safe_create_mount_point_rejects_a_symlink_above_the_rootfs() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let base = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("rootfs")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+
+        let err = safe_create_mount_point(
+            &base.join("link/rootfs"),
+            &crate::config::rootfs_path("/proc"),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("symlink"), "should detect the intermediate symlink: {}", msg);
+        assert!(!real.join("rootfs/proc").exists(), "created a mount point through the symlink");
     }
 
     // The restore asks for this token, and the point of asking again rather than carrying
