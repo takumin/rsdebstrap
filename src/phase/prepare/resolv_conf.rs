@@ -9,13 +9,11 @@
 use std::borrow::Cow;
 use std::net::IpAddr;
 
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{IsolationConfig, ResolvConfConfig};
+use crate::config::ResolvConfConfig;
 use crate::error::RsdebstrapError;
-use crate::isolation::IsolationContext;
 use crate::phase::PhaseItem;
 
 /// resolv_conf task for declaring DNS configuration in the prepare phase.
@@ -25,8 +23,7 @@ use crate::phase::PhaseItem;
 /// managed at the pipeline level, not by the task's `execute()` method.
 ///
 /// At most one `ResolvConfTask` may appear in the prepare phase.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvConfTask {
     /// Copy host's /etc/resolv.conf into the chroot (following symlinks).
@@ -38,10 +35,7 @@ pub struct ResolvConfTask {
         deserialize_with = "crate::de::null_to_default",
         skip_serializing_if = "Vec::is_empty"
     )]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(with = "Option<Vec<crate::schema::IpAddrSchema>>")
-    )]
+    #[schemars(with = "Option<Vec<crate::schema::IpAddrSchema>>")]
     pub name_servers: Vec<IpAddr>,
     /// Search domains to write to resolv.conf.
     #[serde(
@@ -49,7 +43,7 @@ pub struct ResolvConfTask {
         deserialize_with = "crate::de::string_list",
         skip_serializing_if = "Vec::is_empty"
     )]
-    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<String>>"))]
+    #[schemars(with = "Option<Vec<String>>")]
     pub search: Vec<String>,
 }
 
@@ -86,15 +80,6 @@ impl PhaseItem for ResolvConfTask {
     fn validate(&self) -> Result<(), RsdebstrapError> {
         ResolvConfTask::validate(self)
     }
-
-    fn execute(&self, _ctx: &dyn IsolationContext) -> anyhow::Result<()> {
-        // resolv_conf lifecycle is managed at the pipeline level, not per-task.
-        Ok(())
-    }
-
-    fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        None
-    }
 }
 
 #[cfg(test)]
@@ -123,7 +108,7 @@ mod tests {
 
     // `config()` is what the isolation layer consumes, so pin the mapping
     // once on the field-carrying case; the copy case is covered end to end
-    // by `setup_copy_mode_issues_correct_commands` in
+    // by `setup_copies_the_host_file_in_copy_mode` in
     // `src/isolation/resolv_conf.rs`.
     #[test]
     fn config_generate() {

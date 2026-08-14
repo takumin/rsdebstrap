@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b7cf931b1dd7f6dc6521a899afe11cbb8bb13c1877d7c4477ce5907d0040ac5e # shrinks to preset = None, entries = [Object {"options": Array [], "source": String(""), "target": String("")}], mount_unknown = false, prepare_resolv = None, assemble_resolv = None

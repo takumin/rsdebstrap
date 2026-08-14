@@ -58,7 +58,6 @@ assemble:                   # Optional finalization steps (named-field struct)
   resolv_conf:              # Permanent /etc/resolv.conf in final rootfs (at most one)
     name_servers: [8.8.8.8, 8.8.4.4]  # Generate resolv.conf with nameservers
     search: [example.com]   # Optional search domains
-    privilege: true          # Optional: use default privilege method
     # OR
     # link: ../run/systemd/resolve/stub-resolv.conf  # Create symlink instead
 ```
@@ -79,10 +78,18 @@ assemble:                   # Optional finalization steps (named-field struct)
 
 ## Privilege field values
 
+`privilege` appears on provision tasks and on the `bootstrap:` backend. It does *not* appear on
+`assemble.resolv_conf`: that task modifies the rootfs through the privileged helper described
+below, which is opened once per run from `defaults.privilege`, so a per-task override could not
+be honored. Setting it is a parse error rather than a silent no-op.
+
 - Absent (field not specified) → `Inherit`: use defaults if available, no escalation otherwise
 - `privilege: true` → `UseDefault`: require `defaults.privilege.method` (error if not configured)
 - `privilege: false` → `Disabled`: no privilege escalation
 - `privilege: { method: sudo }` → `Method`: use the specified method explicitly
+
+A task that resolves to some method *and* `isolation: false` is rejected when the profile is
+loaded — see the note under [Isolation field values](#isolation-field-values).
 
 ## Isolation field values
 
@@ -90,6 +97,22 @@ assemble:                   # Optional finalization steps (named-field struct)
 - `isolation: true` → `UseDefault`: use `defaults.isolation` explicitly (same behavior as `Inherit`)
 - `isolation: false` → `Disabled`: no isolation (direct execution on host via `DirectProvider`)
 - `isolation: { type: chroot }` → `Config`: use the specified isolation backend explicitly
+
+`isolation: false` runs the program the task names — a path *inside* the rootfs — directly
+on the host. Two consequences follow, and both are enforced rather than documented:
+
+- It cannot be combined with a resolved privilege. A task that inherits
+  `defaults.privilege` and sets `isolation: false` is rejected at load time, because
+  escalating it would run rootfs-supplied code as root on the host. Say `privilege: false`
+  on the task if that is what you mean.
+- The program's path is resolved inside the rootfs, not by the host. Symlinks are followed
+  — `/bin/sh` is one on any merged-`/usr` Debian rootfs — but they are resolved as if the
+  rootfs were `/`, so a link whose target is absolute or climbs above the rootfs lands
+  inside it rather than on the host. A path that ends up naming nothing, or naming
+  something that is not a regular file, fails instead of running. Resolution ends on a
+  descriptor and the task runs *that*, so the name cannot be repointed between the check
+  and the exec. It needs Linux 5.6 or newer; on an older kernel the task is refused rather
+  than run with a path the host would resolve.
 
 ## `resolv_conf` task fields (prepare phase)
 
@@ -107,11 +130,16 @@ assemble:                   # Optional finalization steps (named-field struct)
   at most one mount task is structural — a duplicate `mount` key is a parse error)
 - When mounts are specified, `defaults.privilege` must be configured (`mount`/`umount` require
   privilege escalation), and both commands must be on `PATH`
-- Mount targets must be absolute paths without `..` components
+- Mount targets must be absolute paths without `.` or `..` components, and may not be `/`.
+  These are rejected while the profile is read, not by a later validation pass: the field is a
+  `RelPath`, which cannot express any of them
 - Bind mount sources must exist on the host
 - Mount order must satisfy parent-before-child ordering
 - Custom mounts override preset entries with the same target at their original position (preserving mount order)
 - Two custom `mounts` entries may not share a target (duplicates are a validation error)
+- Mounts cover `prepare` and `provision` only: they are released after `provision` and before
+  `assemble`, so assemble tasks see the rootfs as the image will have it. A failed unmount
+  skips `assemble` for that reason
 
 ## resolv.conf task rules
 
@@ -125,9 +153,28 @@ assemble:                   # Optional finalization steps (named-field struct)
 - Prepare and assemble can both have `resolv_conf` tasks — different roles: temporary DNS vs permanent config
 - The temporary prepare `resolv_conf` is removed (and the original restored) after `provision`
   and before `assemble`, so assemble `resolv_conf` output persists in the final rootfs; the
-  assemble phase only runs if that restore succeeds
-- Assemble `resolv_conf` replaces `/etc/resolv.conf` atomically: the new file/symlink is
-  staged at `/etc/resolv.conf.rsdebstrap-tmp` and renamed over the final path with a plain
-  same-directory `mv` (busybox/musl-safe; no GNU-only `-T`), so a failed assemble leaves the
-  previous resolv.conf intact. A stale staging entry may remain after a failed build; the next
-  run clears it first (both modes) before staging, so it is always overwritten
+  assemble phase only runs if that restore succeeds. The original is held in memory for the
+  duration, not copied to a backup path, so an interrupted build leaves nothing behind to clean
+  up by hand — but it also means the original is only recoverable while the process lives
+- Assemble `resolv_conf` replaces `/etc/resolv.conf` atomically, so a failed assemble leaves the
+  previous entry intact and stages nothing a later run has to clear. A pre-existing
+  `/etc/resolv.conf` is replaced whether it is a regular file or a symlink; a symlink is never
+  followed, so the entry it pointed at is left untouched
+
+## How rootfs modifications are performed
+
+Both `resolv_conf` tasks change files inside the rootfs, which normally needs root. Rather than
+running `sudo cp` / `sudo mv` per operation, rsdebstrap escalates **once** per run: it spawns a
+helper process under `defaults.privilege.method` that holds a descriptor to the rootfs and
+performs the changes as syscalls anchored to it.
+
+Two consequences are visible from a profile:
+
+- `defaults.privilege` decides whether rootfs modifications are privileged. There is no per-task
+  override for them (see *Privilege field values*).
+- Every path component is resolved with `O_NOFOLLOW`. A symlink anywhere on the way to
+  `/etc/resolv.conf` — including `/etc` itself — is an error, not something to follow. Only the
+  final component may be a symlink, and it is replaced rather than written through.
+
+Process execution (`mount`, `umount`, `chroot`, the bootstrap backend, provision tasks) still
+escalates per command, so those keep their own `privilege` settings.

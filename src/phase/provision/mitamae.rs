@@ -9,19 +9,15 @@
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
-#[cfg(feature = "schema")]
 use std::borrow::Cow;
-use std::fs;
 use tracing::{debug, info};
 
-use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
-use crate::phase::{ScriptSource, TempFileGuard};
-use crate::privilege::{Privilege, PrivilegeDefaults};
+use crate::phase::{ScriptSource, StagedFileGuard};
+use crate::privilege::{Privilege, PrivilegeMethod};
 
 /// Mitamae task data and execution logic.
 ///
@@ -43,41 +39,24 @@ pub struct MitamaeTask {
     source: ScriptSource,
     /// Host-side mitamae binary path (None when relying on defaults)
     binary: Option<Utf8PathBuf>,
-    /// Privilege escalation setting (resolved during defaults application)
+    /// Privilege escalation setting as declared in the profile
     privilege: Privilege,
-    /// Isolation setting (resolved during defaults application)
+    /// Isolation setting as declared in the profile
     isolation: TaskIsolation,
 }
 
-// Wire shape of a mitamae task.
+// Wire shape of a mitamae task: one type drives both deserialization and schema
+// generation, so the two cannot describe different shapes.
 //
-// Single source of truth for the YAML shape, shared by both deserialization (via
-// `MitamaeTask`'s `Deserialize`) and schema generation (via `MitamaeTask`'s `JsonSchema`).
-// `deny_unknown_fields` keeps typo'd keys rejected. The `script`/`content` mutual-exclusion is
-// enforced at runtime by `resolve_script_source`, and mirrored in the schema by the `oneOf`
-// below (exactly one of `script`/`content` must be set). Each branch also constrains the field
-// to a string, not just presence: serde treats an explicit `null` on an `Option` field as
-// absent (`None`), so a bare `required` would diverge from deserialization for e.g.
-// `{ script: null, content: hi }`. Plain `//` (not `///`) so the note does not leak into the
-// schema's `description`.
-#[derive(Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+// Plain `//` (not `///`) so this note does not leak into the schema's `description`.
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[cfg_attr(feature = "schema", schemars(extend("oneOf" = serde_json::json!([
-    { "required": ["script"], "properties": { "script": { "type": "string" } } },
-    { "required": ["content"], "properties": { "content": { "type": "string" } } },
-]))))]
+#[schemars(extend("oneOf" = crate::schema::script_or_content()))]
 struct RawMitamaeTask {
-    #[cfg_attr(
-        feature = "schema",
-        schemars(with = "Option<crate::schema::Utf8PathSchema>")
-    )]
+    #[schemars(with = "Option<crate::schema::Utf8PathSchema>")]
     script: Option<Utf8PathBuf>,
     content: Option<String>,
-    #[cfg_attr(
-        feature = "schema",
-        schemars(with = "Option<crate::schema::Utf8PathSchema>")
-    )]
+    #[schemars(with = "Option<crate::schema::Utf8PathSchema>")]
     binary: Option<Utf8PathBuf>,
     #[serde(default)]
     privilege: Privilege,
@@ -101,7 +80,6 @@ impl<'de> Deserialize<'de> for MitamaeTask {
     }
 }
 
-#[cfg(feature = "schema")]
 impl JsonSchema for MitamaeTask {
     fn schema_name() -> Cow<'static, str> {
         "MitamaeTask".into()
@@ -171,34 +149,14 @@ impl MitamaeTask {
         self.source.resolve_paths(base_dir);
     }
 
-    /// Resolves the privilege setting against profile defaults.
-    ///
-    /// # Errors
-    ///
-    /// Returns `RsdebstrapError::Validation` if `privilege: true` is specified
-    /// but no `defaults.privilege.method` is configured in the profile.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        self.privilege.resolve_in_place(defaults)
+    /// Returns the privilege setting as written in the profile.
+    pub fn privilege(&self) -> &Privilege {
+        &self.privilege
     }
 
-    /// Returns a reference to the task's isolation setting.
+    /// Returns the isolation setting as written in the profile.
     pub fn task_isolation(&self) -> &TaskIsolation {
         &self.isolation
-    }
-
-    /// Resolves the isolation setting against profile defaults.
-    pub fn resolve_isolation(&mut self, defaults: &IsolationConfig) {
-        self.isolation.resolve_in_place(defaults);
-    }
-
-    /// Returns the resolved isolation config.
-    ///
-    /// Should only be called after [`resolve_isolation()`](Self::resolve_isolation).
-    pub fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        self.isolation.resolved_config()
     }
 
     /// Validates the task configuration.
@@ -238,16 +196,25 @@ impl MitamaeTask {
     /// This method:
     /// 1. Validates /tmp in rootfs (unless dry_run)
     /// 2. Sets up RAII guards for cleanup of temp files
-    /// 3. Re-validates /tmp to mitigate TOCTOU race conditions (unless dry_run)
-    /// 4. Copies mitamae binary to rootfs /tmp with 0o700 permissions
-    /// 5. Copies or writes the recipe to rootfs /tmp with 0o600 permissions
-    /// 6. Executes `mitamae local <recipe>` via the isolation context
-    /// 7. Returns an error if the process fails or exits without status
-    pub fn execute(&self, context: &dyn IsolationContext) -> Result<()> {
+    /// 3. Stages the mitamae binary (0o700) and recipe (0o600) through `RootfsOps`
+    /// 4. Executes `mitamae local <recipe>` via the isolation context
+    /// 5. Returns an error if the process fails or exits without status
+    pub fn execute(
+        &self,
+        context: &dyn IsolationContext,
+        privilege: Option<PrivilegeMethod>,
+    ) -> Result<()> {
         let rootfs = context.rootfs();
         let dry_run = context.dry_run();
 
-        let binary = self.binary.as_ref().unwrap();
+        // `validate` has a written-out error for this and is the only thing that fills the
+        // field in from `defaults.mitamae.binary`. Reached without it -- `execute` is `pub`
+        // -- an unwrap would abort the process over a value that is `Option` precisely
+        // because a profile may not have named one.
+        let binary = self.binary.as_ref().ok_or_else(|| {
+            self.validate()
+                .expect_err("binary is None, which validate refuses")
+        })?;
 
         // Unlike ShellTask, no validate_rootfs() is needed here because the mitamae
         // binary is copied from the host side — there is no rootfs-resident binary
@@ -262,36 +229,38 @@ impl MitamaeTask {
         let uuid = uuid::Uuid::new_v4();
         let binary_name = format!("mitamae-{}", uuid);
         let recipe_name = format!("recipe-{}.rb", uuid);
-        let target_binary = rootfs.join("tmp").join(&binary_name);
-        let target_recipe = rootfs.join("tmp").join(&recipe_name);
-
-        let _binary_guard = TempFileGuard::new(target_binary.clone(), dry_run);
-        let _recipe_guard = TempFileGuard::new(target_recipe.clone(), dry_run);
-
-        crate::phase::prepare_files_with_toctou_check(rootfs, dry_run, || {
-            info!("copying mitamae binary from {} to rootfs", binary);
-            fs::copy(binary, &target_binary).with_context(|| {
-                format!("failed to copy mitamae binary {} to {}", binary, target_binary)
-            })?;
-            #[cfg(unix)]
-            crate::phase::set_file_mode(&target_binary, 0o700)?;
-            crate::phase::prepare_source_file(&self.source, &target_recipe, 0o600, "recipe")
-        })?;
-
         let binary_path_in_isolation = format!("/tmp/{}", binary_name);
         let recipe_path_in_isolation = format!("/tmp/{}", recipe_name);
+        let staged_binary = crate::rootfs::RelPath::parse(&binary_path_in_isolation)?;
+        let staged_recipe = crate::rootfs::RelPath::parse(&recipe_path_in_isolation)?;
+
+        let ops = context.rootfs_ops();
+        let _binary_guard = StagedFileGuard::new(ops, staged_binary.clone(), dry_run);
+        let _recipe_guard = StagedFileGuard::new(ops, staged_recipe.clone(), dry_run);
+
+        if !dry_run {
+            crate::phase::stage_host_file(
+                ops,
+                binary,
+                &staged_binary,
+                crate::rootfs::FileMode::new(0o700),
+                "mitamae binary",
+            )?;
+            crate::phase::stage_source_file(
+                ops,
+                &self.source,
+                &staged_recipe,
+                crate::rootfs::FileMode::new(0o600),
+                "recipe",
+            )?;
+        }
         let command: Vec<String> = vec![
             binary_path_in_isolation,
             "local".to_string(),
             recipe_path_in_isolation,
         ];
 
-        let result = crate::phase::execute_in_context(
-            context,
-            &command,
-            "mitamae",
-            self.privilege.resolved_method(),
-        )?;
+        let result = crate::phase::execute_in_context(context, &command, "mitamae", privilege)?;
         crate::phase::check_execution_result(&result, &command, context.name(), dry_run)?;
 
         info!("mitamae recipe completed successfully");

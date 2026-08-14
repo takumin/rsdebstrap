@@ -14,11 +14,11 @@ cargo install cargo-llvm-cov --version 0.8.7 --locked  # once; matches the aqua 
 cargo llvm-cov --workspace
 
 # Check for errors without building
-cargo check --all-targets --all-features --quiet
+cargo check --all-targets --quiet
 
-# Also check the schema-less build: schema generation lives behind the default-on
-# `schema` cargo feature, and a missed `cfg_attr` gate only surfaces here.
-cargo check --all-targets --no-default-features --quiet
+# Tests requiring passwordless sudo are #[ignore]d and skip themselves without it.
+# They cover real privilege escalation (see Privilege boundary below).
+cargo test --workspace -- --ignored
 
 # Generate the profile JSON Schema (derived from the Rust config types).
 # Regenerate the committed copy after any config-type change, or `cargo test` fails.
@@ -32,6 +32,73 @@ task schema  # equivalent to: cargo run -- schema > schema/rsdebstrap.schema.jso
 see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).** Read it before changing the
 resolution model, the phase pipeline, isolation/privilege plumbing, or the
 filesystem-safety code — it captures decisions that are not obvious from the source.
+
+## Privilege boundary
+
+**Never mutate the rootfs by running a command, and never by a host path string.**
+`cp`/`mv`/`rm`/`ln`/`chmod` under `sudo` take path *strings*, and so does `std::fs`: a name
+checked once and resolved again can name two different inodes, and a symlink planted in
+between redirects the write. Use [`RootfsOps`](src/rootfs/) instead — it resolves each path
+component with `O_NOFOLLOW` against a directory descriptor, and its `RelPath` cannot express
+a path outside the rootfs. That includes staging a provision task's script or the mitamae
+binary: `write_file` lands its `FileMode` exactly and `StagedFileGuard` removes through the
+same descriptor. Escalation happens once per run, in the helper process `rootfs::open()`
+spawns.
+
+Reading a *host* file has the same shape from the other side. `read_host_file` opens with
+`O_NOFOLLOW` and checks the opened descriptor, so validation and use land on one inode;
+`validate_host_file_exists` is a pre-flight check for a readable error, not the control.
+
+This is mostly enforced by types rather than by review. `CommandSpec`'s fields are
+private and privilege is only reachable through `CommandSpec::privileged`, which takes
+the closed `PrivilegedProgram` enum — `mount`, `umount`, `chroot`, and the bootstrap
+backends, all programs with no syscall equivalent here. There is no `cp` variant and no
+way to set the field directly, so the old shape does not compile.
+
+A phase task cannot run a spec either: `IsolationContext` does not hand out a
+`CommandExecutor`, so a `CommandSpec` built inside a phase is inert. What a task can do
+is bounded by the context trait it is handed, and that differs per phase:
+
+- `PrepareItem` has no `execute` — mounts and the temporary resolv.conf are driven by the
+  pipeline's RAII guards, not by the task.
+- `AssembleItem::execute` takes a `RootfsContext` (`rootfs`/`dry_run`/`rootfs_ops`), which
+  has no `execute` method. Assemble writes the rootfs's final state and **cannot run a
+  program at all**; that is permanent by design, not an oversight to fix.
+- `ProvisionItem::execute` takes the full `IsolationContext`. Running a program a profile
+  declared is what provision is for.
+
+`CommandSpec::for_task_command` takes a program name from the profile and so cannot be an
+enum. It is restricted instead by a capability token — `TaskCommandToken`, whose field is
+private to `isolation` — so only the layer that runs a task's command can call it. What the
+token cannot bound is *which argv* is passed; `tests/privilege_boundary_test.rs` guards that.
+
+Corollary: privilege for rootfs mutation is a property of the *run*, not of a task, so
+resist adding a per-task `privilege` key to anything that only writes files — it cannot
+be honored. See the Privilege boundary section of
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+Two settings that are individually fine are refused in combination: `isolation: false` with
+any resolved privilege. Direct execution runs a program from *inside* the rootfs on the host,
+so escalating it hands root to whatever the half-built rootfs contains. `ProvisionTask::resolve`
+rejects it at load time.
+
+## Evidence types
+
+Several invariants are carried as values rather than as an order to remember.
+`ValidatedProfile` (from `Profile::validate`, the only route to a `Pipeline`);
+`Provisioned` → `Restored` → `Unmounted` (the phase-ordering chain); `TaskCommandToken`
+(only `isolation` can build one). When you find yourself writing "callers must call X
+first", check whether X can return something instead — and have it return evidence about
+the *value*, not a bare token: `ValidatedProfile` borrows the profile it validated, so
+evidence for one profile cannot be presented for another, and the profile cannot be edited
+while the evidence is alive.
+
+Settings follow the same rule from the other direction: `Privilege` and `TaskIsolation`
+describe only what the profile declared, and resolution produces a separate value
+(`ResolvedProvisionTask`). Do not reintroduce a "resolved" variant on a wire enum — the
+readers then have to defend against the unresolved ones, and the safe fallback differs per
+setting. `CommandExecutor::dry_run()` is likewise the single answer for a run; derive from it
+rather than threading another `bool`.
 
 ## Code Comments
 
@@ -50,6 +117,9 @@ filesystem-safety code — it captures decisions that are not obvious from the s
 - Test code uses `//` only — never `///` or `//!`, and no exception for test modules
   being invisible to schema and `--help`. Enforced by `tests/comment_style_test.rs`,
   which explains the reasoning when it fires.
+- Prefer moving a claim into a test over arguing it in a comment. Several long notes here
+  were replaced that way: the serde `deny_unknown_fields` behaviour, the phase ordering
+  (now carried by the `Provisioned`/`Restored` tokens), and the rule above.
 
 ## Profile Structure (YAML)
 

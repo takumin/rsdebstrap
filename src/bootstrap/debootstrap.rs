@@ -4,19 +4,17 @@ use super::{BootstrapBackend, CommandArgsBuilder, FlagValueStyle, RootfsOutput};
 use crate::privilege::Privilege;
 use anyhow::Result;
 use camino::Utf8Path;
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::Display;
 
 /// Variant defines the package selection strategy for debootstrap
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 // Distinct schema name so it does not collide with mmdebstrap's `Variant` (which would make
 // schemars auto-suffix one to the non-descriptive `Variant2`).
-#[cfg_attr(feature = "schema", schemars(rename = "DebootstrapVariant"))]
+#[schemars(rename = "DebootstrapVariant")]
 pub enum Variant {
     /// Minimal base system (default)
     #[default]
@@ -33,17 +31,7 @@ pub enum Variant {
 ///
 /// This structure contains all settings needed to customize the Debian
 /// bootstrapping process using debootstrap.
-// `deny_unknown_fields` rejects typo'd keys at parse time and is mirrored as
-// `additionalProperties: false` in the generated schema. It is honored even though
-// `Bootstrap` is internally tagged: serde's internally-tagged newtype-variant deserialization
-// consumes the `type` tag when selecting the variant and hands the *remaining* fields to this
-// struct, so the tag is not seen as an unknown field. This is serde-core behavior, not
-// parser-specific — it holds identically under `serde_json` (which the schema property test
-// relies on) and `yaml_serde`. (The well-known serde limitation is that `deny_unknown_fields`
-// is a no-op when placed on the internally-tagged *enum* itself, not — as here — on a
-// variant's struct.)
-#[derive(Debug, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DebootstrapConfig {
     /// Debian suite name (e.g., "bookworm", "trixie")
@@ -89,8 +77,8 @@ pub struct DebootstrapConfig {
 }
 
 impl BootstrapBackend for DebootstrapConfig {
-    fn command_name(&self) -> &str {
-        "debootstrap"
+    fn program(&self) -> crate::executor::BootstrapProgram {
+        crate::executor::BootstrapProgram::Debootstrap
     }
 
     #[tracing::instrument(skip(self, output_dir))]

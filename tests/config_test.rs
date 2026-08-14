@@ -253,7 +253,9 @@ bootstrap:
 #[test]
 fn test_profile_parsing_rejects_incomplete_shell_task() -> Result<()> {
     // editorconfig-checker-disable
-    // With ScriptSource enum, missing script/content is now a parse error, not validation error
+    // `ShellTask`'s `Deserialize` resolves the script source through
+    // `resolve_script_source`, so a task carrying neither key fails at parse time and never
+    // reaches `validate()`.
     let result = helpers::load_profile_from_yaml(crate::yaml!(
         r#"---
 dir: /tmp/test
@@ -1269,8 +1271,8 @@ provision:
     match &profile.provision[0] {
         ProvisionTask::Shell(task) => {
             assert_eq!(
-                task.resolved_isolation_config(),
-                Some(&IsolationConfig::chroot()),
+                task.task_isolation().resolve(&IsolationConfig::chroot()),
+                Some(IsolationConfig::chroot()),
                 "isolation: {{type: chroot}} should resolve to Chroot"
             );
         }
@@ -1313,10 +1315,11 @@ provision:
     let path = Utf8Path::from_path(&profile_path).unwrap();
     let profile = load_profile(path)?;
 
+    use rsdebstrap::config::IsolationConfig;
     match profile.provision.as_slice() {
         [ProvisionTask::Mitamae(mitamae)] => {
             assert_eq!(
-                mitamae.resolved_isolation_config(),
+                mitamae.task_isolation().resolve(&IsolationConfig::chroot()),
                 None,
                 "isolation: false on mitamae task should resolve to None"
             );
@@ -1360,19 +1363,25 @@ provision:
 
     match &profile.provision[0] {
         ProvisionTask::Shell(task) => {
-            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
+            assert_eq!(
+                task.task_isolation().resolve(&IsolationConfig::chroot()),
+                Some(IsolationConfig::chroot())
+            );
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
     match &profile.provision[1] {
         ProvisionTask::Shell(task) => {
-            assert_eq!(task.resolved_isolation_config(), None);
+            assert_eq!(task.task_isolation().resolve(&IsolationConfig::chroot()), None);
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
     match &profile.provision[2] {
         ProvisionTask::Shell(task) => {
-            assert_eq!(task.resolved_isolation_config(), Some(&IsolationConfig::chroot()));
+            assert_eq!(
+                task.task_isolation().resolve(&IsolationConfig::chroot()),
+                Some(IsolationConfig::chroot())
+            );
         }
         other => panic!("Expected Shell task, got: {:?}", other),
     }
@@ -1475,7 +1484,10 @@ prepare:
     // Recommends has 6, custom replaces /dev entry => 6
     assert_eq!(mounts.len(), 6);
 
-    let dev_entry = mounts.iter().find(|m| m.target.as_str() == "/dev").unwrap();
+    let dev_entry = mounts
+        .iter()
+        .find(|m| m.target.to_string() == "/dev")
+        .unwrap();
     assert_eq!(dev_entry.source, "/dev");
     assert!(dev_entry.options.contains(&"bind".to_string()), "Expected bind option");
 
@@ -2035,13 +2047,9 @@ prepare:
 // =========================================================================
 // YAML strictness / leniency
 //
-// These cases overlap `tests/schema_test.rs`, whose differential table also
-// asserts the deserializer's verdict for most of the same documents. They are
-// deliberately kept rather than folded into it: that file is gated behind
-// `#![cfg(feature = "schema")]` and exists to pin schema/deserializer
-// *agreement*, so with the feature off there is nothing left asserting the
-// parser's own strict-scalar and null-leniency contract. Do not delete these
-// as duplicates.
+// The parser's own contract. `tests/schema_test.rs` asserts the same
+// documents, but only to compare the two verdicts against each other — it
+// would still pass if both sides drifted together.
 // =========================================================================
 
 // =========================================================================
@@ -2057,9 +2065,10 @@ const MINIMAL_BOOTSTRAP: &str = "bootstrap: {type: mmdebstrap, suite: trixie, ta
 
 #[test]
 fn test_dir_rejects_non_string_scalars() {
-    // yaml_serde's text deserializer used to hand the raw scalar text to string fields,
-    // so `dir: null` parsed as the literal path "null" and `dir:` as "". These must all
-    // be parse errors now, matching the generated schema (which types `dir` as string).
+    // yaml_serde's text deserializer hands the raw scalar text to string fields, so
+    // without the `de` helpers `dir: null` parses as the literal path "null" and `dir:`
+    // as "". These must all be parse errors, matching the generated schema (which types
+    // `dir` as string).
     for bad in [
         "dir: null\n",
         "dir: ~\n",
@@ -2074,7 +2083,6 @@ fn test_dir_rejects_non_string_scalars() {
 
 #[test]
 fn test_dir_accepts_quoted_scalar_lookalikes() {
-    // Quoting makes them genuine strings; those stay accepted.
     for good in ["dir: \"42\"\n", "dir: \"null\"\n", "dir: \"~\"\n"] {
         let yaml = format!("{MINIMAL_BOOTSTRAP}{good}");
         assert!(deserializes(&yaml), "expected acceptance of {good:?}");
@@ -2234,4 +2242,92 @@ bootstrap:
         "Expected error message to contain 'dir must not be empty', got: {}",
         err_msg
     );
+}
+
+// =========================================================================
+// deny_unknown_fields on internally tagged variants
+//
+// The claim this pins is documented in docs/ARCHITECTURE.md (JSON Schema
+// generation); asserting it here means the docs do not have to be believed
+// on their own.
+// =========================================================================
+
+#[test]
+fn internally_tagged_variants_reject_typos_but_accept_the_tag() {
+    let cases = [
+        (
+            "  type: mmdebstrap\n  suite: trixie\n  target: /tmp/rootfs\n",
+            "  suit: trixie\n",
+        ),
+        (
+            "  type: debootstrap\n  suite: trixie\n  target: /tmp/rootfs\n",
+            "  suit: trixie\n",
+        ),
+    ];
+
+    for (good, typo) in cases {
+        let accepted = format!("dir: /tmp/rootfs\nbootstrap:\n{good}");
+        let rejected = format!("dir: /tmp/rootfs\nbootstrap:\n{good}{typo}");
+
+        assert!(
+            yaml_serde::from_str::<rsdebstrap::config::Profile>(&accepted).is_ok(),
+            "the tag itself was treated as an unknown field:\n{accepted}"
+        );
+        assert!(
+            yaml_serde::from_str::<rsdebstrap::config::Profile>(&rejected).is_err(),
+            "a typo'd key was accepted:\n{rejected}"
+        );
+    }
+}
+
+#[test]
+fn internally_tagged_isolation_variants_reject_typos_but_accept_the_tag() {
+    let base = concat!(
+        "dir: /tmp/rootfs\n",
+        "bootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: /tmp/rootfs\n",
+    );
+
+    let accepted = format!("{base}defaults:\n  isolation:\n    type: chroot\n");
+    let rejected = format!("{base}defaults:\n  isolation:\n    type: chroot\n    bogus: 1\n");
+
+    assert!(
+        yaml_serde::from_str::<rsdebstrap::config::Profile>(&accepted).is_ok(),
+        "the tag itself was treated as an unknown field:\n{accepted}"
+    );
+    assert!(
+        yaml_serde::from_str::<rsdebstrap::config::Profile>(&rejected).is_err(),
+        "a typo'd key was accepted:\n{rejected}"
+    );
+}
+
+// `Profile::pipeline` takes the evidence `validate` produces, so validate-then-build is the
+// only sequence that compiles. This pins the half of it a test can express: a profile that
+// fails validation yields no token, and the failure is the semantic one rather than a
+// resolution error.
+#[test]
+fn test_pipeline_requires_the_validation_token() -> Result<()> {
+    // Indented in fours, and the sequence entry written in flow style, so every line
+    // clears `.editorconfig`'s `indent_size = 4` for `*.rs` without the checker being
+    // switched off over the block.
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/rsdebstrap-nonexistent
+defaults:
+    privilege:
+        method: sudo
+bootstrap:
+    type: mmdebstrap
+    suite: bookworm
+    target: rootfs
+    format: directory
+provision:
+    - {type: shell, script: /nonexistent/script.sh}
+"#
+    ))?;
+
+    let err = profile
+        .validate()
+        .expect_err("a missing script must fail validation");
+    assert!(err.to_string().contains("script"), "unexpected error: {err}");
+    Ok(())
 }

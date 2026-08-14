@@ -1,19 +1,15 @@
 //! Strict deserialization helpers for the YAML profile surface.
 //!
-//! `yaml_serde`'s text deserializer coerces *any* plain scalar into its raw text when a
-//! field asks for a string: `dir: null` used to parse as the literal path `"null"`,
-//! `source: 5` as `"5"`. The generated JSON Schema (and the JSON data model it
-//! validates) types these fields as strings, so the coercion made the deserializer
-//! accept documents the schema rejects — the false-reject class the schema tests
-//! forbid. Worse, the coercion only applied outside internally tagged enums (serde's
-//! tagged-content buffering resolves scalars first), so `target: 42` was accepted
-//! under `prepare:` but rejected under `bootstrap:`.
+//! `yaml_serde`'s text deserializer hands the raw scalar text to any field that asks for a
+//! string, so `dir: null` would parse as the literal path `"null"`; it also accepts an
+//! empty value as the default for container fields while rejecting an explicit `null`.
+//! Both make the deserializer accept or reject documents the generated schema does not.
 //!
-//! The helpers here route string-typed fields through `deserialize_any`, which surfaces
-//! the *resolved* scalar type (a number arrives as `visit_u64`, `null` as `visit_unit`,
-//! ...), so non-string scalars are rejected uniformly in every context — under both the
-//! `yaml_serde` text deserializer and `serde_json` values, which keeps the parser and
-//! the generated schema in agreement by construction.
+//! The helpers here route string-typed fields through `deserialize_any`, which surfaces the
+//! *resolved* scalar type (a number arrives as `visit_u64`, `null` as `visit_unit`, ...),
+//! and map an explicit `null` to the default on defaulted fields. Why that is the alignment
+//! the schema needs — including why the raw-text coercion is context-dependent inside
+//! internally tagged enums — is in `docs/ARCHITECTURE.md` (JSON Schema generation).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -60,6 +56,28 @@ pub(crate) fn path<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Utf8Pat
         .map(Utf8PathBuf::from)
 }
 
+/// Deserializes a [`RelPath`](crate::rootfs::RelPath) field spelled as an absolute path
+/// inside the rootfs, rejecting non-string scalars.
+///
+/// Two things this does not delegate. `RelPath`'s own `Deserialize` goes through
+/// `String::deserialize`, which under the `yaml_serde` text deserializer would coerce
+/// `target: 42` into the path `"42"` — the scalar-coercion class this module exists to
+/// close. And `RelPath::parse` accepts a missing leading `/` because it denotes the same
+/// location, whereas a profile field is required to spell it, so that a typo like
+/// `target: proc` is an error rather than a silent `/proc`.
+pub(crate) fn rootfs_abs_path<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<crate::rootfs::RelPath, D::Error> {
+    let raw = deserializer.deserialize_any(StrictStringVisitor)?;
+    if !raw.starts_with('/') {
+        return Err(Error::custom(format!(
+            "rootfs path {:?} must be absolute (start with '/')",
+            raw
+        )));
+    }
+    crate::rootfs::RelPath::parse(&raw).map_err(Error::custom)
+}
+
 /// Deserializes an `Option<String>` field, rejecting non-string scalars.
 ///
 /// `null` (and an empty value) still deserializes to `None`, matching plain
@@ -84,8 +102,8 @@ impl<'de> Deserialize<'de> for StrictPath {
 /// Deserializes a defaulted field, mapping an explicit `null` to `T::default()`.
 ///
 /// `yaml_serde` already deserializes an *empty* value into the default for container
-/// fields (a section whose entries are all commented out stays valid), but an explicit
-/// `null` used to be rejected. Mapping `null` to the default makes `null`, the empty
+/// fields (a section whose entries are all commented out stays valid), but it rejects an
+/// explicit `null`. Mapping `null` to the default makes `null`, the empty
 /// form, and an omitted key all mean the same thing — which is also how the generated
 /// schema models these fields (nullable), since an empty YAML value *is* `null` in the
 /// JSON data model.

@@ -9,20 +9,18 @@
 
 pub mod resolv_conf;
 
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub use resolv_conf::AssembleResolvConfTask;
 
-use crate::phase::PhaseItem;
+use crate::phase::AssembleItem;
 
 /// Assemble phase configuration (named-field, schema-first).
 ///
 /// The single field is an optional singleton; a duplicate YAML key is rejected
 /// by `yaml_serde` at parse time and an unknown key by `deny_unknown_fields`.
-#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssembleConfig {
     /// resolv_conf task writing a permanent `/etc/resolv.conf` into the final rootfs.
@@ -32,8 +30,8 @@ pub struct AssembleConfig {
 
 impl AssembleConfig {
     /// Returns the present phase items in execution order.
-    pub(crate) fn items(&self) -> Vec<&dyn PhaseItem> {
-        let mut items: Vec<&dyn PhaseItem> = Vec::new();
+    pub(crate) fn items(&self) -> Vec<&dyn AssembleItem> {
+        let mut items: Vec<&dyn AssembleItem> = Vec::new();
         if let Some(resolv_conf) = &self.resolv_conf {
             items.push(resolv_conf);
         }

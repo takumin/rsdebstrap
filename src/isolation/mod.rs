@@ -16,27 +16,35 @@
 
 use anyhow::Result;
 use camino::Utf8Path;
-#[cfg(feature = "schema")]
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "schema")]
 use std::borrow::Cow;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use crate::config::IsolationConfig;
 use crate::executor::{CommandExecutor, ExecutionResult};
 use crate::privilege::PrivilegeMethod;
+use crate::rootfs::RootfsOps;
 
-/// Fallback isolation config for unresolved states.
-/// Used by `resolved_config()` to fail-closed (use isolation) rather than
-/// fail-open (bypass isolation) when called before resolution.
-static DEFAULT_ISOLATION_CONFIG: LazyLock<IsolationConfig> =
-    LazyLock::new(IsolationConfig::default);
+/// Evidence that a command is a provision task's own declared program.
+///
+/// [`CommandSpec::for_task_command`](crate::executor::CommandSpec::for_task_command) is the
+/// one privileged constructor whose program name comes from the profile rather than the
+/// closed [`PrivilegedProgram`](crate::executor::PrivilegedProgram) enum. Requiring this
+/// token restricts it to the layer that runs a task's command: the field is private to
+/// `isolation`, so `executor` can name the type but cannot build one.
+pub(crate) struct TaskCommandToken(());
+
+impl TaskCommandToken {
+    fn new() -> Self {
+        Self(())
+    }
+}
 
 pub mod chroot;
 pub mod direct;
-pub mod mount;
-pub mod resolv_conf;
+pub(crate) mod mount;
+pub(crate) mod resolv_conf;
 
 pub use chroot::{ChrootContext, ChrootProvider};
 pub use direct::{DirectContext, DirectProvider};
@@ -53,10 +61,8 @@ pub trait IsolationProvider: Send + Sync {
 
     /// Sets up the isolation environment and returns an active context.
     ///
-    /// # Arguments
-    /// * `rootfs` - The path to the rootfs directory
-    /// * `executor` - The command executor for running commands
-    /// * `dry_run` - If true, skip actual setup operations
+    /// Whether the run is a dry run comes from `executor`, so the context cannot disagree
+    /// with the layer that would actually run the commands.
     ///
     /// # Returns
     /// Result containing the active isolation context or an error.
@@ -64,22 +70,18 @@ pub trait IsolationProvider: Send + Sync {
         &self,
         rootfs: &Utf8Path,
         executor: Arc<dyn CommandExecutor>,
-        dry_run: bool,
+        ops: Arc<dyn RootfsOps>,
     ) -> Result<Box<dyn IsolationContext>>;
 }
 
-/// Active isolation context with command execution capability.
+/// Read-only view of the rootfs plus the operations that may mutate it.
 ///
-/// Represents an active isolation session. Commands can be executed within
-/// this context, and resources are cleaned up when [`teardown`](Self::teardown)
-/// is called or the context is dropped.
-///
-/// Contexts are not thread-safe by design - they represent a single
-/// isolation session that should be used sequentially.
-pub trait IsolationContext: Send {
-    /// Returns the name of this isolation backend.
-    fn name(&self) -> &'static str;
-
+/// This is the whole capability an assemble task gets. It deliberately has no
+/// way to run a program: assemble writes the final state of the rootfs, and
+/// every such write goes through [`rootfs_ops`](Self::rootfs_ops), which cannot
+/// be redirected by a planted symlink. Anything that needs to run a program is
+/// a provision task and gets an [`IsolationContext`] instead.
+pub trait RootfsContext {
     /// Returns the path to the rootfs directory.
     fn rootfs(&self) -> &Utf8Path;
 
@@ -90,6 +92,25 @@ pub trait IsolationContext: Send {
     /// and passing commands to the executor, which handles dry-run
     /// semantics at its own level.
     fn dry_run(&self) -> bool;
+
+    /// Returns the descriptor-anchored filesystem operations for this rootfs.
+    ///
+    /// Every rootfs mutation goes through these rather than through the executor; see
+    /// [`RootfsOps`] for why.
+    fn rootfs_ops(&self) -> &dyn RootfsOps;
+}
+
+/// Active isolation context with command execution capability.
+///
+/// Represents an active isolation session. Commands can be executed within
+/// this context, and resources are cleaned up when [`teardown`](Self::teardown)
+/// is called or the context is dropped.
+///
+/// Contexts are not thread-safe by design - they represent a single
+/// isolation session that should be used sequentially.
+pub trait IsolationContext: RootfsContext + Send {
+    /// Returns the name of this isolation backend.
+    fn name(&self) -> &'static str;
 
     /// Executes a command within the isolated environment.
     ///
@@ -105,13 +126,6 @@ pub trait IsolationContext: Send {
         privilege: Option<PrivilegeMethod>,
     ) -> Result<ExecutionResult>;
 
-    /// Returns a reference to the underlying command executor.
-    ///
-    /// This allows tasks to execute commands directly via the executor
-    /// (e.g., `cp`, `chmod`, `ln`) with privilege escalation support,
-    /// without going through the isolation context's `execute()` method.
-    fn executor(&self) -> &dyn CommandExecutor;
-
     /// Tears down the isolation environment and releases resources.
     ///
     /// This method is idempotent - calling it multiple times has no effect
@@ -122,6 +136,48 @@ pub trait IsolationContext: Send {
     /// cannot propagate errors, so implementations should log failures as
     /// warnings in their `Drop` impl.
     fn teardown(&mut self) -> Result<()>;
+}
+
+/// A [`RootfsContext`] built from the values the pipeline already holds, with no
+/// [`IsolationProvider`] setup/teardown round trip: the assemble phase needs `rootfs_ops`
+/// and nothing else.
+pub struct PlainRootfsContext {
+    rootfs: camino::Utf8PathBuf,
+    ops: Arc<dyn RootfsOps>,
+    dry_run: bool,
+}
+
+impl PlainRootfsContext {
+    pub fn new(rootfs: &Utf8Path, ops: Arc<dyn RootfsOps>, dry_run: bool) -> Self {
+        Self {
+            rootfs: rootfs.to_owned(),
+            ops,
+            dry_run,
+        }
+    }
+}
+
+impl std::fmt::Debug for PlainRootfsContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlainRootfsContext")
+            .field("rootfs", &self.rootfs)
+            .field("dry_run", &self.dry_run)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RootfsContext for PlainRootfsContext {
+    fn rootfs(&self) -> &Utf8Path {
+        &self.rootfs
+    }
+
+    fn dry_run(&self) -> bool {
+        self.dry_run
+    }
+
+    fn rootfs_ops(&self) -> &dyn RootfsOps {
+        &*self.ops
+    }
 }
 
 /// Task-level isolation setting.
@@ -145,43 +201,6 @@ pub enum TaskIsolation {
 }
 
 impl TaskIsolation {
-    /// Returns the resolved isolation config.
-    ///
-    /// Should only be called after [`resolve_in_place()`](Self::resolve_in_place).
-    ///
-    /// Returns `Some(&config)` for `Config`, `None` for `Disabled`.
-    /// If called on `Inherit` or `UseDefault`, logs a warning and returns
-    /// the default isolation config as a safe fallback (fail-closed).
-    pub fn resolved_config(&self) -> Option<&IsolationConfig> {
-        debug_assert!(
-            !matches!(self, Self::Inherit | Self::UseDefault),
-            "resolved_config() called on an unresolved TaskIsolation state. This is a logic error."
-        );
-        match self {
-            Self::Config(c) => Some(c),
-            Self::Disabled => None,
-            unresolved @ (Self::Inherit | Self::UseDefault) => {
-                tracing::warn!(
-                    "resolved_config() called on unresolved state ({:?}); this likely indicates \
-                    a logic error where resolve was not called. \
-                    Falling back to default isolation config (fail-closed).",
-                    unresolved
-                );
-                Some(&*DEFAULT_ISOLATION_CONFIG)
-            }
-        }
-    }
-
-    /// Resolves the isolation setting in place, replacing `self` with the
-    /// resolved variant (`Config` or `Disabled`).
-    pub fn resolve_in_place(&mut self, defaults: &IsolationConfig) {
-        let resolved = self.resolve(defaults);
-        *self = match resolved {
-            Some(config) => Self::Config(config),
-            None => Self::Disabled,
-        };
-    }
-
     /// Resolves the isolation setting against the profile defaults.
     ///
     /// Returns `Some(config)` if isolation should be applied,
@@ -199,29 +218,31 @@ impl TaskIsolation {
     }
 }
 
-// Schema-only mirror of the accepted YAML shapes: `true`/`false`, `{ type: ... }`, or an
-// explicit null (which — like field absence — resolves to `Inherit`).
-// Not on the production parse path — `TaskIsolation`'s `Deserialize` performs the strict
-// dispatch. The map form reuses `IsolationConfig`, whose per-variant payload structs are
-// `deny_unknown_fields` (the `type` tag is consumed before the payload sees the map).
-// `Deserialize` is derived here solely so the `wire_parity` tests can prove this enum
-// accepts exactly what `TaskIsolationVisitor` accepts: the variants below and the
-// visitor's `visit_*` methods must change in lockstep, and those tests fail on any drift.
-// Exists so `#[derive(JsonSchema)]` produces the `anyOf` without hand-written JSON.
+// The accepted YAML shapes: `true`/`false`, `{ type: ... }`, or an explicit null (which —
+// like field absence — resolves to `Inherit`). This one type drives both deserialization
+// and schema generation, so the two cannot describe different acceptance sets. The map form
+// reuses `IsolationConfig`; see `docs/ARCHITECTURE.md` (JSON Schema generation) for why the
+// wire enum is untagged and where `deny_unknown_fields` has to sit.
+//
 // Plain `//` (not `///`) so this note does not leak into the schema's `description`.
-#[cfg(feature = "schema")]
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum TaskIsolationWire {
-    // The payloads are written by the derived `Deserialize` and read only as *types* by
-    // schema generation, never as values — hence the field-level allows. Unlike the
-    // previous enum-level allow, these keep "variant is never constructed" armed, so
-    // dropping the `Deserialize` derive that ties this enum to the tests is a warning.
-    Toggle(#[allow(dead_code)] bool),
-    Config(#[allow(dead_code)] IsolationConfig),
-    // Unit variant → `{ "type": "null" }` in the generated `anyOf`, mirroring that an
-    // explicit null deserializes to `Inherit` (see `visit_unit`).
+    Toggle(bool),
+    Config(IsolationConfig),
+    // Unit variant → `{ "type": "null" }` in the generated `anyOf`.
     Inherit,
+}
+
+impl From<TaskIsolationWire> for TaskIsolation {
+    fn from(wire: TaskIsolationWire) -> Self {
+        match wire {
+            TaskIsolationWire::Toggle(true) => Self::UseDefault,
+            TaskIsolationWire::Toggle(false) => Self::Disabled,
+            TaskIsolationWire::Config(c) => Self::Config(c),
+            TaskIsolationWire::Inherit => Self::Inherit,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for TaskIsolation {
@@ -229,58 +250,10 @@ impl<'de> Deserialize<'de> for TaskIsolation {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de;
-
-        // The set of `visit_*` methods below must stay in lockstep with
-        // `TaskIsolationWire`'s variants (the schema mirror); the `wire_parity` tests
-        // enforce the equivalence.
-        struct TaskIsolationVisitor;
-
-        impl<'de> de::Visitor<'de> for TaskIsolationVisitor {
-            type Value = TaskIsolation;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a boolean or a map with a 'type' field")
-            }
-
-            fn visit_unit<E>(self) -> std::result::Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(TaskIsolation::Inherit)
-            }
-
-            fn visit_bool<E>(self, v: bool) -> std::result::Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if v {
-                    Ok(TaskIsolation::UseDefault)
-                } else {
-                    Ok(TaskIsolation::Disabled)
-                }
-            }
-
-            fn visit_map<A>(self, map: A) -> std::result::Result<Self::Value, A::Error>
-            where
-                A: de::MapAccess<'de>,
-            {
-                // IsolationConfig's per-variant payloads are `deny_unknown_fields`, so
-                // typo'd keys stay rejected after the `type` tag selects the variant.
-                let config =
-                    IsolationConfig::deserialize(de::value::MapAccessDeserializer::new(map))?;
-                Ok(TaskIsolation::Config(config))
-            }
-        }
-
-        // Field absence is handled by `#[serde(default)]` (→ Inherit); an explicit null
-        // also maps to Inherit (via `visit_unit`). Any other present value must be a boolean
-        // or a `{ type }` map — anything else is a parse error.
-        deserializer.deserialize_any(TaskIsolationVisitor)
+        TaskIsolationWire::deserialize(deserializer).map(Into::into)
     }
 }
 
-#[cfg(feature = "schema")]
 impl JsonSchema for TaskIsolation {
     fn schema_name() -> Cow<'static, str> {
         "TaskIsolation".into()
@@ -381,39 +354,6 @@ mod tests {
         assert_eq!(result, None);
     }
 
-    #[test]
-    fn resolve_in_place_inherit() {
-        let mut iso = TaskIsolation::Inherit;
-        iso.resolve_in_place(&IsolationConfig::chroot());
-        assert_eq!(iso, TaskIsolation::Config(IsolationConfig::chroot()));
-    }
-
-    #[test]
-    fn resolve_in_place_disabled() {
-        let mut iso = TaskIsolation::Disabled;
-        iso.resolve_in_place(&IsolationConfig::chroot());
-        assert_eq!(iso, TaskIsolation::Disabled);
-    }
-
-    #[test]
-    fn resolve_in_place_use_default() {
-        let mut iso = TaskIsolation::UseDefault;
-        iso.resolve_in_place(&IsolationConfig::chroot());
-        assert_eq!(iso, TaskIsolation::Config(IsolationConfig::chroot()));
-    }
-
-    #[test]
-    fn resolved_config_returns_some_for_config() {
-        let iso = TaskIsolation::Config(IsolationConfig::chroot());
-        assert_eq!(iso.resolved_config(), Some(&IsolationConfig::chroot()));
-    }
-
-    #[test]
-    fn resolved_config_returns_none_for_disabled() {
-        let iso = TaskIsolation::Disabled;
-        assert_eq!(iso.resolved_config(), None);
-    }
-
     fn roundtrip(original: &TaskIsolation) -> TaskIsolation {
         let yaml = yaml_serde::to_string(original).unwrap();
         yaml_serde::from_str(&yaml).unwrap()
@@ -433,43 +373,26 @@ mod tests {
         }
     }
 
-    // `TaskIsolationWire` is the schema-side mirror of the hand-written visitor. These
-    // tests pin the two acceptance sets together: adding or removing a `visit_*`
-    // method without the matching wire-variant change (or vice versa) makes a
-    // battery value below diverge and fail.
-    #[cfg(feature = "schema")]
-    mod wire_parity {
-        use super::super::{TaskIsolation, TaskIsolationWire};
-        use serde_json::{Value, json};
-
-        fn battery() -> Vec<Value> {
-            vec![
-                json!(null),
-                json!(true),
-                json!(false),
-                json!({"type": "chroot"}),
-                json!({"type": "bogus"}),
-                json!({"typ": "chroot"}),
-                json!({"type": "chroot", "extra": 1}),
-                json!({}),
-                json!("chroot"),
-                json!([]),
-                json!(42),
-                json!(42.5),
-            ]
-        }
-
-        #[test]
-        fn wire_accepts_exactly_what_the_visitor_accepts() {
-            for value in battery() {
-                let wire = serde_json::from_value::<TaskIsolationWire>(value.clone()).is_ok();
-                let visitor = serde_json::from_value::<TaskIsolation>(value.clone()).is_ok();
-                assert_eq!(
-                    wire, visitor,
-                    "TaskIsolationWire and TaskIsolation's visitor disagree on {value}: \
-                    wire accepts = {wire}, visitor accepts = {visitor}"
-                );
-            }
+    // The acceptance set is now a property of one type, so this pins the boundary itself
+    // rather than the agreement between two definitions.
+    #[test]
+    fn task_isolation_acceptance_set() {
+        for (yaml, accepted) in [
+            ("~", true),
+            ("true", true),
+            ("false", true),
+            ("type: chroot", true),
+            ("type: bogus", false),
+            ("typ: chroot", false),
+            ("{type: chroot, extra: 1}", false),
+            ("{}", false),
+            ("chroot", false),
+            ("[]", false),
+            ("42", false),
+            ("42.5", false),
+        ] {
+            let got = yaml_serde::from_str::<TaskIsolation>(yaml).is_ok();
+            assert_eq!(got, accepted, "{yaml:?}: accepted = {got}, expected {accepted}");
         }
     }
 }

@@ -80,8 +80,26 @@ pub enum Commands {
     /// ```sh
     /// rsdebstrap schema > schema/rsdebstrap.schema.json
     /// ```
-    #[cfg(feature = "schema")]
     Schema,
+
+    // Serves privileged filesystem operations for a parent rsdebstrap process,
+    // which re-executes this binary under sudo/doas to cross the privilege
+    // boundary exactly once (see `src/rootfs/helper.rs`). Hidden and `//`-only:
+    // it is an internal protocol between two processes of the same version, not
+    // a command a user invokes or a surface we keep stable.
+    #[command(name = crate::rootfs::helper::HELPER_SUBCOMMAND, hide = true)]
+    RootfsHelper(RootfsHelperArgs),
+}
+
+// Arguments for the internal privileged helper. `//` rather than `///` for the same
+// reason as the variant above: clap lifts a doc comment into the subcommand's `--help`
+// text and into the generated shell completions, which `hide = true` does not cover.
+#[derive(Args, Debug)]
+pub struct RootfsHelperArgs {
+    // The only path the helper ever opens by name. Everything it does afterwards
+    // is anchored to the descriptor this yields.
+    #[arg(long)]
+    pub rootfs: Utf8PathBuf,
 }
 
 /// Common arguments shared across multiple commands.

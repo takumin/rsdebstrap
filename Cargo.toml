@@ -17,22 +17,19 @@ repository = "https://github.com/takumin/rsdebstrap"
 keywords = ["debian", "ubuntu", "debootstrap", "mmdebstrap", "rootfs"]
 categories = ["command-line-utilities"]
 
-[features]
-# JSON Schema generation: the `schema` subcommand, `profile_json_schema*()`, and every
-# `JsonSchema` derive. Default-on so `cargo run -- schema` and the schema drift tests
-# work out of the box; build with `--no-default-features` to compile it all out.
-default = ["schema"]
-schema = ["dep:schemars", "dep:serde_json"]
-
 [dependencies]
 anyhow = "1.0.98"
+# Carries the helper protocol's file payloads. JSON has no binary type, and serde_json
+# renders a `Vec<u8>` as a decimal array — 4.6 bytes of text per byte of file.
+base64 = "0.22.1"
 camino = { version = "1.1.9", features = ["serde1"] }
 clap = { version = "4.5.37", features = ["derive"] }
 clap_complete = "4.5.65"
 rustix = { version = "1.1.3", features = ["fs"] }
-schemars = { version = "1.2", optional = true }
+schemars = "1.2"
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = { version = "1.0.150", optional = true }
+serde_json = "1.0.150"
+serde_path_to_error = "0.1.20"
 strum = { version = "0.28.0", features = ["derive"] }
 tempfile = "3.25.0"
 thiserror = "2.0.18"
@@ -51,3 +48,7 @@ yaml_serde = "0.10.4"
 # Cargo.lock already pins exact versions, so test runs stay reproducible without them.
 jsonschema = "=0.49.9"
 proptest = "=1.11.0"
+# `process` (for `umask`) is a test-only need: tests/rootfs_mode_test.rs pins that
+# `RootfsOps::write_file` lands its mode exactly, which is only observable under a
+# umask that would otherwise mask bits off.
+rustix = { version = "1.1.3", features = ["process"] }

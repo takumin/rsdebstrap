@@ -7,17 +7,31 @@ use rsdebstrap::privilege::PrivilegeMethod;
 
 type CommandCalls = Arc<Mutex<Vec<(String, Vec<String>, Option<PrivilegeMethod>)>>>;
 
+// These tests assert the argv the isolation layer builds, not filesystem
+// effects, so the ops handed to the context are never exercised.
+fn mock_ops(rootfs: &camino::Utf8Path) -> Arc<dyn rsdebstrap::rootfs::RootfsOps> {
+    Arc::new(rsdebstrap::rootfs::DryRunRootfsOps::new(rootfs))
+}
+
 #[derive(Default)]
 struct RecordingExecutor {
     calls: CommandCalls,
 }
 
 impl CommandExecutor for RecordingExecutor {
+    // A live run: `DirectProvider` skips its program resolution in a dry run, and the
+    // `direct_context_*_the_rootfs` tests are here to exercise it. Nothing is executed for
+    // real because this executor only records.
+    fn dry_run(&self) -> bool {
+        false
+    }
+
     fn execute(&self, spec: &CommandSpec) -> anyhow::Result<ExecutionResult> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push((spec.command.clone(), spec.args.clone(), spec.privilege));
+        self.calls.lock().unwrap().push((
+            spec.command().to_string(),
+            spec.args().to_vec(),
+            spec.privilege(),
+        ));
         Ok(ExecutionResult { status: None })
     }
 }
@@ -28,7 +42,7 @@ fn test_chroot_provider_setup_creates_context() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let context = provider.setup(rootfs, executor, false);
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs));
     assert!(context.is_ok());
 
     let context = context.unwrap();
@@ -46,7 +60,7 @@ fn test_chroot_context_execute_builds_correct_args() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
-    let context = provider.setup(rootfs, executor, false).unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let result = context.execute(&command, None);
     assert!(result.is_ok());
 
@@ -71,7 +85,7 @@ fn test_chroot_context_execute_empty_command() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec![];
 
-    let context = provider.setup(rootfs, executor, false).unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let result = context.execute(&command, None);
     assert!(result.is_ok());
 
@@ -89,7 +103,7 @@ fn test_chroot_context_teardown_is_idempotent() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let mut context = provider.setup(rootfs, executor, false).unwrap();
+    let mut context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
 
     assert!(context.teardown().is_ok());
     assert!(context.teardown().is_ok());
@@ -104,7 +118,7 @@ fn test_chroot_context_multiple_executions() {
     });
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let context = provider.setup(rootfs, executor, false).unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
 
     let cmd1: Vec<String> = vec!["/bin/echo".to_string(), "hello".to_string()];
     let cmd2: Vec<String> = vec!["/bin/ls".to_string(), "-la".to_string()];
@@ -130,7 +144,7 @@ fn test_chroot_context_execute_after_teardown_returns_isolation_error() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let mut context = provider.setup(rootfs, executor, false).unwrap();
+    let mut context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     context.teardown().unwrap();
 
     let command: Vec<String> = vec!["/bin/sh".to_string()];
@@ -154,7 +168,7 @@ fn test_chroot_context_propagates_sudo_privilege() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
-    let context = provider.setup(rootfs, executor, false).unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let result = context.execute(&command, Some(PrivilegeMethod::Sudo));
     assert!(result.is_ok());
 
@@ -179,12 +193,25 @@ fn test_direct_provider_setup_creates_context() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let context = provider.setup(rootfs, executor, false);
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs));
     assert!(context.is_ok());
 
     let context = context.unwrap();
     assert_eq!(context.name(), "direct");
     assert_eq!(context.rootfs(), rootfs);
+}
+
+// A rootfs with the programs these tests name, so the `O_NOFOLLOW` walk
+// `DirectContext::execute` performs on the program has something to resolve.
+fn seeded_direct_rootfs(programs: &[&str]) -> (tempfile::TempDir, camino::Utf8PathBuf) {
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let root = camino::Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+    std::fs::create_dir_all(root.join("bin")).unwrap();
+    std::fs::create_dir_all(root.join("tmp")).unwrap();
+    for program in programs {
+        std::fs::write(root.join(program.trim_start_matches('/')), "#!/bin/sh\n").unwrap();
+    }
+    (tmp, root)
 }
 
 #[test]
@@ -194,19 +221,21 @@ fn test_direct_context_execute_translates_absolute_paths() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
         calls: Arc::clone(&calls),
     });
-    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
+    let (_tmp, rootfs) = seeded_direct_rootfs(&["/bin/sh"]);
     let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
-    let context = provider.setup(rootfs, executor, false).unwrap();
+    let context = provider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
     let result = context.execute(&command, None);
     assert!(result.is_ok());
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
     let (cmd, args, privilege) = &calls[0];
-    assert_eq!(cmd, "/tmp/rootfs/bin/sh");
+    assert_eq!(cmd, &rootfs.join("bin/sh").to_string());
     assert_eq!(args.len(), 1);
-    assert_eq!(args[0], "/tmp/rootfs/tmp/script.sh");
+    assert_eq!(args[0], rootfs.join("tmp/script.sh").to_string());
     assert_eq!(*privilege, None);
 }
 
@@ -220,7 +249,7 @@ fn test_direct_context_execute_preserves_relative_paths() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec!["relative/bin".to_string(), "relative/arg".to_string()];
 
-    let context = provider.setup(rootfs, executor, false).unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let result = context.execute(&command, None);
     assert!(result.is_ok());
 
@@ -238,7 +267,7 @@ fn test_direct_context_execute_empty_command_returns_error() {
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
     let command: Vec<String> = vec![];
 
-    let context = provider.setup(rootfs, executor, false).unwrap();
+    let context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     let err = context.execute(&command, None).unwrap_err();
     let downcast = err.downcast_ref::<RsdebstrapError>();
     assert!(downcast.is_some(), "Expected RsdebstrapError, got: {:#}", err);
@@ -258,7 +287,7 @@ fn test_direct_context_teardown_is_idempotent() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let mut context = provider.setup(rootfs, executor, false).unwrap();
+    let mut context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
 
     assert!(context.teardown().is_ok());
     assert!(context.teardown().is_ok());
@@ -271,9 +300,11 @@ fn test_direct_context_multiple_executions() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
         calls: Arc::clone(&calls),
     });
-    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
+    let (_tmp, rootfs) = seeded_direct_rootfs(&["/bin/echo", "/bin/ls"]);
 
-    let context = provider.setup(rootfs, executor, false).unwrap();
+    let context = provider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
 
     let cmd1: Vec<String> = vec!["/bin/echo".to_string(), "hello".to_string()];
     let cmd2: Vec<String> = vec!["/bin/ls".to_string(), "-la".to_string()];
@@ -284,9 +315,9 @@ fn test_direct_context_multiple_executions() {
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
 
-    assert_eq!(calls[0].0, "/tmp/rootfs/bin/echo");
+    assert_eq!(calls[0].0, rootfs.join("bin/echo").to_string());
 
-    assert_eq!(calls[1].0, "/tmp/rootfs/bin/ls");
+    assert_eq!(calls[1].0, rootfs.join("bin/ls").to_string());
     assert_eq!(calls[1].1[0], "-la"); // relative arg preserved
 }
 
@@ -296,7 +327,7 @@ fn test_direct_context_execute_after_teardown_returns_isolation_error() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
     let rootfs = camino::Utf8Path::new("/tmp/rootfs");
 
-    let mut context = provider.setup(rootfs, executor, false).unwrap();
+    let mut context = provider.setup(rootfs, executor, mock_ops(rootfs)).unwrap();
     context.teardown().unwrap();
 
     let command: Vec<String> = vec!["/bin/sh".to_string()];
@@ -317,18 +348,20 @@ fn test_direct_context_propagates_sudo_privilege() {
     let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
         calls: Arc::clone(&calls),
     });
-    let rootfs = camino::Utf8Path::new("/tmp/rootfs");
+    let (_tmp, rootfs) = seeded_direct_rootfs(&["/bin/sh"]);
     let command: Vec<String> = vec!["/bin/sh".to_string(), "/tmp/script.sh".to_string()];
 
-    let context = provider.setup(rootfs, executor, false).unwrap();
+    let context = provider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
     let result = context.execute(&command, Some(PrivilegeMethod::Sudo));
     assert!(result.is_ok());
 
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
     let (cmd, args, privilege) = &calls[0];
-    assert_eq!(cmd, "/tmp/rootfs/bin/sh");
-    assert_eq!(args[0], "/tmp/rootfs/tmp/script.sh");
+    assert_eq!(cmd, &rootfs.join("bin/sh").to_string());
+    assert_eq!(args[0], rootfs.join("tmp/script.sh").to_string());
     assert_eq!(*privilege, Some(PrivilegeMethod::Sudo));
 }
 
@@ -336,3 +369,304 @@ fn test_direct_context_propagates_sudo_privilege() {
 // The `None` case is covered by
 // `test_direct_context_execute_translates_absolute_paths`, which asserts the
 // same recorded privilege for the same call.
+
+// The shape every Debian rootfs has: merged-`/usr` makes `/bin` a link to `usr/bin`, and
+// `/bin/sh` is a link to the shell that provides it. Refusing symlinked programs made the
+// default shell unrunnable on any real rootfs, so following them is the whole point of
+// resolving with `RESOLVE_IN_ROOT` rather than walking with `O_NOFOLLOW`.
+#[test]
+fn direct_context_follows_a_program_symlinked_inside_the_rootfs() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    std::fs::remove_dir(rootfs.join("bin")).unwrap();
+    std::fs::create_dir_all(rootfs.join("usr/bin")).unwrap();
+    std::fs::write(rootfs.join("usr/bin/dash"), "#!/bin/sh\n").unwrap();
+    std::os::unix::fs::symlink("dash", rootfs.join("usr/bin/sh")).unwrap();
+    std::os::unix::fs::symlink("usr/bin", rootfs.join("bin")).unwrap();
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect("a program reached through symlinks that stay inside the rootfs must run");
+    assert_eq!(calls.lock().unwrap().len(), 1, "the resolved program should have been executed");
+}
+
+// Both escapes are checked against `/etc/passwd`, which exists on the host and not in the
+// fixture rootfs. That is what makes the clamping observable rather than merely asserted:
+// a resolution that left the rootfs would find a regular file and succeed, so the refusal
+// is evidence the link was reinterpreted against the anchor.
+#[test]
+fn direct_context_clamps_an_absolute_symlink_to_the_rootfs() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    std::os::unix::fs::symlink("/etc/passwd", rootfs.join("bin/sh")).unwrap();
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("an absolute link target must resolve against the rootfs, not the host");
+    assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
+#[test]
+fn direct_context_clamps_a_parent_escape_to_the_rootfs() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    std::os::unix::fs::symlink("../../../../../etc/passwd", rootfs.join("bin/sh")).unwrap();
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("`..` above the rootfs must stay at it");
+    assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
+// `ProvisionTask::resolve` refuses `isolation: false` together with any resolved privilege
+// because the rootfs's contents are not trusted with root -- mmdebstrap ran maintainer
+// scripts as root to install them. A setuid bit asks for the same thing by another route:
+// `execve` honours it, so an unprivileged direct task execs a rootfs binary and comes back
+// as its owner. A rootfs `mmdebstrap` built under `sudo` ships several such files already
+// (`sudo`, `newgrp`, `passwd`, `mount`), and a provision task can create more.
+#[test]
+fn direct_context_refuses_a_setuid_program_in_the_rootfs() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&["/bin/sh"]);
+    std::fs::set_permissions(
+        rootfs.join("bin/sh"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o4755),
+    )
+    .unwrap();
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let err = context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("a setuid program must not run without isolation");
+
+    assert!(format!("{err:#}").contains("setuid"), "unexpected error: {err:#}");
+    assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
+// The setgid half, which escalates to a group rather than to a user and is refused for the
+// same reason. Split out because the two bits are separate `stat` bits and a check that
+// tested only one would pass the test above.
+#[test]
+fn direct_context_refuses_a_setgid_program_in_the_rootfs() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&["/bin/sh"]);
+    std::fs::set_permissions(
+        rootfs.join("bin/sh"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o2755),
+    )
+    .unwrap();
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let err = context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("a setgid program must not run without isolation");
+
+    assert!(format!("{err:#}").contains("setgid"), "unexpected error: {err:#}");
+    assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
+// A sibling test forking while a just-written program's write descriptor is still open
+// inherits it, and the kernel refuses to exec a file anyone holds open for writing. Nothing
+// in either test can prevent that -- the descriptor belongs to the write and the fork is
+// another thread's -- so the exec waits the window out rather than failing the run. Shared,
+// because the hazard is symmetric between the two tests below: one guarding while the other
+// does not is a flake waiting for whichever interleaving comes first.
+fn exec_past_etxtbsy(
+    context: &dyn rsdebstrap::isolation::IsolationContext,
+    argv: &[String],
+) -> rsdebstrap::executor::ExecutionResult {
+    loop {
+        match context.execute(argv, None) {
+            Ok(result) => break result,
+            Err(e) if format!("{e:#}").contains("Text file busy") => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => panic!("{e:#}"),
+        }
+    }
+}
+
+// The two tests here that really exec. Handing the executor the descriptor the check
+// landed on means the program is named as `/proc/self/fd/N`, and a `#!` program is what
+// makes that name's lifetime observable: the kernel passes the same name to the
+// interpreter, which opens it *after* the exec that closes close-on-exec descriptors.
+//
+// It also shows the one thing a program can observe about how it was reached. For a `#!`
+// program the kernel builds the interpreter's argv itself -- the script's `$0` is the name
+// the kernel was given, not the one the caller asked for. Pinned here rather than left as
+// folklore: a task whose command is a script that reads `$0` sees the descriptor's name.
+#[test]
+fn direct_context_execs_a_shebang_program_through_the_checked_descriptor() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    let reported = rootfs.join("tmp/argv0");
+    let program = rootfs.join("bin/prog");
+    std::fs::write(&program, format!("#!/bin/sh\nprintf '%s' \"$0\" > {reported}\n")).unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let executor: Arc<dyn CommandExecutor> =
+        Arc::new(rsdebstrap::executor::RealCommandExecutor::new(false));
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let result = exec_past_etxtbsy(context.as_ref(), &["/bin/prog".to_string()]);
+
+    assert!(
+        result
+            .status
+            .expect("a live run reports a status")
+            .success(),
+        "the interpreter could not open the descriptor's name: {result:?}"
+    );
+    assert!(
+        std::fs::read_to_string(&reported)
+            .unwrap()
+            .starts_with("/proc/self/fd/"),
+        "a `#!` program's $0 is the name the kernel was handed"
+    );
+}
+
+// An ordinary program does keep the argv[0] the caller asked for: the spec carries the
+// path alongside the descriptor for exactly this, so how the program was opened stays an
+// implementation detail. `sh -c` with no command_name operand reports its own argv[0].
+#[test]
+fn direct_context_gives_an_executed_program_the_argv0_it_was_asked_for() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    let reported = rootfs.join("tmp/argv0");
+    let program = rootfs.join("bin/mysh");
+    std::fs::copy(std::fs::canonicalize("/bin/sh").unwrap(), &program).unwrap();
+
+    let executor: Arc<dyn CommandExecutor> =
+        Arc::new(rsdebstrap::executor::RealCommandExecutor::new(false));
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let argv = [
+        "/bin/mysh".to_string(),
+        "-c".to_string(),
+        format!("printf '%s' \"$0\" > {reported}"),
+    ];
+
+    let result = exec_past_etxtbsy(context.as_ref(), &argv);
+
+    assert!(
+        result
+            .status
+            .expect("a live run reports a status")
+            .success()
+    );
+    assert_eq!(std::fs::read_to_string(&reported).unwrap(), program.to_string());
+}
+
+// A context carrying its own flag could disagree with the executor and silently do real
+// work.
+#[test]
+fn context_dry_run_comes_from_the_executor() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    let ops = mock_ops(&rootfs);
+
+    let live: Arc<dyn CommandExecutor> =
+        Arc::new(rsdebstrap::executor::RealCommandExecutor::new(false));
+    let dry: Arc<dyn CommandExecutor> =
+        Arc::new(rsdebstrap::executor::RealCommandExecutor::new(true));
+
+    let live_ctx = DirectProvider.setup(&rootfs, live, ops.clone()).unwrap();
+    let dry_ctx = DirectProvider.setup(&rootfs, dry, ops).unwrap();
+
+    assert!(!live_ctx.dry_run());
+    assert!(dry_ctx.dry_run());
+}
+
+// The program walk starts at the rootfs, so the rootfs itself has to be reached without
+// following anything. A single `openat` of the whole path applies `O_NOFOLLOW` to the final
+// component only, which left the walk free to begin outside the rootfs and exec a host
+// program from there.
+#[test]
+fn direct_context_refuses_a_rootfs_reached_through_a_symlinked_component() {
+    let (_tmp, real) = seeded_direct_rootfs(&["/bin/sh"]);
+    let outer = tempfile::tempdir().unwrap();
+    let outer = camino::Utf8PathBuf::from_path_buf(outer.path().to_path_buf()).unwrap();
+    // `<outer>/link` -> the real rootfs's parent, so `<outer>/link/<name>` names the rootfs
+    // through a symlinked component without the last component being one.
+    let parent = real.parent().unwrap();
+    std::os::unix::fs::symlink(parent, outer.join("link")).unwrap();
+    let through_link = outer.join("link").join(real.file_name().unwrap());
+
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+    let context = DirectProvider
+        .setup(&through_link, executor, mock_ops(&through_link))
+        .unwrap();
+
+    let err = context
+        .execute(&["/bin/sh".to_string()], None)
+        .expect_err("a rootfs reached through a symlink must be refused");
+
+    assert!(format!("{err:#}").contains("symlink"), "unexpected error: {err:#}");
+    assert!(calls.lock().unwrap().is_empty(), "nothing should have been executed");
+}
+
+// An escape does not have to be the last component: `<rootfs>/usr/bin` linked out of the
+// rootfs is clamped the same way, and `/usr/bin/env` then names nothing. The refusal has to
+// say which path the caller asked for -- the whole of it, since a resolution that is
+// reinterpreted mid-path has no single component to blame.
+#[test]
+fn a_refused_intermediate_component_is_named_in_full() {
+    let (_tmp, rootfs) = seeded_direct_rootfs(&[]);
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(rootfs.join("usr")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), rootfs.join("usr/bin")).unwrap();
+
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor::default());
+    let context = DirectProvider
+        .setup(&rootfs, executor, mock_ops(&rootfs))
+        .unwrap();
+
+    let err = context
+        .execute(&["/usr/bin/env".to_string()], None)
+        .expect_err("a symlinked intermediate directory must be refused");
+    let rendered = format!("{err:#}");
+
+    assert!(
+        rendered.contains(&format!("{rootfs}/usr/bin")),
+        "the error should name the full path to the refused component: {rendered}"
+    );
+}

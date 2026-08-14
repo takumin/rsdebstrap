@@ -13,7 +13,6 @@ use std::io::BufReader;
 use std::net::IpAddr;
 
 use camino::{Utf8Path, Utf8PathBuf};
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -22,20 +21,25 @@ use crate::bootstrap::{
     BootstrapBackend, RootfsOutput, debootstrap::DebootstrapConfig, mmdebstrap::MmdebstrapConfig,
 };
 use crate::error::RsdebstrapError;
-use crate::executor::CommandSpec;
+use crate::executor::{CommandSpec, PrivilegedProgram};
 use crate::isolation::{ChrootProvider, IsolationProvider};
 use crate::phase::{AssembleConfig, PrepareConfig, ProvisionTask};
 use crate::pipeline::Pipeline;
 use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
+use crate::rootfs::RelPath;
 
 /// Known pseudo-filesystem source names.
 ///
 /// These are used to determine the correct `mount -t` type argument.
 const PSEUDO_FS_TYPES: &[&str] = &["proc", "sysfs", "devpts", "devtmpfs", "tmpfs"];
 
+/// Parses a rootfs path that is a literal in this crate rather than profile input.
+pub(crate) fn rootfs_path(path: &str) -> RelPath {
+    RelPath::parse(path).expect("built-in rootfs path is well-formed")
+}
+
 /// Mount preset defining a predefined set of mount entries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MountPreset {
     /// Recommended mount set for typical Debian rootfs operations.
@@ -49,32 +53,32 @@ impl MountPreset {
             Self::Recommends => vec![
                 MountEntry {
                     source: "proc".to_string(),
-                    target: "/proc".into(),
+                    target: rootfs_path("/proc"),
                     options: vec![],
                 },
                 MountEntry {
                     source: "sysfs".to_string(),
-                    target: "/sys".into(),
+                    target: rootfs_path("/sys"),
                     options: vec![],
                 },
                 MountEntry {
                     source: "devtmpfs".to_string(),
-                    target: "/dev".into(),
+                    target: rootfs_path("/dev"),
                     options: vec![],
                 },
                 MountEntry {
                     source: "devpts".to_string(),
-                    target: "/dev/pts".into(),
+                    target: rootfs_path("/dev/pts"),
                     options: vec!["gid=5".to_string(), "mode=620".to_string()],
                 },
                 MountEntry {
                     source: "tmpfs".to_string(),
-                    target: "/tmp".into(),
+                    target: rootfs_path("/tmp"),
                     options: vec![],
                 },
                 MountEntry {
                     source: "tmpfs".to_string(),
-                    target: "/run".into(),
+                    target: rootfs_path("/run"),
                     options: vec!["mode=755".to_string()],
                 },
             ],
@@ -175,20 +179,23 @@ impl ResolvConfConfig {
 }
 
 /// A single mount entry specifying what to mount into the rootfs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MountEntry {
     /// Device name or path (e.g., "proc", "sysfs", "/dev").
     #[serde(deserialize_with = "crate::de::string")]
     pub source: String,
     /// Mount point inside the rootfs (absolute path).
-    #[serde(deserialize_with = "crate::de::path")]
-    #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
-    pub target: Utf8PathBuf,
+    // A `RelPath`, not a `Utf8PathBuf`: `safe_create_mount_point` walks the target one
+    // component at a time with `openat`, so a `..` in it escapes the rootfs and the
+    // "verified" path it returns is then handed to a privileged `mount`. `RelPath` cannot
+    // express one, which makes that structural rather than a validation step to remember.
+    #[serde(deserialize_with = "crate::de::rootfs_abs_path")]
+    #[schemars(with = "crate::schema::Utf8PathSchema")]
+    pub target: RelPath,
     /// Mount options (e.g., "bind", "nosuid"). Joined with "," for `-o`.
     #[serde(default, deserialize_with = "crate::de::string_list")]
-    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<String>>"))]
+    #[schemars(with = "Option<Vec<String>>")]
     pub options: Vec<String>,
 }
 
@@ -206,7 +213,7 @@ impl MountEntry {
     /// Builds a `CommandSpec` for the `mount` command using a pre-validated absolute target path.
     ///
     /// Accepts an already-validated absolute path (e.g., from
-    /// [`safe_create_mount_point()`](crate::isolation::mount::safe_create_mount_point))
+    /// `safe_create_mount_point()`)
     /// instead of computing it from rootfs + target.
     ///
     /// For pseudo-filesystems, generates: `mount -t <source> [-o opts] <source> <abs_target>`
@@ -231,35 +238,28 @@ impl MountEntry {
         args.push(self.source.clone());
         args.push(abs_target.to_string());
 
-        CommandSpec::new("mount", args).with_privilege(privilege)
+        CommandSpec::privileged(PrivilegedProgram::Mount, args, privilege)
     }
 
     /// Builds a `CommandSpec` for the `umount` command using a pre-validated absolute target path.
     ///
     /// Accepts an already-validated absolute path (e.g., stored by
-    /// [`RootfsMounts`](crate::isolation::mount::RootfsMounts) after a successful mount)
+    /// `RootfsMounts` after a successful mount)
     /// instead of computing it from rootfs + target.
     pub fn build_umount_spec_with_path(
         &self,
         abs_target: &Utf8Path,
         privilege: Option<PrivilegeMethod>,
     ) -> CommandSpec {
-        CommandSpec::new("umount", vec![abs_target.to_string()]).with_privilege(privilege)
+        CommandSpec::privileged(PrivilegedProgram::Umount, vec![abs_target.to_string()], privilege)
     }
 
-    /// Validates this mount entry's format: source must not be empty, target must
-    /// be an absolute path (not `/`) without `..` components, pseudo-filesystem
-    /// and bind mount are mutually exclusive, and bind/regular mount sources must
-    /// be absolute paths.
+    /// Validates this mount entry's format: source must not be empty, pseudo-filesystem
+    /// and bind mount are mutually exclusive, and bind/regular mount sources must be
+    /// absolute paths. The target needs no check — `RelPath` cannot name `/` or escape.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
         if self.source.trim().is_empty() {
             return Err(RsdebstrapError::Validation("mount source must not be empty".to_string()));
-        }
-
-        if self.target.as_str() == "/" {
-            return Err(RsdebstrapError::Validation(
-                "mount target '/' is not allowed (would mount over rootfs itself)".to_string(),
-            ));
         }
 
         if self.is_pseudo_fs() && self.is_bind_mount() {
@@ -268,15 +268,6 @@ impl MountEntry {
                 self.source
             )));
         }
-
-        if !self.target.starts_with("/") {
-            return Err(RsdebstrapError::Validation(format!(
-                "mount target '{}' must be an absolute path",
-                self.target
-            )));
-        }
-
-        crate::phase::validate_no_parent_dirs(&self.target, "mount target")?;
 
         if self.is_bind_mount() {
             let source_path = Utf8Path::new(&self.source);
@@ -308,8 +299,9 @@ impl MountEntry {
 ///
 /// This enum represents the different bootstrap tools that can be used.
 /// The `type` field in YAML determines which variant is used.
-#[derive(Debug, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+// Every internally tagged enum here puts `deny_unknown_fields` on the variant payload
+// rather than the enum; see the `deny_unknown_fields` note in docs/ARCHITECTURE.md.
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Bootstrap {
     /// mmdebstrap backend
@@ -338,23 +330,17 @@ impl Bootstrap {
         }
     }
 
-    /// Resolves the privilege setting against profile defaults, replacing
-    /// the stored `Privilege` with a fully resolved variant.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
-        match self {
-            Bootstrap::Mmdebstrap(cfg) => cfg.privilege.resolve_in_place(defaults),
-            Bootstrap::Debootstrap(cfg) => cfg.privilege.resolve_in_place(defaults),
-        }
-    }
-
-    /// Returns the resolved privilege method for the bootstrap backend.
+    /// Resolves the backend's privilege setting against the profile defaults.
     ///
-    /// Should only be called after `resolve_privilege()`.
-    pub fn resolved_privilege_method(&self) -> Option<PrivilegeMethod> {
-        self.privilege().resolved_method()
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if `privilege: true` is declared but no
+    /// `defaults.privilege.method` is configured in the profile.
+    pub fn resolve_privilege(
+        &self,
+        defaults: Option<&PrivilegeDefaults>,
+    ) -> Result<Option<PrivilegeMethod>, RsdebstrapError> {
+        self.privilege().resolve(defaults)
     }
 }
 
@@ -364,14 +350,9 @@ impl Bootstrap {
 /// currently the only backend. `type` is required whenever an `isolation` map is written
 /// out — the chroot default applies only when the surrounding `isolation` key (e.g.
 /// `defaults.isolation`) is omitted entirely.
-// Internally tagged like `Bootstrap` (rather than a plain struct) so each backend keeps its
-// own payload struct as an extension point for backend-specific options (bwrap, nspawn, …).
-// `deny_unknown_fields` would be a serde no-op on the enum itself, so strictness lives on
-// the per-variant payload structs: serde consumes the `type` tag when selecting the variant
-// and hands only the remaining keys to the payload, whose `deny_unknown_fields` then
-// rejects typo'd keys (see the `Bootstrap` note in ARCHITECTURE.md).
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+// Internally tagged like `Bootstrap` so each backend keeps its own payload struct as an
+// extension point for backend-specific options (bwrap, nspawn, …).
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum IsolationConfig {
     /// Run commands inside the rootfs via `chroot`.
@@ -382,8 +363,7 @@ pub enum IsolationConfig {
 // A braced (named-field) empty struct, not a unit struct: internally tagged variants need a
 // map-shaped payload to serialize, and only the braced form gives `deny_unknown_fields` a
 // struct visitor that rejects `{type: chroot, <typo>: ...}`.
-#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChrootIsolation {}
 
@@ -404,7 +384,10 @@ impl IsolationConfig {
     ///
     /// This allows calling `IsolationProvider` methods without matching
     /// on each variant explicitly.
-    pub fn as_provider(&self) -> Box<dyn IsolationProvider> {
+    ///
+    /// Named `to_` rather than `as_`: it constructs an owned value, where
+    /// [`Bootstrap::as_backend`] hands out a borrow of what is already there.
+    pub fn to_provider(&self) -> Box<dyn IsolationProvider> {
         match self {
             Self::Chroot(_) => Box::new(ChrootProvider),
         }
@@ -415,18 +398,12 @@ impl IsolationConfig {
 ///
 /// Allows specifying architecture-specific binary paths that apply to all
 /// mitamae tasks unless overridden at the task level.
-#[derive(Debug, Deserialize, Clone, Default)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MitamaeDefaults {
     /// Architecture-specific binary paths (key: "x86_64", "aarch64", etc.)
     #[serde(default, deserialize_with = "crate::de::path_map")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(
-            with = "Option<std::collections::HashMap<String, crate::schema::Utf8PathSchema>>"
-        )
-    )]
+    #[schemars(with = "Option<std::collections::HashMap<String, crate::schema::Utf8PathSchema>>")]
     pub binary: HashMap<String, Utf8PathBuf>,
 }
 
@@ -434,8 +411,7 @@ pub struct MitamaeDefaults {
 ///
 /// Groups configuration defaults like isolation backend.
 /// If omitted in YAML, all fields use their respective defaults.
-#[derive(Debug, Deserialize, Clone, Default)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
     /// Isolation backend for running commands in rootfs (default: chroot)
@@ -443,7 +419,7 @@ pub struct Defaults {
     pub isolation: IsolationConfig,
     /// Default settings for mitamae tasks
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
-    #[cfg_attr(feature = "schema", schemars(with = "Option<MitamaeDefaults>"))]
+    #[schemars(with = "Option<MitamaeDefaults>")]
     pub mitamae: MitamaeDefaults,
     /// Default privilege escalation settings
     #[serde(default)]
@@ -454,42 +430,82 @@ pub struct Defaults {
 ///
 /// A profile contains the target directory and bootstrap tool configuration
 /// details needed to create a Debian-based system.
-#[derive(Debug, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
     /// Target directory path for the bootstrap operation
     #[serde(deserialize_with = "crate::de::path")]
-    #[cfg_attr(feature = "schema", schemars(with = "crate::schema::Utf8PathSchema"))]
+    #[schemars(with = "crate::schema::Utf8PathSchema")]
     pub dir: Utf8PathBuf,
     /// Default settings (isolation backend, etc.)
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
-    #[cfg_attr(feature = "schema", schemars(with = "Option<Defaults>"))]
+    #[schemars(with = "Option<Defaults>")]
     pub defaults: Defaults,
     /// Bootstrap tool configuration
     pub bootstrap: Bootstrap,
     /// Prepare tasks to run before provisioning (optional)
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
-    #[cfg_attr(feature = "schema", schemars(with = "Option<PrepareConfig>"))]
+    #[schemars(with = "Option<PrepareConfig>")]
     pub prepare: PrepareConfig,
     /// Main provisioning tasks (optional)
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
-    #[cfg_attr(feature = "schema", schemars(with = "Option<Vec<ProvisionTask>>"))]
+    #[schemars(with = "Option<Vec<ProvisionTask>>")]
     pub provision: Vec<ProvisionTask>,
     /// Assemble tasks to run after provisioning (optional)
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
-    #[cfg_attr(feature = "schema", schemars(with = "Option<AssembleConfig>"))]
+    #[schemars(with = "Option<AssembleConfig>")]
     pub assemble: AssembleConfig,
 }
 
+/// A profile [`Profile::validate`] has run over, and the only route to a [`Pipeline`]
+/// built from it.
+///
+/// Several checks `validate` performs are not expressible in the config types — that mount
+/// targets exist as directories the run may create, that a declared script is a regular
+/// file, that the bootstrap backend's output is a directory when there are pipeline tasks —
+/// so "validated" has to be carried as a value rather than assumed.
+///
+/// It holds the profile rather than standing for it. A token that only meant "some profile
+/// passed" could be handed to a different one, whose checks would then never run; borrowing
+/// also keeps the profile from being edited out from under the evidence, since no `&mut`
+/// can be taken while this is alive.
+#[derive(Debug)]
+pub struct ValidatedProfile<'a> {
+    profile: &'a Profile,
+}
+
+impl<'a> ValidatedProfile<'a> {
+    /// The profile this evidence was produced from.
+    pub fn profile(&self) -> &'a Profile {
+        self.profile
+    }
+
+    /// Creates a `Pipeline` from the profile's task phases, resolving each provision
+    /// task's settings against `defaults`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if a task declares `privilege: true` but
+    /// the profile configures no `defaults.privilege.method`, or if it resolves to
+    /// escalated execution without isolation.
+    pub fn pipeline(&self) -> Result<Pipeline<'a>, RsdebstrapError> {
+        self.profile.build_pipeline()
+    }
+}
+
 impl Profile {
-    /// Creates a `Pipeline` from this profile's task phases.
-    pub fn pipeline(&self) -> Pipeline<'_> {
-        Pipeline::new(&self.prepare, &self.provision, &self.assemble)
+    fn build_pipeline(&self) -> Result<Pipeline<'_>, RsdebstrapError> {
+        Pipeline::new(
+            &self.prepare,
+            &self.provision,
+            &self.assemble,
+            self.defaults.privilege.as_ref(),
+            &self.defaults.isolation,
+        )
     }
 
     /// Validate configuration semantics beyond basic deserialization.
-    pub fn validate(&self) -> Result<(), RsdebstrapError> {
+    pub fn validate(&self) -> Result<ValidatedProfile<'_>, RsdebstrapError> {
         if self.dir.exists() && !self.dir.is_dir() {
             return Err(RsdebstrapError::Validation(format!(
                 "dir must be a directory: {}",
@@ -500,12 +516,11 @@ impl Profile {
         self.validate_mounts()?;
         self.validate_resolv_conf()?;
 
-        let pipeline = self.pipeline();
+        let pipeline = self.build_pipeline()?;
         pipeline.validate()?;
 
-        // rootfs_output() returns anyhow::Result, so we attempt to downcast to
-        // RsdebstrapError to preserve the original variant. If downcast fails
-        // (e.g., a non-RsdebstrapError from a backend), we fall back to Validation.
+        self.validate_rootfs_privilege(&pipeline)?;
+
         if !pipeline.is_empty() {
             let backend = self.bootstrap.as_backend();
             let output = backend
@@ -520,7 +535,35 @@ impl Profile {
             }
         }
 
-        Ok(())
+        Ok(ValidatedProfile { profile: self })
+    }
+
+    /// Refuses a profile that bootstraps with privilege but modifies the rootfs without it.
+    ///
+    /// Two settings answer two different questions — `bootstrap.privilege` decides who builds
+    /// the rootfs, `defaults.privilege` decides who modifies it afterwards — and nothing
+    /// makes them agree. Escalated bootstrap plus unset defaults means `mmdebstrap` runs under
+    /// `sudo` and leaves a root-owned tree, then the rootfs helper opens it unprivileged: the
+    /// run gets through bootstrap and fails at the first staged file with a bare `EACCES`,
+    /// after the expensive part. The other direction is harmless — a run may deliberately
+    /// escalate only its rootfs writes — so only this one is refused.
+    fn validate_rootfs_privilege(&self, pipeline: &Pipeline<'_>) -> Result<(), RsdebstrapError> {
+        if pipeline.is_empty() || self.defaults.privilege.is_some() {
+            return Ok(());
+        }
+        let Some(method) = self
+            .bootstrap
+            .resolve_privilege(self.defaults.privilege.as_ref())?
+        else {
+            return Ok(());
+        };
+        Err(RsdebstrapError::Validation(format!(
+            "bootstrap runs with `privilege: {}`, so the rootfs it builds is root-owned, \
+            but `defaults.privilege` is unset and every pipeline task writes to that rootfs \
+            unprivileged. Set `defaults.privilege.method: {}`, or drop the privilege from \
+            `bootstrap`",
+            method, method
+        )))
     }
 
     /// Validates mount-related configuration.
@@ -593,11 +636,9 @@ pub(crate) fn validate_mount_order(mounts: &[MountEntry]) -> Result<(), Rsdebstr
 fn format_yaml_parse_error(err: yaml_serde::Error, file_path: &Utf8Path) -> RsdebstrapError {
     // yaml_serde sometimes embeds the location in its Display output
     // ("... at line X column Y") and sometimes exposes it only via location()
-    // (e.g. "missing field `dir`"). We render the message as-is and append the
-    // location from location() only when the message does not already mention
-    // that line. The check keys off the numeric line value (stable data), not
-    // yaml_serde's exact wording, so a future change to its phrasing degrades to
-    // a harmless duplicate location rather than silently dropping it.
+    // (e.g. "missing field `dir`"). The check keys off the numeric line value (stable
+    // data), not yaml_serde's exact wording, so a future change to its phrasing degrades
+    // to a harmless duplicate location rather than silently dropping it.
     let msg = err.to_string();
     let suffix = match err.location() {
         Some(loc) if !msg.contains(&format!("line {}", loc.line())) => {
@@ -606,6 +647,24 @@ fn format_yaml_parse_error(err: yaml_serde::Error, file_path: &Utf8Path) -> Rsde
         _ => String::new(),
     };
     RsdebstrapError::Config(format!("{}: YAML parse error: {}{}", file_path, msg, suffix))
+}
+
+// Renders the field path (`provision[2].privilege`) alongside the parse error. The
+// untagged enums (`Privilege`, `TaskIsolation`) report only "did not match any variant",
+// so without the path the user cannot tell which field is malformed.
+fn format_pathed_parse_error(
+    err: serde_path_to_error::Error<yaml_serde::Error>,
+    file_path: &Utf8Path,
+) -> RsdebstrapError {
+    let path = err.path().to_string();
+    let base = format_yaml_parse_error(err.into_inner(), file_path);
+    if path.is_empty() || path == "." {
+        return base;
+    }
+    match base {
+        RsdebstrapError::Config(msg) => RsdebstrapError::Config(format!("{msg} at `{path}`")),
+        other => other,
+    }
 }
 
 fn read_profile_file(path: &Utf8Path) -> Result<(BufReader<File>, Utf8PathBuf), RsdebstrapError> {
@@ -631,7 +690,8 @@ fn parse_profile_yaml(
     reader: BufReader<File>,
     file_path: &Utf8Path,
 ) -> Result<Profile, RsdebstrapError> {
-    yaml_serde::from_reader(reader).map_err(|e| format_yaml_parse_error(e, file_path))
+    let de = yaml_serde::Deserializer::from_reader(reader);
+    serde_path_to_error::deserialize(de).map_err(|e| format_pathed_parse_error(e, file_path))
 }
 
 fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError> {
@@ -650,6 +710,9 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
         );
     }
 
+    // Resolution happens where the resolved value is consumed (`Pipeline::new`,
+    // `Bootstrap::resolve_privilege`). Running it once here too makes an unsatisfiable
+    // `privilege: true` a load-time error rather than one raised mid-run.
     profile.bootstrap.resolve_privilege(privilege_defaults)?;
 
     for task in profile.provision.iter_mut() {
@@ -658,12 +721,7 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
         {
             mitamae_task.set_binary_if_absent(binary);
         }
-        task.resolve_privilege(privilege_defaults)?;
-        task.resolve_isolation(&isolation_defaults);
-    }
-
-    if let Some(task) = profile.assemble.resolv_conf.as_mut() {
-        task.resolve_privilege(privilege_defaults)?;
+        task.resolve(privilege_defaults, &isolation_defaults)?;
     }
 
     Ok(())
@@ -736,7 +794,6 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    // Generates a yaml_serde::Error by attempting to parse invalid YAML.
     fn make_yaml_error(yaml: &str) -> yaml_serde::Error {
         yaml_serde::from_str::<Profile>(yaml).unwrap_err()
     }
@@ -876,14 +933,14 @@ mod tests {
     fn test_mount_entry_is_pseudo_fs() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         assert!(entry.is_pseudo_fs());
 
         let entry = MountEntry {
             source: "/dev".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         assert!(!entry.is_pseudo_fs());
@@ -893,14 +950,14 @@ mod tests {
     fn test_mount_entry_is_bind_mount() {
         let entry = MountEntry {
             source: "/dev".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         assert!(entry.is_bind_mount());
 
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         assert!(!entry.is_bind_mount());
@@ -910,25 +967,25 @@ mod tests {
     fn test_mount_entry_build_mount_spec_with_path_pseudo_fs() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/proc"), None);
-        assert_eq!(spec.command, "mount");
-        assert_eq!(spec.args, vec!["-t", "proc", "proc", "/rootfs/proc"]);
+        assert_eq!(spec.command(), "mount");
+        assert_eq!(spec.args(), vec!["-t", "proc", "proc", "/rootfs/proc"]);
     }
 
     #[test]
     fn test_mount_entry_build_mount_spec_with_path_pseudo_fs_with_options() {
         let entry = MountEntry {
             source: "devpts".to_string(),
-            target: "/dev/pts".into(),
+            target: rootfs_path("/dev/pts"),
             options: vec!["gid=5".to_string(), "mode=620".to_string()],
         };
         let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/dev/pts"), None);
-        assert_eq!(spec.command, "mount");
+        assert_eq!(spec.command(), "mount");
         assert_eq!(
-            spec.args,
+            spec.args(),
             vec![
                 "-t",
                 "devpts",
@@ -944,94 +1001,88 @@ mod tests {
     fn test_mount_entry_build_mount_spec_with_path_bind() {
         let entry = MountEntry {
             source: "/dev".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         let spec = entry.build_mount_spec_with_path(Utf8Path::new("/rootfs/dev"), None);
-        assert_eq!(spec.command, "mount");
-        assert_eq!(spec.args, vec!["-o", "bind", "/dev", "/rootfs/dev"]);
+        assert_eq!(spec.command(), "mount");
+        assert_eq!(spec.args(), vec!["-o", "bind", "/dev", "/rootfs/dev"]);
     }
 
     #[test]
     fn test_mount_entry_build_umount_spec_with_path() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         let spec = entry.build_umount_spec_with_path(Utf8Path::new("/rootfs/proc"), None);
-        assert_eq!(spec.command, "umount");
-        assert_eq!(spec.args, vec!["/rootfs/proc"]);
+        assert_eq!(spec.command(), "umount");
+        assert_eq!(spec.args(), vec!["/rootfs/proc"]);
     }
 
     #[test]
     fn test_mount_entry_build_mount_spec_with_path_privilege() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         let spec = entry
             .build_mount_spec_with_path(Utf8Path::new("/rootfs/proc"), Some(PrivilegeMethod::Sudo));
-        assert_eq!(spec.privilege, Some(PrivilegeMethod::Sudo));
+        assert_eq!(spec.privilege(), Some(PrivilegeMethod::Sudo));
     }
 
     #[test]
     fn test_mount_entry_build_umount_spec_with_path_privilege() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         let spec = entry.build_umount_spec_with_path(
             Utf8Path::new("/rootfs/proc"),
             Some(PrivilegeMethod::Sudo),
         );
-        assert_eq!(spec.command, "umount");
-        assert_eq!(spec.args, vec!["/rootfs/proc"]);
-        assert_eq!(spec.privilege, Some(PrivilegeMethod::Sudo));
+        assert_eq!(spec.command(), "umount");
+        assert_eq!(spec.args(), vec!["/rootfs/proc"]);
+        assert_eq!(spec.privilege(), Some(PrivilegeMethod::Sudo));
     }
 
     #[test]
     fn test_mount_entry_validate_valid() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         };
         assert!(entry.validate().is_ok());
     }
 
+    // A `..`, a bare `/`, and a relative spelling are not `validate()`'s business: `target`
+    // is a `RelPath`, so none of them can be constructed at all and the rejection happens
+    // where the profile text is read.
     #[test]
-    fn test_mount_entry_validate_rejects_relative_target() {
-        let entry = MountEntry {
-            source: "proc".to_string(),
-            target: "proc".into(),
-            options: vec![],
-        };
-        let err = entry.validate().unwrap_err();
-        assert!(matches!(err, RsdebstrapError::Validation(_)));
-        assert!(err.to_string().contains("absolute path"));
-    }
-
-    #[test]
-    fn test_mount_entry_validate_rejects_target_with_dotdot() {
-        let entry = MountEntry {
-            source: "proc".to_string(),
-            target: "/proc/../etc".into(),
-            options: vec![],
-        };
-        let err = entry.validate().unwrap_err();
-        assert!(matches!(err, RsdebstrapError::Validation(_)));
-        assert!(err.to_string().contains(".."));
+    fn test_mount_entry_target_rejects_escapes_at_deserialization() {
+        for (yaml, expected) in [
+            ("source: proc\ntarget: /proc/../etc\n", ".."),
+            ("source: proc\ntarget: /\n", "does not name an entry"),
+            ("source: proc\ntarget: proc\n", "must be absolute"),
+        ] {
+            let err = yaml_serde::from_str::<MountEntry>(yaml)
+                .expect_err(&format!("{yaml:?} should be rejected"));
+            assert!(
+                err.to_string().contains(expected),
+                "{yaml:?}: expected {expected:?}, got {err}"
+            );
+        }
     }
 
     #[test]
     fn test_mount_entry_validate_valid_bind_mount() {
-        // /tmp is guaranteed to exist on any system
         let entry = MountEntry {
             source: "/tmp".to_string(),
-            target: "/tmp".into(),
+            target: rootfs_path("/tmp"),
             options: vec!["bind".to_string()],
         };
         assert!(entry.validate().is_ok());
@@ -1041,7 +1092,7 @@ mod tests {
     fn test_mount_entry_validate_bind_rejects_relative_source() {
         let entry = MountEntry {
             source: "dev".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         let err = entry.validate().unwrap_err();
@@ -1053,7 +1104,7 @@ mod tests {
     fn test_mount_entry_validate_bind_rejects_source_with_dotdot() {
         let entry = MountEntry {
             source: "/dev/../etc".to_string(),
-            target: "/dev".into(),
+            target: rootfs_path("/dev"),
             options: vec!["bind".to_string()],
         };
         let err = entry.validate().unwrap_err();
@@ -1065,7 +1116,7 @@ mod tests {
     fn test_mount_entry_serialize_deserialize() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec!["nosuid".to_string()],
         };
         let yaml = yaml_serde::to_string(&entry).unwrap();
@@ -1078,7 +1129,7 @@ mod tests {
         let yaml = "source: proc\ntarget: /proc\n";
         let entry: MountEntry = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(entry.source, "proc");
-        assert_eq!(entry.target, Utf8PathBuf::from("/proc"));
+        assert_eq!(entry.target, rootfs_path("/proc"));
         assert!(entry.options.is_empty());
     }
 
@@ -1087,13 +1138,13 @@ mod tests {
         let entries = MountPreset::Recommends.to_entries();
         assert_eq!(entries.len(), 6);
 
-        let targets: Vec<&str> = entries.iter().map(|e| e.target.as_str()).collect();
-        assert!(targets.contains(&"/proc"));
-        assert!(targets.contains(&"/sys"));
-        assert!(targets.contains(&"/dev"));
-        assert!(targets.contains(&"/dev/pts"));
-        assert!(targets.contains(&"/tmp"));
-        assert!(targets.contains(&"/run"));
+        let targets: Vec<String> = entries.iter().map(|e| e.target.to_string()).collect();
+        assert!(targets.iter().any(|t| t == "/proc"));
+        assert!(targets.iter().any(|t| t == "/sys"));
+        assert!(targets.iter().any(|t| t == "/dev"));
+        assert!(targets.iter().any(|t| t == "/dev/pts"));
+        assert!(targets.iter().any(|t| t == "/tmp"));
+        assert!(targets.iter().any(|t| t == "/run"));
     }
 
     #[test]
@@ -1107,12 +1158,12 @@ mod tests {
         let mounts = vec![
             MountEntry {
                 source: "devtmpfs".to_string(),
-                target: "/dev".into(),
+                target: rootfs_path("/dev"),
                 options: vec![],
             },
             MountEntry {
                 source: "devpts".to_string(),
-                target: "/dev/pts".into(),
+                target: rootfs_path("/dev/pts"),
                 options: vec![],
             },
         ];
@@ -1124,12 +1175,12 @@ mod tests {
         let mounts = vec![
             MountEntry {
                 source: "devpts".to_string(),
-                target: "/dev/pts".into(),
+                target: rootfs_path("/dev/pts"),
                 options: vec![],
             },
             MountEntry {
                 source: "devtmpfs".to_string(),
-                target: "/dev".into(),
+                target: rootfs_path("/dev"),
                 options: vec![],
             },
         ];
@@ -1142,7 +1193,7 @@ mod tests {
     fn test_mount_entry_validate_rejects_pseudo_fs_with_bind() {
         let entry = MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec!["bind".to_string()],
         };
         let err = entry.validate().unwrap_err();
@@ -1160,7 +1211,7 @@ mod tests {
     fn test_validate_mount_order_single() {
         let mounts = vec![MountEntry {
             source: "proc".to_string(),
-            target: "/proc".into(),
+            target: rootfs_path("/proc"),
             options: vec![],
         }];
         assert!(validate_mount_order(&mounts).is_ok());
@@ -1171,12 +1222,12 @@ mod tests {
         let mounts = vec![
             MountEntry {
                 source: "sysfs".to_string(),
-                target: "/sys".into(),
+                target: rootfs_path("/sys"),
                 options: vec![],
             },
             MountEntry {
                 source: "proc".to_string(),
-                target: "/proc".into(),
+                target: rootfs_path("/proc"),
                 options: vec![],
             },
         ];
@@ -1187,7 +1238,7 @@ mod tests {
     fn test_mount_entry_validate_rejects_empty_source() {
         let entry = MountEntry {
             source: "".to_string(),
-            target: "/mnt".into(),
+            target: rootfs_path("/mnt"),
             options: vec![],
         };
         let err = entry.validate().unwrap_err();
@@ -1196,22 +1247,10 @@ mod tests {
     }
 
     #[test]
-    fn test_mount_entry_validate_rejects_root_target() {
-        let entry = MountEntry {
-            source: "proc".to_string(),
-            target: "/".into(),
-            options: vec![],
-        };
-        let err = entry.validate().unwrap_err();
-        assert!(matches!(err, RsdebstrapError::Validation(_)));
-        assert!(err.to_string().contains("not allowed"));
-    }
-
-    #[test]
     fn test_mount_entry_validate_rejects_unknown_relative_source() {
         let entry = MountEntry {
             source: "foobar".to_string(),
-            target: "/mnt".into(),
+            target: rootfs_path("/mnt"),
             options: vec![],
         };
         let err = entry.validate().unwrap_err();
@@ -1242,7 +1281,7 @@ mod tests {
     fn test_mount_entry_validate_rejects_regular_source_with_dotdot() {
         let entry = MountEntry {
             source: "/mnt/../etc".to_string(),
-            target: "/mnt".into(),
+            target: rootfs_path("/mnt"),
             options: vec![],
         };
         let err = entry.validate().unwrap_err();
@@ -1479,11 +1518,8 @@ mod tests {
     // =========================================================================
     // Profile::validate_mounts / validate_resolv_conf tests
     //
-    // `IsolationConfig` has a single `Chroot` variant, so `defaults.isolation` is
-    // always chroot; the former "require chroot isolation" guards were removed as
-    // unreachable dead code (e0fd092). These tests cover the two private validators
-    // directly, complementing the integration-level `test_profile_validation_*`
-    // tests in tests/config_test.rs.
+    // These cover the two private validators directly, complementing the
+    // integration-level `test_profile_validation_*` tests in tests/config_test.rs.
     // =========================================================================
 
     // Builds a minimal valid `Profile` YAML document; `extra` splices in more
@@ -1522,8 +1558,8 @@ mod tests {
     #[test]
     fn test_validate_mounts_requires_privilege() {
         // A mount task without `defaults.privilege` must fail with the privilege guard.
-        // Regression guard for e0fd092: the error is about privilege, never about
-        // isolation/chroot (the removed "mounts require chroot isolation" guard).
+        // The negative assertions pin which guard fires: mounts are gated on privilege
+        // alone, not on the isolation backend.
         let yaml = minimal_profile_yaml("prepare:\n  mount:\n    preset: recommends\n");
         let profile = parse_profile(&yaml);
         let err = profile.validate_mounts().unwrap_err();
@@ -1551,6 +1587,119 @@ mod tests {
         );
     }
 
+    // `build_pipeline` handing `defaults.privilege` to `Pipeline::new` is the only place the
+    // profile's escalation reaches a provision task, and every `Pipeline::new` in the
+    // pipeline module's own tests passes `None` there -- so nothing observed the wiring.
+    // Replacing the argument with `None` used to leave the workspace green while every task
+    // ran unescalated against a root-owned rootfs.
+    #[test]
+    fn defaults_privilege_reaches_the_command_a_provision_task_runs() {
+        use crate::executor::{CommandExecutor, CommandSpec, ExecutionResult};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Debug)]
+        struct Recorder(Mutex<Vec<Option<PrivilegeMethod>>>);
+
+        impl CommandExecutor for Recorder {
+            fn dry_run(&self) -> bool {
+                true
+            }
+
+            fn execute(&self, spec: &CommandSpec) -> anyhow::Result<ExecutionResult> {
+                self.0.lock().unwrap().push(spec.privilege());
+                Ok(ExecutionResult { status: None })
+            }
+        }
+
+        let yaml = minimal_profile_yaml(concat!(
+            "defaults:\n",
+            "  privilege:\n",
+            "    method: sudo\n",
+            "provision:\n",
+            "  - type: shell\n",
+            "    content: 'echo hi'\n",
+        ));
+        let profile = parse_profile(&yaml);
+        let pipeline = profile.build_pipeline().expect("resolution succeeds");
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        pipeline
+            .run(
+                Utf8Path::new("/tmp/rootfs"),
+                recorder.clone() as Arc<dyn CommandExecutor>,
+                crate::rootfs::open(Utf8Path::new("/tmp/rootfs"), None, true).unwrap(),
+            )
+            .expect("a dry run reaches the executor");
+
+        assert_eq!(
+            recorder.0.lock().unwrap().as_slice(),
+            [Some(PrivilegeMethod::Sudo)],
+            "the profile's defaults.privilege never reached the task's command"
+        );
+    }
+
+    // The two privilege settings answer different questions and nothing else makes them
+    // agree, so an escalated bootstrap with unprivileged rootfs ops has to be caught here --
+    // otherwise the run bootstraps a root-owned tree and only fails at the first staged file.
+    #[test]
+    fn escalated_bootstrap_with_unprivileged_rootfs_ops_is_refused() {
+        let yaml = minimal_profile_yaml(concat!(
+            "provision:\n",
+            "  - type: shell\n",
+            "    content: 'echo hi'\n",
+        ))
+        .replace("  target: rootfs\n", "  target: rootfs\n  privilege:\n    method: sudo\n");
+        let profile = parse_profile(&yaml);
+
+        let err = profile.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("defaults.privilege"), "unexpected: {msg}");
+        assert!(msg.contains("root-owned"), "unexpected: {msg}");
+    }
+
+    #[test]
+    fn matching_privilege_on_both_sides_is_accepted() {
+        let yaml = minimal_profile_yaml(concat!(
+            "defaults:\n",
+            "  privilege:\n",
+            "    method: sudo\n",
+            "provision:\n",
+            "  - type: shell\n",
+            "    content: 'echo hi'\n",
+        ))
+        .replace("  target: rootfs\n", "  target: rootfs\n  privilege:\n    method: sudo\n");
+        let profile = parse_profile(&yaml);
+
+        assert!(profile.validate().is_ok(), "{:?}", profile.validate().err());
+    }
+
+    // The other direction: only the rootfs writes escalate. A user may own the tree
+    // `mmdebstrap --mode=unshare` built and still want the pipeline's writes done as root.
+    #[test]
+    fn unprivileged_bootstrap_with_privileged_rootfs_ops_is_accepted() {
+        let yaml = minimal_profile_yaml(concat!(
+            "defaults:\n",
+            "  privilege:\n",
+            "    method: sudo\n",
+            "provision:\n",
+            "  - type: shell\n",
+            "    content: 'echo hi'\n",
+        ));
+        let profile = parse_profile(&yaml);
+
+        assert!(profile.validate().is_ok(), "{:?}", profile.validate().err());
+    }
+
+    // Nothing writes to the rootfs, so nothing needs the identity to match.
+    #[test]
+    fn escalated_bootstrap_with_no_pipeline_is_accepted() {
+        let yaml = minimal_profile_yaml("")
+            .replace("  target: rootfs\n", "  target: rootfs\n  privilege:\n    method: sudo\n");
+        let profile = parse_profile(&yaml);
+
+        assert!(profile.validate().is_ok(), "{:?}", profile.validate().err());
+    }
+
     #[test]
     fn test_validate_resolv_conf_no_task_is_ok() {
         let profile = parse_profile(&minimal_profile_yaml(""));
@@ -1569,8 +1718,8 @@ mod tests {
     #[test]
     fn test_validate_resolv_conf_propagates_underlying_validation_error() {
         // `search` without `name_servers` is invalid; the underlying
-        // `ResolvConfConfig::validate` error must propagate through the Profile method.
-        // Regression guard for e0fd092: the error is config-related, not isolation/chroot.
+        // `ResolvConfConfig::validate` error must propagate through the Profile method
+        // unchanged — a config error, not one about the isolation backend.
         let yaml =
             minimal_profile_yaml("prepare:\n  resolv_conf:\n    search:\n      - example.com\n");
         let profile = parse_profile(&yaml);

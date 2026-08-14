@@ -9,7 +9,7 @@
 //! 2. Creating a corresponding data struct (e.g., `MitamaeTask`)
 //! 3. Implementing the match arms in all methods on `ProvisionTask`
 //!    (`name`, `validate`, `execute`, `script_path`, `resolve_paths`, `binary_path`,
-//!    `resolve_privilege`, `resolve_isolation`, `resolved_isolation_config`)
+//!    `privilege`, `task_isolation`)
 //!
 //! The compiler enforces exhaustiveness, ensuring all task types are handled.
 
@@ -19,7 +19,6 @@ pub mod shell;
 use std::borrow::Cow;
 
 use camino::Utf8Path;
-#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -29,8 +28,8 @@ pub use shell::ShellTask;
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::TaskIsolation;
-use crate::phase::PhaseItem;
-use crate::privilege::PrivilegeDefaults;
+use crate::phase::{PhaseItem, ProvisionItem};
+use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 
 /// Declarative task definition for provision pipeline steps.
 ///
@@ -38,8 +37,7 @@ use crate::privilege::PrivilegeDefaults;
 /// type of task. The enum dispatch pattern provides compile-time exhaustive
 /// matching — adding a new variant causes compilation errors at every
 /// unhandled match site, preventing missed implementations.
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ProvisionTask {
     /// Shell script execution task
@@ -59,16 +57,38 @@ impl PhaseItem for ProvisionTask {
             Self::Mitamae(task) => task.validate(),
         }
     }
+}
 
+/// A provision task paired with the settings it resolves to under the profile defaults.
+///
+/// [`ProvisionTask`] carries what the profile *declared*; the pipeline needs what that
+/// declaration means once defaults are known. They are separate types so that an
+/// unresolved setting cannot be read as if it were resolved: resolution produces a new
+/// value rather than putting the task into a second state.
+#[derive(Debug)]
+pub struct ResolvedProvisionTask<'a> {
+    task: &'a ProvisionTask,
+    privilege: Option<PrivilegeMethod>,
+    isolation: Option<IsolationConfig>,
+}
+
+impl PhaseItem for ResolvedProvisionTask<'_> {
+    fn name(&self) -> Cow<'_, str> {
+        self.task.name()
+    }
+
+    fn validate(&self) -> Result<(), RsdebstrapError> {
+        PhaseItem::validate(self.task)
+    }
+}
+
+impl ProvisionItem for ResolvedProvisionTask<'_> {
     fn execute(&self, ctx: &dyn crate::isolation::IsolationContext) -> anyhow::Result<()> {
-        match self {
-            Self::Shell(task) => task.execute(ctx),
-            Self::Mitamae(task) => task.execute(ctx),
-        }
+        self.task.execute(ctx, self.privilege)
     }
 
     fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
-        ProvisionTask::resolved_isolation_config(self)
+        self.isolation.as_ref()
     }
 }
 
@@ -81,11 +101,54 @@ impl ProvisionTask {
         }
     }
 
-    /// Returns the resolved isolation config after `resolve_isolation()` has been called.
-    pub fn resolved_isolation_config(&self) -> Option<&IsolationConfig> {
+    /// Resolves this task's privilege and isolation settings against the profile defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if `privilege: true` is declared but no
+    /// `defaults.privilege.method` is configured, or if the task resolves to escalated
+    /// execution without isolation.
+    pub fn resolve(
+        &self,
+        privilege_defaults: Option<&PrivilegeDefaults>,
+        isolation_defaults: &IsolationConfig,
+    ) -> Result<ResolvedProvisionTask<'_>, RsdebstrapError> {
+        let privilege = self.privilege().resolve(privilege_defaults)?;
+        let isolation = self.task_isolation().resolve(isolation_defaults);
+
+        // `isolation: false` runs the program the task names *from inside the rootfs*
+        // directly on the host. Escalating that hands root to whatever the rootfs happens
+        // to contain — a rootfs this run has not finished building and whose packages ran
+        // their own maintainer scripts. The two settings are individually reasonable and
+        // only their combination is not, so it is rejected here rather than by either.
+        if isolation.is_none()
+            && let Some(method) = privilege
+        {
+            return Err(RsdebstrapError::Validation(format!(
+                "task '{}' declares `isolation: false` but resolves to `privilege: {}`; \
+                running a program from inside the rootfs on the host as root is not \
+                allowed. Set `privilege: false` on the task, or drop `isolation: false`.",
+                self.name(),
+                method,
+            )));
+        }
+
+        Ok(ResolvedProvisionTask {
+            task: self,
+            privilege,
+            isolation,
+        })
+    }
+
+    /// Executes this task with an already-resolved privilege setting.
+    fn execute(
+        &self,
+        ctx: &dyn crate::isolation::IsolationContext,
+        privilege: Option<PrivilegeMethod>,
+    ) -> anyhow::Result<()> {
         match self {
-            Self::Shell(task) => task.resolved_isolation_config(),
-            Self::Mitamae(task) => task.resolved_isolation_config(),
+            Self::Shell(task) => task.execute(ctx, privilege),
+            Self::Mitamae(task) => task.execute(ctx, privilege),
         }
     }
 
@@ -113,30 +176,19 @@ impl ProvisionTask {
         }
     }
 
-    /// Resolves the privilege setting against profile defaults.
-    pub fn resolve_privilege(
-        &mut self,
-        defaults: Option<&PrivilegeDefaults>,
-    ) -> Result<(), RsdebstrapError> {
+    /// Returns the privilege setting as written in the profile.
+    pub fn privilege(&self) -> &Privilege {
         match self {
-            Self::Shell(task) => task.resolve_privilege(defaults),
-            Self::Mitamae(task) => task.resolve_privilege(defaults),
+            Self::Shell(task) => task.privilege(),
+            Self::Mitamae(task) => task.privilege(),
         }
     }
 
-    /// Returns a reference to the task's isolation setting (possibly unresolved).
+    /// Returns the isolation setting as written in the profile.
     pub fn task_isolation(&self) -> &TaskIsolation {
         match self {
             Self::Shell(task) => task.task_isolation(),
             Self::Mitamae(task) => task.task_isolation(),
-        }
-    }
-
-    /// Resolves the isolation setting against profile defaults.
-    pub fn resolve_isolation(&mut self, defaults: &IsolationConfig) {
-        match self {
-            Self::Shell(task) => task.resolve_isolation(defaults),
-            Self::Mitamae(task) => task.resolve_isolation(defaults),
         }
     }
 }

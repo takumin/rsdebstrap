@@ -4,26 +4,17 @@
 // the same contract with randomly generated documents so drift cannot hide in a shape nobody
 // thought to enumerate.
 //
-// The property asserted is the *critical safety invariant*: whenever the structural
-// deserializer accepts a document, the generated schema must also accept it. A violation means
-// editor/CI tooling would flag a config that `apply`/`validate` happily parse — the exact
-// failure mode the schema exists to avoid.
+// Two properties are asserted: the safety one (deserializer accepts => schema accepts) and
+// its converse, which marks silent drift rather than a safety violation and allows only the
+// classes `schema_divergences_are_pinned` also carries. Both are stated in
+// `docs/ARCHITECTURE.md` (JSON Schema generation).
 //
 // Each document is checked twice. First on the `serde_json::Value` itself: acceptance is
 // `serde_json::from_value::<Profile>` (runs `Deserialize`, including the custom
 // `Privilege`/`TaskIsolation`/`ShellTask`/`MitamaeTask` dispatch, but not the semantic
-// `Profile::validate`), and the schema verdict comes from the compiled validator. Then through
-// a YAML round-trip (`yaml_serde::to_string` -> `from_str`), because production parses YAML
-// text and yaml_serde's acceptance surface is not identical to the JSON value model — the
-// round-trip leg is what catches YAML-layer-only divergence (e.g. explicit nulls flowing
-// through `de::null_to_default`).
-
-// The whole crate is compiled out without the default-on `schema` feature: it exercises the
-// generated schema, which does not exist in a schema-less build. Gated in-file rather than
-// via a Cargo `[[test]]` stanza with `required-features` because an explicit test target
-// makes manifest parsing require the file to exist, breaking CI's sparse checkouts (the
-// fetch/build jobs check out the manifest without `tests/`).
-#![cfg(feature = "schema")]
+// `Profile::validate`), and the schema verdict comes from the compiled validator. Then
+// through a YAML round-trip, which is the leg that catches YAML-layer-only divergence
+// (e.g. explicit nulls flowing through `de::null_to_default`).
 
 use std::sync::LazyLock;
 
@@ -38,7 +29,56 @@ static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
     jsonschema::validator_for(&schema).expect("generated schema must be a valid JSON Schema")
 });
 
-// Asserts the safety invariant for a single document.
+// True when a mount entry's `target` is not a well-formed absolute rootfs path.
+//
+// `MountEntry::target` is a `RelPath` spelled absolutely, so the deserializer rejects `""`,
+// a bare `/`, a relative spelling, and any `..` component. JSON Schema can only approximate
+// that with a regex, so the schema stays looser here — in the direction it is allowed to be.
+fn has_unspellable_mount_target(doc: &Value) -> bool {
+    let Some(entries) = doc
+        .get("prepare")
+        .and_then(|p| p.get("mount"))
+        .and_then(|m| m.get("mounts"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    entries.iter().any(|entry| {
+        entry
+            .get("target")
+            .and_then(Value::as_str)
+            .is_some_and(|t| {
+                !t.starts_with('/')
+                    || t.split('/').any(|c| c == "." || c == "..")
+                    || t.trim_matches('/').is_empty()
+            })
+    })
+}
+
+// True when a document contains a `name_servers` entry that is not a valid IP address.
+//
+// `format: ipv4`/`ipv6` is annotational rather than asserting (see `IpAddrSchema`), so the
+// schema accepts what the deserializer rejects. This is the one such divergence the
+// generators can produce; `schema_divergences_are_pinned` pins the same class by example.
+fn has_non_ip_name_server(doc: &Value) -> bool {
+    match doc {
+        Value::Object(map) => map.iter().any(|(key, value)| {
+            if key == "name_servers" {
+                value.as_array().is_some_and(|entries| {
+                    entries.iter().any(|e| {
+                        !e.as_str()
+                            .is_some_and(|s| s.parse::<std::net::IpAddr>().is_ok())
+                    })
+                })
+            } else {
+                has_non_ip_name_server(value)
+            }
+        }),
+        Value::Array(items) => items.iter().any(has_non_ip_name_server),
+        _ => false,
+    }
+}
+
 fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
     let deser_ok = serde_json::from_value::<Profile>(doc.clone()).is_ok();
     let schema_ok = VALIDATOR.is_valid(doc);
@@ -46,6 +86,16 @@ fn assert_no_false_reject(doc: &Value) -> Result<(), TestCaseError> {
         !deser_ok || schema_ok,
         "SCHEMA FALSE-REJECT: deserializer accepts but schema rejects\n{}",
         serde_json::to_string_pretty(doc).unwrap()
+    );
+
+    // The other direction is not a safety violation, but an unpinned one means the schema
+    // silently drifted looser than the parser. Only the annotational-format class above is
+    // allowed to diverge here; anything else is a finding.
+    prop_assert!(
+        !schema_ok || deser_ok || has_non_ip_name_server(doc) || has_unspellable_mount_target(doc),
+        "UNPINNED SCHEMA FALSE-ACCEPT: schema accepts but deserializer rejects\n{}\n{:?}",
+        serde_json::to_string_pretty(doc).unwrap(),
+        serde_json::from_value::<Profile>(doc.clone()).unwrap_err()
     );
 
     // Production parses YAML *text*, whose acceptance surface is wider than the JSON value
@@ -242,7 +292,6 @@ fn resolv_conf_strategy() -> impl Strategy<Value = Option<Value>> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
-    // Randomized provision tasks must never be false-rejected by the schema.
     #[test]
     fn provision_tasks_never_false_rejected(tasks in prop::collection::vec(task_strategy(), 0..4)) {
         let doc = json!({
@@ -254,7 +303,6 @@ proptest! {
         assert_no_false_reject(&doc)?;
     }
 
-    // Randomized bootstrap + defaults blocks must never be false-rejected by the schema.
     #[test]
     fn bootstrap_and_defaults_never_false_rejected(
         bootstrap in bootstrap_strategy(),

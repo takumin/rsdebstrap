@@ -3,6 +3,7 @@
 //! This module provides the trait and implementations for different
 //! bootstrap tools (mmdebstrap, debootstrap, etc.).
 
+use crate::executor::BootstrapProgram;
 use anyhow::Result;
 use url::Url;
 
@@ -26,8 +27,17 @@ pub enum RootfsOutput {
 /// Each bootstrap tool (mmdebstrap, debootstrap, etc.) implements this trait
 /// to provide tool-specific command building logic.
 pub trait BootstrapBackend {
+    /// Returns the program this backend runs.
+    ///
+    /// A [`BootstrapProgram`] rather than a name, because the bootstrap command runs
+    /// with privilege and only a [`PrivilegedProgram`](crate::executor::PrivilegedProgram)
+    /// can carry it.
+    fn program(&self) -> BootstrapProgram;
+
     /// Returns the command name to execute (e.g., "mmdebstrap", "debootstrap").
-    fn command_name(&self) -> &str;
+    fn command_name(&self) -> &str {
+        self.program().program_name()
+    }
 
     /// Builds the command-line arguments for the bootstrap command.
     ///

@@ -9,8 +9,12 @@
 
 use std::os::unix::fs::PermissionsExt;
 
-use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
+use std::sync::Arc;
+
+use rsdebstrap::executor::RealCommandExecutor;
+use rsdebstrap::isolation::{DirectProvider, IsolationProvider};
 use rsdebstrap::privilege::PrivilegeMethod;
+use rsdebstrap::rootfs::DryRunRootfsOps;
 
 #[test]
 fn privilege_wrapping_prepends_escalation_command() {
@@ -40,10 +44,22 @@ fn privilege_wrapping_prepends_escalation_command() {
         std::env::set_var("PATH", &new_path);
     }
 
-    let executor = RealCommandExecutor { dry_run: false };
-    let spec = CommandSpec::new("sh", vec!["-c".into(), "exit 0".into()])
-        .with_privilege(Some(PrivilegeMethod::Sudo));
-    let result = executor.execute(&spec);
+    // Driven through a `DirectContext` because that is the only caller able to build a
+    // task-command spec: the shell a provision task names is the one privileged path whose
+    // program is not a fixed `PrivilegedProgram`, and `CommandSpec::for_task_command` is
+    // reachable only with a token `isolation` alone can produce.
+    let rootfs = camino::Utf8Path::from_path(dir.path()).expect("temp dir path should be UTF-8");
+    let context = DirectProvider
+        .setup(
+            rootfs,
+            Arc::new(RealCommandExecutor::new(false)),
+            Arc::new(DryRunRootfsOps::new(rootfs)),
+        )
+        .expect("direct setup should succeed");
+    let result = context.execute(
+        &["sh".to_string(), "-c".to_string(), "exit 0".to_string()],
+        Some(PrivilegeMethod::Sudo),
+    );
 
     // Restore PATH immediately, before any assertion can unwind.
     // SAFETY: same as above — single-threaded access within this binary.
@@ -63,7 +79,7 @@ fn privilege_wrapping_prepends_escalation_command() {
 
     // The fake sudo recorded its argv: the resolved command path (absolute,
     // ending in /sh) followed by the original args — proving the escalation
-    // command was prepended and spec.command was resolved to argv[0].
+    // command was prepended and spec.command() was resolved to argv[0].
     let recorded = std::fs::read_to_string(&marker).expect("marker file should exist");
     let lines: Vec<&str> = recorded.lines().collect();
     assert_eq!(lines.len(), 3, "expected 3 argv entries, got: {:?}", lines);

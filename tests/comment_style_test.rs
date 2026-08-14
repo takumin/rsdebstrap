@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 const OUTER_DOC: &str = "///";
 const INNER_DOC: &str = "//!";
 
-// `.rs` files under `dir`, recursively.
 fn rust_sources(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let entries =

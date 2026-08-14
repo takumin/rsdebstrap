@@ -18,8 +18,6 @@ use rsdebstrap::privilege::Privilege;
 use tempfile::NamedTempFile;
 use tracing::warn;
 
-// Global mutex to serialize tests that modify the current working directory.
-// This prevents parallel tests from interfering with each other.
 pub static CWD_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[macro_export]
@@ -66,10 +64,6 @@ pub fn dedent(input: &str) -> String {
     out
 }
 
-// Builder for constructing `MmdebstrapConfig` in tests.
-//
-// Provides a fluent API to set only the fields that differ from defaults,
-// reducing boilerplate in test code.
 pub struct MmdebstrapConfigBuilder {
     suite: String,
     target: String,
@@ -255,17 +249,10 @@ impl MmdebstrapConfigBuilder {
     }
 }
 
-// Test helper to create a MmdebstrapConfig with minimal required fields.
-//
-// All optional fields are initialized with their default values.
 pub fn create_mmdebstrap(suite: impl Into<String>, target: impl Into<String>) -> MmdebstrapConfig {
     MmdebstrapConfigBuilder::new(suite, target).build()
 }
 
-// Builder for constructing `DebootstrapConfig` in tests.
-//
-// Provides a fluent API to set only the fields that differ from defaults,
-// reducing boilerplate in test code.
 pub struct DebootstrapConfigBuilder {
     suite: String,
     target: String,
@@ -395,9 +382,6 @@ impl DebootstrapConfigBuilder {
     }
 }
 
-// Test helper to create a DebootstrapConfig with minimal required fields.
-//
-// All optional fields are initialized with their default values.
 pub fn create_debootstrap(
     suite: impl Into<String>,
     target: impl Into<String>,
@@ -405,7 +389,6 @@ pub fn create_debootstrap(
     DebootstrapConfigBuilder::new(suite, target).build()
 }
 
-// Extracts MmdebstrapConfig from a Profile, returning `None` if it's not the mmdebstrap backend.
 pub fn get_mmdebstrap_config(profile: &Profile) -> Option<&MmdebstrapConfig> {
     match &profile.bootstrap {
         Bootstrap::Mmdebstrap(cfg) => Some(cfg),
@@ -413,7 +396,6 @@ pub fn get_mmdebstrap_config(profile: &Profile) -> Option<&MmdebstrapConfig> {
     }
 }
 
-// Extracts DebootstrapConfig from a Profile, returning `None` if it's not the debootstrap backend.
 pub fn get_debootstrap_config(profile: &Profile) -> Option<&DebootstrapConfig> {
     match &profile.bootstrap {
         Bootstrap::Debootstrap(cfg) => Some(cfg),
@@ -421,7 +403,6 @@ pub fn get_debootstrap_config(profile: &Profile) -> Option<&DebootstrapConfig> {
     }
 }
 
-// Loads a Profile from YAML content in a temporary file.
 pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
     let yaml = yaml.as_ref();
     let mut file = NamedTempFile::new()?;
@@ -433,7 +414,6 @@ pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
     Ok(load_profile(path)?)
 }
 
-// Loads a Profile from YAML content, returning typed `RsdebstrapError`.
 pub fn load_profile_from_yaml_typed(
     yaml: impl AsRef<str>,
 ) -> std::result::Result<Profile, RsdebstrapError> {
@@ -448,19 +428,11 @@ pub fn load_profile_from_yaml_typed(
     load_profile(path)
 }
 
-// RAII guard that restores the current working directory when dropped.
-//
-// This guard saves the current directory on creation and automatically
-// restores it when it goes out of scope, even if a panic occurs.
 pub struct CwdGuard {
     original: Utf8PathBuf,
 }
 
 impl CwdGuard {
-    // Creates a new CwdGuard, saving the current working directory.
-    //
-    // # Errors
-    // Returns an error if the current directory cannot be determined.
     pub fn new() -> Result<Self> {
         let original = std::env::current_dir()?;
         let original = Utf8PathBuf::from_path_buf(original).map_err(|path| {
@@ -469,10 +441,6 @@ impl CwdGuard {
         Ok(Self { original })
     }
 
-    // Changes the current working directory to the specified path.
-    //
-    // # Errors
-    // Returns an error if the directory change fails.
     pub fn change_to(&self, path: &std::path::Path) -> Result<()> {
         std::env::set_current_dir(path)
             .with_context(|| format!("failed to change directory to {}", path.display()))
@@ -491,9 +459,24 @@ impl Drop for CwdGuard {
     }
 }
 
-// Mock isolation context for testing task execution.
+// Real descriptor-anchored ops over the mock's rootfs, so tests can assert what a task
+// actually left on disk.
+//
+// Panics rather than degrading to `DryRunRootfsOps`: the mock reports `dry_run() == false`,
+// so a silent substitution would leave every "the script was staged" and "the staged script
+// was cleaned up" assertion trivially true about a file that was never written. `open`
+// refuses a symlinked component, which a `TMPDIR` pointing through one would trip for every
+// fixture at once -- exactly the case that has to be loud.
+pub fn mock_rootfs_ops(rootfs: &Utf8Path) -> std::sync::Arc<dyn rsdebstrap::rootfs::RootfsOps> {
+    std::sync::Arc::new(
+        rsdebstrap::rootfs::LocalRootfsOps::open(rootfs)
+            .unwrap_or_else(|e| panic!("fixture rootfs {rootfs} must open: {e}")),
+    )
+}
+
 pub struct MockContext {
     rootfs: Utf8PathBuf,
+    ops: std::sync::Arc<dyn rsdebstrap::rootfs::RootfsOps>,
     dry_run: bool,
     should_fail: bool,
     exit_code: Option<i32>,
@@ -508,6 +491,7 @@ impl MockContext {
     pub fn new(rootfs: &Utf8Path) -> Self {
         Self {
             rootfs: rootfs.to_owned(),
+            ops: mock_rootfs_ops(rootfs),
             dry_run: false,
             should_fail: false,
             exit_code: None,
@@ -521,57 +505,31 @@ impl MockContext {
 
     pub fn new_dry_run(rootfs: &Utf8Path) -> Self {
         Self {
-            rootfs: rootfs.to_owned(),
             dry_run: true,
-            should_fail: false,
-            exit_code: None,
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: false,
+            ..Self::new(rootfs)
         }
     }
 
     pub fn with_failure(rootfs: &Utf8Path, exit_code: i32) -> Self {
         Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
             should_fail: true,
             exit_code: Some(exit_code),
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: false,
+            ..Self::new(rootfs)
         }
     }
 
     pub fn with_error(rootfs: &Utf8Path, message: &str) -> Self {
         Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
-            should_fail: false,
-            exit_code: None,
             should_error: true,
             error_message: Some(message.to_string()),
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
-            return_no_status: false,
+            ..Self::new(rootfs)
         }
     }
 
     pub fn with_no_status(rootfs: &Utf8Path) -> Self {
         Self {
-            rootfs: rootfs.to_owned(),
-            dry_run: false,
-            should_fail: false,
-            exit_code: None,
-            should_error: false,
-            error_message: None,
-            executed_commands: RefCell::new(Vec::new()),
-            executed_privileges: RefCell::new(Vec::new()),
             return_no_status: true,
+            ..Self::new(rootfs)
         }
     }
 
@@ -584,9 +542,9 @@ impl MockContext {
     }
 }
 
-impl IsolationContext for MockContext {
-    fn name(&self) -> &'static str {
-        "mock"
+impl rsdebstrap::isolation::RootfsContext for MockContext {
+    fn rootfs_ops(&self) -> &dyn rsdebstrap::rootfs::RootfsOps {
+        &*self.ops
     }
 
     fn rootfs(&self) -> &Utf8Path {
@@ -596,9 +554,11 @@ impl IsolationContext for MockContext {
     fn dry_run(&self) -> bool {
         self.dry_run
     }
+}
 
-    fn executor(&self) -> &dyn rsdebstrap::executor::CommandExecutor {
-        unimplemented!("MockContext does not provide a real executor")
+impl IsolationContext for MockContext {
+    fn name(&self) -> &'static str {
+        "mock"
     }
 
     fn execute(

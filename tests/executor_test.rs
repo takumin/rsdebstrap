@@ -3,7 +3,7 @@ use rsdebstrap::executor::{CommandExecutor, CommandSpec, RealCommandExecutor};
 
 #[test]
 fn dry_run_skips_command_lookup() {
-    let executor = RealCommandExecutor { dry_run: true };
+    let executor = RealCommandExecutor::new(true);
     let spec = CommandSpec::new("definitely-not-a-command", Vec::new());
 
     let result = executor
@@ -14,7 +14,7 @@ fn dry_run_skips_command_lookup() {
 
 #[test]
 fn non_dry_run_fails_for_nonexistent_command() {
-    let executor = RealCommandExecutor { dry_run: false };
+    let executor = RealCommandExecutor::new(false);
     let spec = CommandSpec::new("this-command-should-not-exist", Vec::new());
 
     let result = executor.execute(&spec);
@@ -39,7 +39,7 @@ fn non_dry_run_fails_for_nonexistent_command() {
 
 #[test]
 fn execute_checked_returns_error_for_non_zero_exit() {
-    let executor = RealCommandExecutor { dry_run: false };
+    let executor = RealCommandExecutor::new(false);
     let spec = CommandSpec::new("sh", vec!["-c".into(), "exit 7".into()]);
 
     let err = executor
@@ -64,7 +64,7 @@ fn execute_checked_returns_error_for_non_zero_exit() {
 
 #[test]
 fn cwd_is_applied_to_child() {
-    let executor = RealCommandExecutor { dry_run: false };
+    let executor = RealCommandExecutor::new(false);
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     // A distinctive name; the guard below makes the negative control meaningful.
     let sentinel = "rsdebstrap_cwd_sentinel_negctl";
@@ -80,7 +80,6 @@ fn cwd_is_applied_to_child() {
         "sentinel unexpectedly present in the test's working directory"
     );
 
-    // With cwd applied, `test -f <sentinel>` finds the file created in that dir.
     let spec =
         CommandSpec::new("sh", vec!["-c".into(), format!("test -f {sentinel}")]).with_cwd(cwd);
     let result = executor.execute(&spec).expect("execute should spawn");
@@ -96,7 +95,7 @@ fn cwd_is_applied_to_child() {
 
 #[test]
 fn env_is_applied_to_child() {
-    let executor = RealCommandExecutor { dry_run: false };
+    let executor = RealCommandExecutor::new(false);
     let var = "RSDEBSTRAP_ENV_TEST_MARKER";
     // Guard the negative control: the var must be absent from the inherited
     // environment, otherwise the unset-case assertion proves nothing.
@@ -106,7 +105,6 @@ fn env_is_applied_to_child() {
     );
     let script = format!("test \"${var}\" = present");
 
-    // With the env var set, the shell test succeeds (exit 0).
     let spec = CommandSpec::new("sh", vec!["-c".into(), script.clone()]).with_env(var, "present");
     let result = executor.execute(&spec).expect("execute should spawn");
     assert_eq!(result.code(), Some(0), "env var should be visible to the child");
