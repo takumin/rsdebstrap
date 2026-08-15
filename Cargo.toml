@@ -21,7 +21,7 @@ categories = ["command-line-utilities"]
 anyhow = "1.0.98"
 # Carries the helper protocol's file payloads. JSON has no binary type, and serde_json
 # renders a `Vec<u8>` as a decimal array — 4.6 bytes of text per byte of file.
-base64 = "0.22.1"
+base64 = "0.23.0"
 camino = { version = "1.1.9", features = ["serde1"] }
 clap = { version = "4.5.37", features = ["derive"] }
 clap_complete = "4.5.65"
