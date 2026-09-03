@@ -46,7 +46,7 @@ yaml_serde = "0.10.4"
 # The `=` pins below are applied automatically by Renovate's :pinDevDependencies (part of
 # config:best-practices; see .renovaterc.json), not a hard requirement of these crates —
 # Cargo.lock already pins exact versions, so test runs stay reproducible without them.
-jsonschema = "=0.52.1"
+jsonschema = "=0.53.0"
 proptest = "=1.11.0"
 # `process` (for `umask`) is a test-only need: tests/rootfs_mode_test.rs pins that
 # `RootfsOps::write_file` lands its mode exactly, which is only observable under a
