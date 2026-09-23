@@ -1,7 +1,7 @@
 ---
 runner:
   editorconfig-checker:
-    cmd: ec -no-color
+    cmd: editorconfig-checker -no-color -format default
     errorformat:
     - '%-G%+P%f:'
     - '%\s%+%l: %m'
