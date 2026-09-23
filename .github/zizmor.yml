@@ -1,0 +1,7 @@
+---
+rules:
+  # The `$/` self-repository syntax this audit recommends is rejected by
+  # actionlint (rhysd/actionlint#711), which also gates CI. Re-enable once
+  # actionlint accepts it, then migrate the `./.github/workflows/` calls.
+  self-repository:
+    disable: true
