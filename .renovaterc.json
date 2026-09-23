@@ -7,5 +7,35 @@
 		"github>aquaproj/aqua-renovate-config:file#2.13.0(.aqua/pkgs/.*\\.ya?ml)"
 	],
 	"timezone": "Asia/Tokyo",
-	"automerge": true
+	"automerge": true,
+	"customManagers": [
+		{
+			"customType": "regex",
+			"description": "Keep the MSRV in step with the pinned toolchain in rust-toolchain.toml",
+			"managerFilePatterns": ["/(^|/)Cargo\\.toml$/"],
+			"matchStrings": ["\\nrust-version = \"(?<currentValue>\\d+\\.\\d+)\""],
+			"depNameTemplate": "rust",
+			"datasourceTemplate": "rust-version",
+			"versioningTemplate": "rust-release-channel",
+			"depTypeTemplate": "msrv"
+		},
+		{
+			"customType": "regex",
+			"description": "Keep the README's stated minimum Rust version in step with the MSRV",
+			"managerFilePatterns": ["/^README\\.md$/"],
+			"matchStrings": ["\\*\\*Rust (?<currentValue>\\d+\\.\\d+)\\+\\*\\*"],
+			"depNameTemplate": "rust",
+			"datasourceTemplate": "rust-version",
+			"versioningTemplate": "rust-release-channel",
+			"depTypeTemplate": "msrv"
+		}
+	],
+	"packageRules": [
+		{
+			"description": "Update the toolchain pin and the MSRV in one PR",
+			"matchDatasources": ["rust-version"],
+			"matchDepNames": ["rust"],
+			"groupName": "rust"
+		}
+	]
 }
