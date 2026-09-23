@@ -5,7 +5,7 @@ description = "A declarative CLI tool to build Debian-based rootfs images using 
 license = "Apache-2.0"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.97"
+rust-version = "1.98"
 readme = "README.md"
 # Distribution is via GitHub Releases (signed binaries), not crates.io. The publish
 # metadata below (description/keywords/categories/homepage/repository) is retained for

@@ -44,7 +44,7 @@ must be on your `PATH`:
   commands that need root.
 - A **`mitamae`** binary — only when a profile uses the `mitamae` provisioner.
 
-Building from source additionally requires **Rust 1.97+** (edition 2024). This
+Building from source additionally requires **Rust 1.98+** (edition 2024). This
 minimum supported version is declared as `rust-version` in `Cargo.toml`, so
 `cargo` and downstream packagers can read it directly.
 
