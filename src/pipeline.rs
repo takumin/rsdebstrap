@@ -437,6 +437,7 @@ mod tests {
         resolv_conf: None,
     };
     static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig {
+        apt_clean: false,
         resolv_conf: None,
         output: crate::phase::OutputConfig {
             kernel: None,
@@ -604,6 +605,15 @@ mod tests {
 
         fn remove_dir(&self, _path: &RelPath) -> std::result::Result<bool, RsdebstrapError> {
             Ok(true)
+        }
+
+        fn clear_dir(
+            &self,
+            path: &RelPath,
+            _keep: &[String],
+        ) -> std::result::Result<u64, RsdebstrapError> {
+            self.writes.lock().unwrap().push(format!("clear {path}"));
+            Ok(0)
         }
     }
 

@@ -76,6 +76,10 @@ pub enum Request {
     RemoveDir {
         path: RelPath,
     },
+    ClearDir {
+        path: RelPath,
+        keep: Vec<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -84,6 +88,7 @@ pub enum Response {
     Flag(bool),
     Taken(Option<TakenEntry>),
     Chunk(Option<ExportChunk>),
+    Count(u64),
     Error(String),
 }
 
@@ -203,6 +208,7 @@ fn dispatch(anchor: &CheckedAnchor, request: Request) -> Response {
         } => ops.read_chunk(&path, offset, expect).map(Response::Chunk),
         Request::CreateDir { path, mode } => ops.create_dir(&path, mode).map(Response::Flag),
         Request::RemoveDir { path } => ops.remove_dir(&path).map(Response::Flag),
+        Request::ClearDir { path, keep } => ops.clear_dir(&path, &keep).map(Response::Count),
     };
     result.unwrap_or_else(|e| Response::Error(e.to_string()))
 }
@@ -424,7 +430,7 @@ impl PrivilegedRootfsOps {
         match self.request(&request)? {
             Response::Unit => Ok(()),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Flag(_) | Response::Taken(_) | Response::Chunk(_) => {
+            Response::Flag(_) | Response::Taken(_) | Response::Chunk(_) | Response::Count(_) => {
                 Err(self.desynchronised())
             }
         }
@@ -434,7 +440,9 @@ impl PrivilegedRootfsOps {
         match self.request(&request)? {
             Response::Flag(flag) => Ok(flag),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Unit | Response::Taken(_) | Response::Chunk(_) => Err(self.desynchronised()),
+            Response::Unit | Response::Taken(_) | Response::Chunk(_) | Response::Count(_) => {
+                Err(self.desynchronised())
+            }
         }
     }
 
@@ -451,7 +459,9 @@ impl PrivilegedRootfsOps {
         })? {
             Response::Chunk(chunk) => Ok(chunk),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Unit | Response::Flag(_) | Response::Taken(_) => Err(self.desynchronised()),
+            Response::Unit | Response::Flag(_) | Response::Taken(_) | Response::Count(_) => {
+                Err(self.desynchronised())
+            }
         }
     }
 }
@@ -487,7 +497,9 @@ impl RootfsOps for PrivilegedRootfsOps {
         match self.request(&Request::Take { path: path.clone() })? {
             Response::Taken(entry) => Ok(entry),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Unit | Response::Flag(_) | Response::Chunk(_) => Err(self.desynchronised()),
+            Response::Unit | Response::Flag(_) | Response::Chunk(_) | Response::Count(_) => {
+                Err(self.desynchronised())
+            }
         }
     }
 
@@ -500,6 +512,19 @@ impl RootfsOps for PrivilegedRootfsOps {
 
     fn remove_dir(&self, path: &RelPath) -> Result<bool> {
         self.flag(Request::RemoveDir { path: path.clone() })
+    }
+
+    fn clear_dir(&self, path: &RelPath, keep: &[String]) -> Result<u64> {
+        match self.request(&Request::ClearDir {
+            path: path.clone(),
+            keep: keep.to_vec(),
+        })? {
+            Response::Count(count) => Ok(count),
+            Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
+            Response::Unit | Response::Flag(_) | Response::Taken(_) | Response::Chunk(_) => {
+                Err(self.desynchronised())
+            }
+        }
     }
 
     fn export_file(&self, path: &RelPath, sink: &mut dyn Write) -> Result<Option<ExportedFile>> {
@@ -794,6 +819,28 @@ mod tests {
         };
         assert_eq!(chunk.data, b"kernel");
         assert_eq!(chunk.stamp.size(), 6);
+    }
+
+    #[test]
+    fn clear_dir_round_trips_through_dispatch() {
+        let (_tmp, root) = rootfs();
+        std::fs::write(root.join("etc/lock"), b"").unwrap();
+        std::fs::write(root.join("etc/stale"), b"").unwrap();
+        let anchor = CheckedAnchor::open(&root).unwrap();
+
+        let request = Request::ClearDir {
+            path: RelPath::parse("/etc").unwrap(),
+            keep: vec!["lock".to_string()],
+        };
+        let encoded = serde_json::to_string(&request).unwrap();
+        let response = round_trip(&anchor, serde_json::from_str(&encoded).unwrap());
+        let encoded = serde_json::to_string(&response).unwrap();
+        assert!(
+            matches!(serde_json::from_str(&encoded).unwrap(), Response::Count(1)),
+            "got {response:?}"
+        );
+        assert!(root.join("etc/lock").exists());
+        assert!(!root.join("etc/stale").exists());
     }
 
     #[test]
