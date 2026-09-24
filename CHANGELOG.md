@@ -102,6 +102,12 @@ and this project adheres to
   `/etc/apt/preferences.d/<name>.pref`, one stanza per entry of `pins`
   (`packages`, `pin`, `priority`, optional `explanation`). Like repositories,
   they are removed before `assemble` unless marked `keep: true`.
+- `type: apt` provision task, running `apt-get update` (with `update: true`)
+  and `apt-get install` for the packages in `install`, non-interactively and
+  with `--no-install-recommends` unless `recommends: true`. `update` defaults to
+  `false` so installs split over several tasks do not refresh the lists each
+  time. Package entries are validated as `name[:arch][=version|/release]`, so
+  none can reach `apt-get` as an option, and `isolation: false` is refused.
 - `tests/privileged_helper_test.rs`, which exercises real `sudo` escalation
   against a root-owned rootfs. `#[ignore]`d and self-skipping when passwordless
   sudo is unavailable.
