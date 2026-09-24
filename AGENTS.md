@@ -51,7 +51,7 @@ Reading a *host* file has the same shape from the other side. `read_host_file` o
 
 This is mostly enforced by types rather than by review. `CommandSpec`'s fields are
 private and privilege is only reachable through `CommandSpec::privileged`, which takes
-the closed `PrivilegedProgram` enum — `mount`, `umount`, `chroot`, and the bootstrap
+the closed `PrivilegedProgram` enum — `mount`, `umount`, `chroot`, `mksquashfs`, and the bootstrap
 backends, all programs with no syscall equivalent here. There is no `cp` variant and no
 way to set the field directly, so the old shape does not compile.
 
@@ -63,7 +63,10 @@ is bounded by the context trait it is handed, and that differs per phase:
   pipeline's RAII guards, not by the task.
 - `AssembleItem::execute` takes a `RootfsContext` (`rootfs`/`dry_run`/`rootfs_ops`), which
   has no `execute` method. Assemble writes the rootfs's final state and **cannot run a
-  program at all**; that is permanent by design, not an oversight to fix.
+  program at all**; that is permanent by design, not an oversight to fix. `assemble.output`
+  is not an `AssembleItem`: the pipeline acts on it after the items, and the only program it
+  runs is the fixed `PrivilegedProgram::Mksquashfs`. Kernel and initramfs are read out with
+  `RootfsOps::export_file`, never with `cp`.
 - `ProvisionItem::execute` takes the full `IsolationContext`. Running a program a profile
   declared is what provision is for.
 

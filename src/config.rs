@@ -499,6 +499,7 @@ impl Profile {
             &self.prepare,
             &self.provision,
             &self.assemble,
+            &self.dir,
             self.defaults.privilege.as_ref(),
             &self.defaults.isolation,
         )
@@ -526,12 +527,15 @@ impl Profile {
             let output = backend
                 .rootfs_output(&self.dir)
                 .map_err(RsdebstrapError::from_anyhow_or_validation)?;
-            if let RootfsOutput::NonDirectory { reason } = output {
-                return Err(RsdebstrapError::Validation(format!(
-                    "pipeline tasks require directory output but got: {}. \
-                    Use backend-specific hooks or change format to directory.",
-                    reason
-                )));
+            match output {
+                RootfsOutput::NonDirectory { reason } => {
+                    return Err(RsdebstrapError::Validation(format!(
+                        "pipeline tasks require directory output but got: {}. \
+                        Use backend-specific hooks or change format to directory.",
+                        reason
+                    )));
+                }
+                RootfsOutput::Directory(rootfs) => self.validate_output(&rootfs)?,
             }
         }
 
@@ -593,6 +597,27 @@ impl Profile {
         // Mount entry validation and mount order are handled by MountTask::validate()
         // which is called by the pipeline validation path.
 
+        Ok(())
+    }
+
+    /// Validates what `assemble.output` needs from outside its own fields.
+    ///
+    /// An output written over the bootstrap target would replace the rootfs directory the
+    /// image is being packed from -- `renameat` refuses a file over a non-empty directory, so
+    /// the build would fail only at the very end, after everything expensive has run.
+    fn validate_output(&self, rootfs: &Utf8Path) -> Result<(), RsdebstrapError> {
+        let output = &self.assemble.output;
+        for file in output.files() {
+            if self.dir.join(file) == rootfs {
+                return Err(RsdebstrapError::Validation(format!(
+                    "assemble output '{}' would be written over the bootstrap target {}",
+                    file, rootfs
+                )));
+            }
+        }
+        if output.rootfs.is_some() {
+            validate_command_in_path("mksquashfs", "mksquashfs command")?;
+        }
         Ok(())
     }
 

@@ -5,7 +5,8 @@
 //!
 //! 1. **Prepare** — preparation tasks before main provisioning
 //! 2. **Provision** — main configuration tasks (e.g., package installation, config)
-//! 3. **Assemble** — finalization tasks (e.g., cleanup scripts, image creation)
+//! 3. **Assemble** — finalization tasks (the permanent resolv.conf), then the build
+//!    artifacts written next to the rootfs (kernel, initramfs, squashfs image)
 //!
 //! Each task gets its own isolation context based on its resolved isolation setting.
 
@@ -20,15 +21,17 @@ use crate::executor::CommandExecutor;
 use crate::isolation::mount::Unmounted;
 use crate::isolation::resolv_conf::{Prepared, Restored};
 use crate::isolation::{DirectProvider, IsolationProvider, PlainRootfsContext};
+use crate::phase::assemble::output::OutputContext;
 use crate::phase::{
     AssembleConfig, PhaseItem, PrepareConfig, ProvisionItem, ProvisionTask, ResolvedProvisionTask,
 };
-use crate::privilege::PrivilegeDefaults;
+use crate::privilege::{PrivilegeDefaults, PrivilegeMethod};
 use crate::rootfs::RootfsOps;
 
 const PHASE_PREPARE: &str = "prepare";
 const PHASE_PROVISION: &str = "provision";
 const PHASE_ASSEMBLE: &str = "assemble";
+const PHASE_ASSEMBLE_OUTPUT: &str = "assemble output";
 
 /// Pipeline orchestrator for executing tasks in phases.
 ///
@@ -42,6 +45,10 @@ pub struct Pipeline<'a> {
     prepare: &'a PrepareConfig,
     provision: Vec<ResolvedProvisionTask<'a>>,
     assemble: &'a AssembleConfig,
+    /// Where `assemble.output` writes: the profile's `dir`.
+    output_dir: &'a Utf8Path,
+    /// The run's `defaults.privilege`, which escalates `mksquashfs`.
+    privilege: Option<PrivilegeMethod>,
 }
 
 impl<'a> Pipeline<'a> {
@@ -69,6 +76,7 @@ impl<'a> Pipeline<'a> {
         prepare: &'a PrepareConfig,
         provision: &'a [ProvisionTask],
         assemble: &'a AssembleConfig,
+        output_dir: &'a Utf8Path,
         privilege_defaults: Option<&PrivilegeDefaults>,
         isolation_defaults: &IsolationConfig,
     ) -> Result<Self, RsdebstrapError> {
@@ -80,6 +88,8 @@ impl<'a> Pipeline<'a> {
             prepare,
             provision,
             assemble,
+            output_dir,
+            privilege: privilege_defaults.map(|d| d.method),
         })
     }
 
@@ -98,6 +108,9 @@ impl<'a> Pipeline<'a> {
         validate_phase_items(PHASE_PREPARE, &self.prepare.items())?;
         validate_phase_items(PHASE_PROVISION, &provision_items(&self.provision))?;
         validate_phase_items(PHASE_ASSEMBLE, &self.assemble.items())?;
+        let outputs = self.assemble.output.items();
+        validate_phase_items(PHASE_ASSEMBLE_OUTPUT, &outputs.iter().collect::<Vec<_>>())?;
+        self.assemble.output.validate_distinct()?;
         Ok(())
     }
 
@@ -129,7 +142,6 @@ impl<'a> Pipeline<'a> {
             .into());
         }
 
-        let dry_run = executor.dry_run();
         // Not a claim that guards were armed: the refusal above is what makes "there is
         // nothing for one to do" true here.
         let provisioned = self.run_prepare_and_provision(
@@ -141,7 +153,7 @@ impl<'a> Pipeline<'a> {
         // Not a claim that guards were run and found to have done nothing: the refusal
         // above is what makes "nothing was detached, nothing was mounted" true here.
         let restored = Restored::nothing_was_detached(provisioned);
-        self.run_assemble(Unmounted::nothing_was_mounted(restored), rootfs, &ops, dry_run)
+        self.run_assemble(Unmounted::nothing_was_mounted(restored), rootfs, &executor, &ops)
     }
 
     /// Executes the prepare and provision phases (the first pipeline stage)
@@ -229,22 +241,40 @@ impl<'a> Pipeline<'a> {
     /// Executes the assemble phase (the second pipeline stage) and logs
     /// pipeline completion.
     ///
+    /// The assemble items run first, and the outputs after them, so the kernel, the
+    /// initramfs and the image are taken from the rootfs in its final state -- the
+    /// permanent resolv.conf included.
+    ///
     /// Returns immediately if the pipeline has no tasks.
     pub(crate) fn run_assemble(
         &self,
         _unmounted: Unmounted,
         rootfs: &Utf8Path,
+        executor: &Arc<dyn CommandExecutor>,
         ops: &Arc<dyn RootfsOps>,
-        dry_run: bool,
     ) -> Result<()> {
         if self.is_empty() {
             return Ok(());
         }
 
         // Assemble takes no isolation provider: its items only write files, and
-        // the values a `RootfsContext` needs are already here.
-        let ctx = PlainRootfsContext::new(rootfs, ops.clone(), dry_run);
+        // the values a `RootfsContext` needs are already here. That context has no
+        // `execute`, so an assemble item still cannot run a program; the executor below
+        // reaches the outputs only, which run the one fixed `mksquashfs`.
+        let ctx = PlainRootfsContext::new(rootfs, ops.clone(), executor.dry_run());
         run_phase_items(PHASE_ASSEMBLE, &self.assemble.items(), |task| task.execute(&ctx))?;
+
+        let output_ctx = OutputContext {
+            rootfs,
+            dir: self.output_dir,
+            ops: ops.as_ref(),
+            executor: executor.as_ref(),
+            privilege: self.privilege,
+        };
+        let outputs = self.assemble.output.items();
+        run_phase_items(PHASE_ASSEMBLE_OUTPUT, &outputs.iter().collect::<Vec<_>>(), |item| {
+            item.write(&output_ctx)
+        })?;
         info!("pipeline completed successfully");
         Ok(())
     }
@@ -398,11 +428,25 @@ mod tests {
         mount: None,
         resolv_conf: None,
     };
-    static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig { resolv_conf: None };
+    static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig {
+        resolv_conf: None,
+        output: crate::phase::OutputConfig {
+            kernel: None,
+            initramfs: None,
+            rootfs: None,
+        },
+    };
 
     fn provision_pipeline(tasks: &[ProvisionTask]) -> Pipeline<'_> {
-        Pipeline::new(&EMPTY_PREPARE, tasks, &EMPTY_ASSEMBLE, None, &IsolationConfig::default())
-            .expect("no task declares `privilege: true`, so resolution cannot fail")
+        Pipeline::new(
+            &EMPTY_PREPARE,
+            tasks,
+            &EMPTY_ASSEMBLE,
+            Utf8Path::new("/tmp"),
+            None,
+            &IsolationConfig::default(),
+        )
+        .expect("no task declares `privilege: true`, so resolution cannot fail")
     }
 
     // Records executed commands in order, optionally failing on specific calls.
@@ -493,6 +537,15 @@ mod tests {
     }
 
     impl RootfsOps for RecordingOps {
+        fn export_file(
+            &self,
+            path: &RelPath,
+            _sink: &mut dyn std::io::Write,
+        ) -> std::result::Result<Option<crate::rootfs::ExportedFile>, RsdebstrapError> {
+            self.writes.lock().unwrap().push(format!("export {path}"));
+            Ok(None)
+        }
+
         fn write_file(
             &self,
             path: &RelPath,
@@ -630,9 +683,15 @@ mod tests {
             }),
         };
         let tasks = [inline_task("echo 1")];
-        let pipeline =
-            Pipeline::new(&prepare, &tasks, &EMPTY_ASSEMBLE, None, &IsolationConfig::default())
-                .expect("no task declares `privilege: true`, so resolution cannot fail");
+        let pipeline = Pipeline::new(
+            &prepare,
+            &tasks,
+            &EMPTY_ASSEMBLE,
+            Utf8Path::new("/tmp"),
+            None,
+            &IsolationConfig::default(),
+        )
+        .expect("no task declares `privilege: true`, so resolution cannot fail");
         let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
         let rootfs = Utf8Path::new("/tmp/rootfs");
 
@@ -660,6 +719,7 @@ mod tests {
             &EMPTY_PREPARE,
             &tasks,
             &EMPTY_ASSEMBLE,
+            Utf8Path::new("/tmp"),
             None,
             &IsolationConfig::default(),
         )
@@ -693,9 +753,15 @@ mod tests {
             }),
         };
         let tasks = [inline_task("echo 1")];
-        let pipeline =
-            Pipeline::new(&prepare, &tasks, &EMPTY_ASSEMBLE, None, &IsolationConfig::default())
-                .expect("no task declares `privilege: true`, so resolution cannot fail");
+        let pipeline = Pipeline::new(
+            &prepare,
+            &tasks,
+            &EMPTY_ASSEMBLE,
+            Utf8Path::new("/tmp"),
+            None,
+            &IsolationConfig::default(),
+        )
+        .expect("no task declares `privilege: true`, so resolution cannot fail");
         let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
 
         let err = pipeline

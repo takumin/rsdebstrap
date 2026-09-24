@@ -53,6 +53,14 @@ pub enum PrivilegedProgram {
     Chroot,
     /// The bootstrap backend that builds the rootfs in the first place.
     Bootstrap(BootstrapProgram),
+    /// `mksquashfs`, packing the finished rootfs into an image for `assemble.output.rootfs`.
+    ///
+    /// It reads the rootfs by path, which is the shape the rest of this list has too: it runs
+    /// on the host against a tree nothing is executing in any more, stores the symlinks it
+    /// meets rather than following them, and writes one file outside the rootfs. Building a
+    /// squashfs image is not something this crate can do with syscalls, and reading every
+    /// file of a rootfs `mmdebstrap` built under `sudo` needs root.
+    Mksquashfs,
 }
 
 /// The bootstrap backends, as programs rather than as configuration.
@@ -80,6 +88,7 @@ impl PrivilegedProgram {
             Self::Umount => "umount",
             Self::Chroot => "chroot",
             Self::Bootstrap(backend) => backend.program_name(),
+            Self::Mksquashfs => "mksquashfs",
         }
     }
 }

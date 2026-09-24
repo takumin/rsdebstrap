@@ -2,8 +2,19 @@
 	"$defs": {
 		"AssembleConfig": {
 			"additionalProperties": false,
-			"description": "Assemble phase configuration (named-field, schema-first).\n\nThe single field is an optional singleton; a duplicate YAML key is rejected\nby `yaml_serde` at parse time and an unknown key by `deny_unknown_fields`.",
+			"description": "Assemble phase configuration (named-field, schema-first).\n\nEach field is an optional singleton; a duplicate YAML key is rejected by `yaml_serde` at\nparse time and an unknown key by `deny_unknown_fields`.",
 			"properties": {
+				"output": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/OutputConfig"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "Build artifacts written into `dir` after the rootfs is final."
+				},
 				"resolv_conf": {
 					"anyOf": [
 						{
@@ -59,6 +70,27 @@
 					]
 				}
 			},
+			"type": "object"
+		},
+		"BootFileOutput": {
+			"additionalProperties": false,
+			"description": "A file copied out of the rootfs, such as the kernel or the initramfs.",
+			"properties": {
+				"file": {
+					"description": "Name of the file to write in `dir` (a plain file name, not a path).",
+					"type": "string"
+				},
+				"source": {
+					"description": "Absolute path inside the rootfs to copy from. Symlinks are followed, confined to the\nrootfs. When omitted, the kernel is looked up at `/vmlinuz` then `/boot/vmlinuz`, and\nthe initramfs at `/initrd.img` then `/boot/initrd.img` -- the links Debian's kernel\npackages maintain to the newest installed version.",
+					"type": [
+						"string",
+						"null"
+					]
+				}
+			},
+			"required": [
+				"file"
+			],
 			"type": "object"
 		},
 		"Bootstrap": {
@@ -612,6 +644,49 @@
 			},
 			"type": "object"
 		},
+		"OutputConfig": {
+			"additionalProperties": false,
+			"description": "Build artifacts to write into `dir` once the rootfs is final.\n\nEach is written under its own name directly in `dir`, next to the bootstrap target, and\nreplaces an existing file of that name atomically. They are written in the order\n`kernel`, `initramfs`, `rootfs`, after every other assemble task.",
+			"properties": {
+				"initramfs": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/BootFileOutput"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "Copy the initramfs image out of the rootfs."
+				},
+				"kernel": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/BootFileOutput"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "Copy the kernel image out of the rootfs."
+				},
+				"rootfs": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/SquashfsOutput"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "Pack the rootfs into a squashfs image with `mksquashfs`."
+				}
+			},
+			"type": "object"
+		},
 		"PrepareConfig": {
 			"additionalProperties": false,
 			"description": "Prepare phase configuration (named-field, schema-first).\n\nBoth fields are optional singletons. A duplicate YAML key (e.g. two `mount`\nentries) is rejected by `yaml_serde` at parse time, and an unknown key is\nrejected by `deny_unknown_fields` — so the \"at most one\" invariants hold\nstructurally instead of being validated after parsing.",
@@ -864,6 +939,42 @@
 					]
 				}
 			},
+			"type": "object"
+		},
+		"SquashfsCompression": {
+			"description": "Compression algorithms `mksquashfs` accepts for `-comp`.",
+			"enum": [
+				"gzip",
+				"lzo",
+				"lz4",
+				"xz",
+				"zstd"
+			],
+			"type": "string"
+		},
+		"SquashfsOutput": {
+			"additionalProperties": false,
+			"description": "The rootfs packed into a squashfs image.",
+			"properties": {
+				"compression": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/SquashfsCompression"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "Compression algorithm passed to `mksquashfs -comp`. When omitted, `mksquashfs`\nuses its own default (gzip)."
+				},
+				"file": {
+					"description": "Name of the image to write in `dir` (a plain file name, not a path).",
+					"type": "string"
+				}
+			},
+			"required": [
+				"file"
+			],
 			"type": "object"
 		},
 		"TaskIsolation": {

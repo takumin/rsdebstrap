@@ -4,7 +4,8 @@
 # This profile demonstrates all available features:
 #   - defaults: isolation (chroot), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
-#   - pipeline: prepare (mount, resolv_conf), provision (shell + mitamae), assemble (resolv_conf)
+#   - pipeline: prepare (mount, resolv_conf), provision (shell + mitamae),
+#     assemble (resolv_conf, output)
 
 dir: /tmp/debian-trixie-server-amd64
 
@@ -53,6 +54,9 @@ bootstrap:
   include:
   - curl
   - ca-certificates
+  # A kernel and initramfs-tools for assemble.output.kernel/initramfs below
+  - linux-image-amd64
+  - initramfs-tools
   privilege: true # Use defaults.privilege method
 
 # Prepare phase: filesystem mounts and resolv.conf for the rootfs.
@@ -128,3 +132,18 @@ assemble:
     # OR, instead of link, generate a static file with explicit nameservers:
     # name_servers: [8.8.8.8, 8.8.4.4]
     # search: [example.com]
+
+  # Build artifacts written into `dir` next to the rootfs, after the tasks above,
+  # so they carry the final rootfs. Each `file` is a plain name in `dir`.
+  output:
+    # Copied out of the rootfs through Debian's /vmlinuz link (then /boot/vmlinuz).
+    # Set `source: /boot/vmlinuz-<version>` to pick a specific kernel.
+    kernel:
+      file: vmlinuz
+    # Likewise through /initrd.img (then /boot/initrd.img); keeps its 0600 mode.
+    initramfs:
+      file: initrd.img
+    # Packed with mksquashfs (must be on PATH), escalated with defaults.privilege.
+    rootfs:
+      file: rootfs.squashfs
+      compression: zstd # gzip | lzo | lz4 | xz | zstd

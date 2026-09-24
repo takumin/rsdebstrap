@@ -172,7 +172,7 @@ fn run_pipeline_phase_with(
     // token it yields is gated on their success.
     match restored {
         Ok(token) => match mounts.unmount_before_assembly(token) {
-            Ok(unmounted) => pipeline.run_assemble(unmounted, &rootfs, &ops, dry_run),
+            Ok(unmounted) => pipeline.run_assemble(unmounted, &rootfs, &executor, &ops),
             Err(e) => Err(e).context(
                 "failed to unmount filesystems after provisioning; \
                 any assemble tasks were skipped",
@@ -454,6 +454,14 @@ mod tests {
     }
 
     impl rootfs::RootfsOps for FailingOps {
+        fn export_file(
+            &self,
+            path: &rootfs::RelPath,
+            sink: &mut dyn std::io::Write,
+        ) -> std::result::Result<Option<rootfs::ExportedFile>, RsdebstrapError> {
+            self.inner.export_file(path, sink)
+        }
+
         fn write_file(
             &self,
             path: &rootfs::RelPath,
@@ -564,6 +572,18 @@ mod tests {
     }
 
     impl rootfs::RootfsOps for TimelineOps {
+        fn export_file(
+            &self,
+            path: &rootfs::RelPath,
+            sink: &mut dyn std::io::Write,
+        ) -> std::result::Result<Option<rootfs::ExportedFile>, RsdebstrapError> {
+            self.timeline
+                .lock()
+                .unwrap()
+                .push("export_file".to_string());
+            self.inner.export_file(path, sink)
+        }
+
         fn write_file(
             &self,
             path: &rootfs::RelPath,
@@ -966,6 +986,65 @@ mod tests {
                 .unwrap()
                 .contains("nameserver 198.51.100.1")
         );
+    }
+
+    const OUTPUT_ASSEMBLE: &str = "assemble:\n  resolv_conf:\n    name_servers: [198.51.100.1]\n  \
+        output:\n    kernel:\n      file: vmlinuz\n    initramfs:\n      file: initrd.img\n";
+
+    #[test]
+    fn assemble_copies_the_kernel_and_initramfs_out_of_the_rootfs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        let rootfs = seed_rootfs(dir);
+        fs::create_dir(rootfs.join("boot")).unwrap();
+        fs::write(rootfs.join("boot/vmlinuz-6.12.0-amd64"), "kernel").unwrap();
+        fs::write(rootfs.join("boot/initrd.img-6.12.0-amd64"), "initramfs").unwrap();
+        std::os::unix::fs::symlink("boot/vmlinuz-6.12.0-amd64", rootfs.join("vmlinuz")).unwrap();
+        std::os::unix::fs::symlink("boot/initrd.img-6.12.0-amd64", rootfs.join("initrd.img"))
+            .unwrap();
+        let profile =
+            load_profile_from(&profile_yaml_with_assemble(dir, false, None, Some(OUTPUT_ASSEMBLE)));
+        let executor = RecordingExecutor::new();
+
+        run_pipeline_phase(&profile.validate().unwrap(), executor.clone()).unwrap();
+
+        assert!(executor.command_names().is_empty(), "copying out runs no program");
+        assert_eq!(fs::read_to_string(dir.join("vmlinuz")).unwrap(), "kernel");
+        assert_eq!(fs::read_to_string(dir.join("initrd.img")).unwrap(), "initramfs");
+    }
+
+    // Runs the real `mksquashfs`, which a development machine may not have; validation
+    // refuses the profile without it, so there is nothing to test there.
+    #[test]
+    fn assemble_packs_the_final_rootfs_into_a_squashfs_image() {
+        if which::which("mksquashfs").is_err() || which::which("unsquashfs").is_err() {
+            eprintln!("skipping: mksquashfs/unsquashfs not on PATH");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        seed_rootfs(dir);
+        let assemble = "assemble:\n  resolv_conf:\n    name_servers: [198.51.100.1]\n  \
+            output:\n    rootfs:\n      file: rootfs.squashfs\n";
+        let profile =
+            load_profile_from(&profile_yaml_with_assemble(dir, false, None, Some(assemble)));
+        let executor = RecordingExecutor::new();
+
+        run_pipeline_phase(&profile.validate().unwrap(), executor.clone()).unwrap();
+
+        assert_eq!(executor.command_names(), vec!["mksquashfs"]);
+        // Read back out of the image: the resolv.conf the assemble task wrote is in it, so
+        // the image was packed from the rootfs in its final state.
+        let listed = std::process::Command::new("unsquashfs")
+            .args([
+                "-cat",
+                dir.join("rootfs.squashfs").as_str(),
+                "etc/resolv.conf",
+            ])
+            .output()
+            .unwrap();
+        assert!(listed.status.success(), "{listed:?}");
+        assert!(String::from_utf8_lossy(&listed.stdout).contains("nameserver 198.51.100.1"));
     }
 
     // Debian's default `/etc/resolv.conf` is a *symlink*, not a regular file, yet every

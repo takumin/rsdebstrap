@@ -186,9 +186,26 @@ Key invariants:
   always resolved to `DirectProvider` and whose only used capability was `rootfs_ops`, so
   `PlainRootfsContext` (built from the `rootfs`/`ops`/`dry_run` the pipeline already holds)
   replaced that setup/teardown round trip.
+- **Assemble outputs are declarations, not items.** `assemble.output` (kernel, initramfs,
+  squashfs image) reads the final rootfs and writes *outside* it, into `dir`, and packing an
+  image means running `mksquashfs`. Making outputs `AssembleItem`s would have meant widening
+  `RootfsContext` with an `execute`, which is the one thing that trait exists not to have. They
+  are handled the way prepare tasks are instead: the task only declares, and the pipeline acts
+  on the declaration in `run_assemble`, after every item, with the executor it already holds.
+  The program is the fixed `PrivilegedProgram::Mksquashfs`, not a name from the profile, and it
+  runs on the host against a tree nothing executes in any more, so the question the note below
+  raises (*under what isolation*) does not arise: nothing that runs comes from the rootfs.
+  Kernel and initramfs are read with `RootfsOps::export_file` (see
+  [Filesystem safety](#filesystem-safety-toctou--raii)), not with a program. Outputs run after
+  the items so they see the permanent resolv.conf, and in `kernel → initramfs → rootfs` order.
+  Each is staged under a UUID-suffixed sibling in `dir` and renamed over its name; `dir` is the
+  invoking user's and the parent runs as that user, so this is for atomic replacement and no
+  partial leftovers rather than a defence. The squashfs staging file is created by the parent
+  and handed to `mksquashfs -noappend`, which truncates it in place: the image stays owned by
+  the invoking user, at `0600`, even when `mksquashfs` runs under `sudo`.
 
 `prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, resolv_conf }`,
-`AssembleConfig { resolv_conf }`), not lists. This makes the singleton invariants structural:
+`AssembleConfig { resolv_conf, output }`, `OutputConfig { kernel, initramfs, rootfs }`), not lists. This makes the singleton invariants structural:
 "at most one mount" / "at most one resolv_conf" hold because each is an `Option` (a duplicate
 YAML key is a `yaml_serde` parse error, an unknown key a `deny_unknown_fields` error), and the
 `mount → resolv_conf` order is fixed by `items()` rather than by key order. The former
@@ -277,6 +294,23 @@ patterns run throughout `src/isolation/`:
   then; repointing the name in between used to make execution stage whatever it pointed at
   under a path validation had approved. It remains as the pre-flight check that gives a
   readable error, and its doc says it is not the control.
+- **Reading out of the rootfs follows links, confined.** `RootfsOps::export_file` is the one
+  operation that follows symlinks, because `/vmlinuz` is one and what it points at is the file
+  wanted. It resolves with `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)` against the
+  rootfs descriptor, as direct execution does, so an absolute or climbing target lands inside
+  the rootfs; there is no fallback for a kernel without `openat2`. It refuses anything but a
+  regular file, reads exactly the size `fstat` reported, and never writes: the sink is the
+  caller's, outside the rootfs, where no `RelPath` could name it.
+
+  Through the privileged helper the file crosses in chunks (`Request::ReadChunk`,
+  `EXPORT_CHUNK_SIZE`), because an initramfs can exceed a hundred megabytes and one base64 line
+  would hold it several times over on both sides. The helper keeps no state between requests,
+  so each chunk resolves the path again, and a `FileStamp` (dev, inode, size, change time) from
+  the first chunk is sent back with every later one; a mismatch is refused rather than spliced
+  into the copy. That is a check, not a binding: without a descriptor held across requests, a
+  same-sized file recreated within one timestamp tick can reuse both the inode number and the
+  change time. Holding one would mean per-request state in a process running as root, which the
+  helper deliberately does not have.
 - **RAII lifecycle managers.** `RootfsMounts` and `RootfsResolvConf` (plus
   `StagedFileGuard` in `src/phase/mod.rs`, which removes scripts and binaries staged
   into the rootfs) all guarantee cleanup via `Drop`, including on error paths. Mounts
@@ -416,7 +450,7 @@ patterns run throughout `src/isolation/`:
   created directories and escalated to a `sudo` rootfs helper.
 - Privilege is threaded through *command* execution as `Option<PrivilegeMethod>`, so
   escalation is uniform across the commands that genuinely are external programs
-  (`mount`, `umount`, `chroot`, the bootstrap backend, provision scripts).
+  (`mount`, `umount`, `chroot`, `mksquashfs`, the bootstrap backend, provision scripts).
 
 ### Privilege boundary
 
@@ -463,7 +497,7 @@ staged for. `run_provision_item` therefore opens local ops for the direct branch
 
 Privilege cannot be attached to an arbitrary command any more. `CommandSpec`'s fields are
 private, and the only constructor that sets `privilege` for a fixed program takes the closed
-`PrivilegedProgram` enum (`mount`, `umount`, `chroot`, the bootstrap backends — programs with
+`PrivilegedProgram` enum (`mount`, `umount`, `chroot`, `mksquashfs`, the bootstrap backends — programs with
 no syscall equivalent in this crate). `CommandSpec::for_task_command` is the exception, since
 a provision task names its own program. It is `pub(crate)` and takes a `TaskCommandToken`
 whose field is private to `isolation`, so only `isolation::direct` can build one and every
@@ -661,7 +695,7 @@ Mock-executor pattern (`tests/helpers/mod.rs`):
   (bwrap, systemd-nspawn) lands.
 - **Escalation is only exercised for filesystem operations.** `tests/privileged_helper_test.rs`
   runs the helper under real `sudo`, but the per-command escalation path
-  (`mount`/`umount`/`chroot`/bootstrap) is still only asserted at the argv level. A full
+  (`mount`/`umount`/`chroot`/`mksquashfs`/bootstrap) is still only asserted at the argv level. A full
   privileged `apply` has been run by hand; nothing runs it automatically.
 - **`run_pipeline_phase()` sequencing and gating** are covered by in-crate tests in
   `src/lib.rs`, using a recording executor that really runs the provision command and

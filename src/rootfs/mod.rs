@@ -34,6 +34,15 @@ type Result<T> = std::result::Result<T, RsdebstrapError>;
 /// caller thinks it is.
 const MAX_TAKE_SIZE: u64 = 1 << 20;
 
+/// How much of a file one [`RootfsOps::export_file`] exchange with the privileged helper
+/// carries.
+///
+/// A kernel is tens of megabytes and an initramfs can be over a hundred, and the helper
+/// protocol is one JSON line per message with the bytes in base64. Sending the file as one
+/// line would hold it several times over on both sides at once; chunks keep the peak at a
+/// few of these regardless of the file.
+pub(crate) const EXPORT_CHUNK_SIZE: u64 = 4 << 20;
+
 /// A path relative to a rootfs root, guaranteed to stay inside it.
 ///
 /// Absolute paths, `.`, `..`, and empty components are rejected at construction,
@@ -264,6 +273,67 @@ pub enum TakenEntry {
     },
 }
 
+/// What [`RootfsOps::export_file`] copied out of the rootfs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExportedFile {
+    /// The permission bits the file carried, for the copy to be given the same ones. An
+    /// initramfs can hold key material, and Debian's is not world-readable for that reason.
+    pub mode: FileMode,
+    /// How many bytes were written to the sink.
+    pub size: u64,
+}
+
+/// Which file, in which state, one [`Request::ReadChunk`](helper::Request::ReadChunk) read.
+///
+/// The helper resolves the path again for every chunk, because it holds no state between
+/// requests. The stamp is what ties the chunks together: the parent sends back the one the
+/// first chunk carried, and a later chunk whose file differs in any of these is refused
+/// instead of spliced into the copy.
+///
+/// The change time is in it because the inode number alone is not an identity here. No
+/// descriptor is held open between chunks, so a file removed and recreated can be handed
+/// the same number -- and at the same size, nothing else would tell them apart. The kernel
+/// sets the change time on every write and on creation, and a caller cannot set it back.
+/// That narrows the case rather than closing it: the change time is only as fine as the
+/// filesystem's timestamps, so a same-sized file recreated within one tick still matches.
+/// What would close it is a descriptor held across requests, which is state the helper
+/// does not keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileStamp {
+    dev: u64,
+    ino: u64,
+    size: u64,
+    ctime: (i64, i64),
+}
+
+impl FileStamp {
+    fn of(stat: &rfs::Stat) -> Self {
+        Self {
+            dev: stat.st_dev,
+            ino: stat.st_ino,
+            size: stat.st_size as u64,
+            // The field types differ between targets (the nanoseconds are unsigned on some),
+            // so the casts are a no-op only on some of them.
+            #[allow(clippy::unnecessary_cast)]
+            ctime: (stat.st_ctime as i64, stat.st_ctime_nsec as i64),
+        }
+    }
+
+    /// The file's size when it was stamped.
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+}
+
+/// One piece of a file read for [`RootfsOps::export_file`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportChunk {
+    pub stamp: FileStamp,
+    pub mode: FileMode,
+    #[serde(with = "payload")]
+    pub data: Vec<u8>,
+}
+
 /// Mutations inside a rootfs.
 ///
 /// Implemented in-process by [`LocalRootfsOps`] and, when the rootfs needs root
@@ -294,6 +364,20 @@ pub trait RootfsOps: Send + Sync {
     /// reinstalled the entry as a file owned by whoever was writing it, and nothing in
     /// the signature said the owner had been dropped on the way.
     fn put_back(&self, path: &RelPath, entry: &TakenEntry) -> Result<()>;
+
+    /// Copies the regular file `path` resolves to into `sink`, or returns `None` if it
+    /// resolves to nothing.
+    ///
+    /// Unlike every other operation here, symlinks are followed -- `/vmlinuz` is one, and
+    /// reading what it points at is the point -- but they are resolved as if the rootfs were
+    /// `/`: an absolute target is reinterpreted against the rootfs and `..` at its top stays
+    /// there, so no link can lead the read outside it. A dangling link is `None`, the same
+    /// as an absent entry.
+    ///
+    /// Reads only. Nothing in the rootfs is changed, and the sink is the caller's: the copy
+    /// lands wherever the caller writes it, which is outside the rootfs and so outside what
+    /// a [`RelPath`] can name.
+    fn export_file(&self, path: &RelPath, sink: &mut dyn Write) -> Result<Option<ExportedFile>>;
 }
 
 /// [`RootfsOps`] performed directly by this process.
@@ -869,6 +953,108 @@ impl LocalRootfsOps {
     }
 }
 
+impl LocalRootfsOps {
+    /// Opens the regular file `path` resolves to inside the rootfs, following symlinks
+    /// without letting them leave it. `None` if it resolves to nothing.
+    ///
+    /// `openat2` with `RESOLVE_IN_ROOT` makes the confinement the kernel's rather than a
+    /// walk of ours, the same way direct execution resolves a program: the anchor is the
+    /// resolution root, so an absolute link target is reinterpreted against it and `..` at
+    /// the top stays there. `RESOLVE_NO_MAGICLINKS` on top, because a `/proc/self/fd` entry
+    /// names an inode resolution never walked to. There is no fallback for a kernel without
+    /// `openat2`: the confinement is the check, and following links without it is the thing
+    /// being refused.
+    ///
+    /// `O_NONBLOCK` for the reason `read_entry` gives: a FIFO at the end of the link would
+    /// otherwise hang the build in `open`, before `fstat` could refuse it.
+    fn open_resolved(&self, path: &RelPath) -> Result<Option<(OwnedFd, rfs::Stat)>> {
+        let fd = match rfs::openat2(
+            &self.root,
+            path.components().join("/"),
+            OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+            rfs::ResolveFlags::IN_ROOT | rfs::ResolveFlags::NO_MAGICLINKS,
+        ) {
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => return Ok(None),
+            Err(rustix::io::Errno::NOSYS) => {
+                return Err(RsdebstrapError::Isolation(format!(
+                    "cannot resolve {}: openat2(RESOLVE_IN_ROOT) is unavailable on this \
+                    kernel (Linux 5.6 or newer), and a symlink cannot be confined to the \
+                    rootfs without it",
+                    self.at(path)
+                )));
+            }
+            Err(e) => return Err(self.io_err("open", &self.at(path), e)),
+        };
+
+        let stat = rfs::fstat(&fd).map_err(|e| self.io_err("stat", &self.at(path), e))?;
+        let kind = FileType::from_raw_mode(stat.st_mode as rfs::RawMode);
+        if kind != FileType::RegularFile {
+            return Err(RsdebstrapError::Isolation(format!(
+                "{} resolves to a {:?}, refusing to export it",
+                self.at(path),
+                kind
+            )));
+        }
+        Ok(Some((fd, stat)))
+    }
+
+    /// Reads up to [`EXPORT_CHUNK_SIZE`] bytes at `offset` of the file `path` resolves to.
+    ///
+    /// The privileged helper's side of [`RootfsOps::export_file`]. It holds nothing between
+    /// requests, so each chunk resolves `path` afresh, and `expect` -- the stamp the first
+    /// chunk carried -- is what keeps a file repointed or rewritten in between from being
+    /// spliced into one copy.
+    ///
+    /// A chunk shorter than the stamped size says is an error rather than the end of the
+    /// file: the size came off the descriptor this read, so fewer bytes means the file was
+    /// truncated under the read.
+    pub(crate) fn read_chunk(
+        &self,
+        path: &RelPath,
+        offset: u64,
+        expect: Option<FileStamp>,
+    ) -> Result<Option<ExportChunk>> {
+        let Some((fd, stat)) = self.open_resolved(path)? else {
+            return match expect {
+                None => Ok(None),
+                Some(_) => Err(self.changed_under_export(path)),
+            };
+        };
+        let stamp = FileStamp::of(&stat);
+        if expect.is_some_and(|expected| expected != stamp) {
+            return Err(self.changed_under_export(path));
+        }
+
+        let want = stamp.size.saturating_sub(offset).min(EXPORT_CHUNK_SIZE);
+        let mut data = vec![0; want as usize];
+        let mut filled = 0;
+        while filled < data.len() {
+            match rustix::io::pread(&fd, &mut data[filled..], offset + filled as u64) {
+                Ok(0) => return Err(self.changed_under_export(path)),
+                Ok(n) => filled += n,
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(e) => return Err(self.io_err("read", &self.at(path), e)),
+            }
+        }
+
+        Ok(Some(ExportChunk {
+            stamp,
+            mode: FileMode::new(stat.st_mode),
+            data,
+        }))
+    }
+
+    fn changed_under_export(&self, path: &RelPath) -> RsdebstrapError {
+        RsdebstrapError::Isolation(format!(
+            "{} changed while it was being exported, refusing to finish a copy of two \
+            different files",
+            self.at(path)
+        ))
+    }
+}
+
 impl RootfsOps for LocalRootfsOps {
     fn write_file(&self, path: &RelPath, content: &[u8], mode: FileMode) -> Result<()> {
         self.install_file(path, content, mode, None)
@@ -957,6 +1143,26 @@ impl RootfsOps for LocalRootfsOps {
         drop(read_fd);
         Ok(Some(entry))
     }
+
+    fn export_file(&self, path: &RelPath, sink: &mut dyn Write) -> Result<Option<ExportedFile>> {
+        let Some((fd, stat)) = self.open_resolved(path)? else {
+            return Ok(None);
+        };
+
+        // Exactly the size `fstat` reported on this descriptor, and a short read is an
+        // error: a file that grows or shrinks while it is copied is not the file that was
+        // opened, and a copy that silently stopped early would boot as a truncated kernel.
+        let size = stat.st_size as u64;
+        let copied = std::io::copy(&mut File::from(fd).take(size), sink)
+            .map_err(|e| RsdebstrapError::io(format!("failed to export {}", self.at(path)), e))?;
+        if copied != size {
+            return Err(self.changed_under_export(path));
+        }
+        Ok(Some(ExportedFile {
+            mode: FileMode::new(stat.st_mode),
+            size,
+        }))
+    }
 }
 
 /// [`RootfsOps`] that reports what it would do and changes nothing.
@@ -1012,6 +1218,16 @@ impl RootfsOps for DryRunRootfsOps {
         // Nothing was detached, so nothing is restored on teardown — which is
         // what a dry run should leave behind.
         Ok(None)
+    }
+
+    fn export_file(&self, path: &RelPath, _sink: &mut dyn Write) -> Result<Option<ExportedFile>> {
+        // An error rather than a made-up mode and size: a dry run may have no rootfs to
+        // read, and callers check `dry_run()` before exporting, so reaching this is a bug
+        // that should say so rather than report a zero-byte copy as done.
+        Err(RsdebstrapError::Isolation(format!(
+            "dry run: refusing to export {}{}, there is nothing to read",
+            self.rootfs, path
+        )))
     }
 }
 
@@ -1437,5 +1653,151 @@ mod tests {
         let encoded = serde_json::to_string(&mode).unwrap();
 
         assert_eq!(serde_json::from_str::<FileMode>(&encoded).unwrap(), mode);
+    }
+
+    // Debian's kernel packages leave `/vmlinuz` as a link to the versioned image in `/boot`,
+    // relative on current releases and absolute on older ones. Both have to reach the file.
+    #[test]
+    fn export_follows_a_link_to_the_versioned_kernel() {
+        let (_tmp, root) = rootfs();
+        std::fs::create_dir(root.join("boot")).unwrap();
+        std::fs::write(root.join("boot/vmlinuz-6.12.0-amd64"), b"kernel image").unwrap();
+        std::os::unix::fs::symlink("boot/vmlinuz-6.12.0-amd64", root.join("vmlinuz")).unwrap();
+        std::os::unix::fs::symlink("/boot/vmlinuz-6.12.0-amd64", root.join("vmlinuz.old")).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        for link in ["/vmlinuz", "/vmlinuz.old"] {
+            let mut sink = Vec::new();
+            let exported = ops
+                .export_file(&RelPath::parse(link).unwrap(), &mut sink)
+                .unwrap()
+                .expect("the link resolves to a file");
+            assert_eq!(sink, b"kernel image", "{link}");
+            assert_eq!(exported.size, 12);
+        }
+    }
+
+    // The confinement is what makes following links acceptable here at all: a link that
+    // climbs out of the rootfs, or names an absolute host path, has to land inside it.
+    #[test]
+    fn export_resolves_links_as_if_the_rootfs_were_root() {
+        let outer = tempfile::tempdir().unwrap();
+        let outer_root = Utf8PathBuf::from_path_buf(outer.path().to_path_buf()).unwrap();
+        std::fs::write(outer_root.join("secret"), b"host file").unwrap();
+        let root = outer_root.join("rootfs");
+        std::fs::create_dir_all(root.join("etc")).unwrap();
+        std::fs::write(root.join("secret"), b"rootfs file").unwrap();
+        std::os::unix::fs::symlink("../../../../secret", root.join("etc/climb")).unwrap();
+        std::os::unix::fs::symlink(outer_root.join("secret"), root.join("etc/absolute")).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        let mut sink = Vec::new();
+        ops.export_file(&RelPath::parse("/etc/climb").unwrap(), &mut sink)
+            .unwrap()
+            .unwrap();
+        assert_eq!(sink, b"rootfs file");
+
+        // The absolute target names a host path, which inside the rootfs does not exist.
+        let mut sink = Vec::new();
+        let absolute = ops
+            .export_file(&RelPath::parse("/etc/absolute").unwrap(), &mut sink)
+            .unwrap();
+        assert_eq!(absolute, None);
+        assert!(sink.is_empty());
+    }
+
+    #[test]
+    fn export_reports_a_dangling_link_as_absent() {
+        let (_tmp, root) = rootfs();
+        std::os::unix::fs::symlink("boot/vmlinuz-gone", root.join("vmlinuz")).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        let mut sink = Vec::new();
+        let exported = ops
+            .export_file(&RelPath::parse("/vmlinuz").unwrap(), &mut sink)
+            .unwrap();
+        assert_eq!(exported, None);
+    }
+
+    #[test]
+    fn export_refuses_what_is_not_a_regular_file() {
+        let (_tmp, root) = rootfs();
+        std::os::unix::fs::symlink("etc", root.join("vmlinuz")).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        let err = ops
+            .export_file(&RelPath::parse("/vmlinuz").unwrap(), &mut Vec::new())
+            .unwrap_err();
+        assert!(err.to_string().contains("refusing to export"), "{err}");
+    }
+
+    #[test]
+    fn export_carries_the_source_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_tmp, root) = rootfs();
+        let image = root.join("initrd.img");
+        std::fs::write(&image, b"initramfs").unwrap();
+        std::fs::set_permissions(&image, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        let exported = ops
+            .export_file(&RelPath::parse("/initrd.img").unwrap(), &mut Vec::new())
+            .unwrap()
+            .unwrap();
+        assert_eq!(exported.mode, FileMode::new(0o600));
+    }
+
+    // The helper resolves the path again for every chunk, so a file replaced between two
+    // of them has to be refused rather than spliced onto the first one's bytes.
+    #[test]
+    fn a_chunk_from_a_different_file_is_refused() {
+        let (_tmp, root) = rootfs();
+        let path = RelPath::parse("/etc/image").unwrap();
+        std::fs::write(root.join("etc/image"), b"first").unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        let first = ops.read_chunk(&path, 0, None).unwrap().unwrap();
+        assert_eq!(first.data, b"first");
+        assert_eq!(first.stamp.size(), 5);
+
+        // A different size, so the refusal does not depend on the filesystem's timestamp
+        // granularity: a same-sized file recreated within one tick can reuse the inode
+        // number and the change time both.
+        std::fs::remove_file(root.join("etc/image")).unwrap();
+        std::fs::write(root.join("etc/image"), b"other file").unwrap();
+        let err = ops.read_chunk(&path, 0, Some(first.stamp)).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("changed while it was being exported"),
+            "{err}"
+        );
+
+        std::fs::remove_file(root.join("etc/image")).unwrap();
+        let err = ops.read_chunk(&path, 0, Some(first.stamp)).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("changed while it was being exported"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_chunk_reads_from_its_offset() {
+        let (_tmp, root) = rootfs();
+        let path = RelPath::parse("/etc/image").unwrap();
+        std::fs::write(root.join("etc/image"), b"0123456789").unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        let first = ops.read_chunk(&path, 0, None).unwrap().unwrap();
+        let rest = ops
+            .read_chunk(&path, 4, Some(first.stamp))
+            .unwrap()
+            .unwrap();
+        assert_eq!(rest.data, b"456789");
+        let end = ops
+            .read_chunk(&path, 10, Some(first.stamp))
+            .unwrap()
+            .unwrap();
+        assert!(end.data.is_empty());
     }
 }

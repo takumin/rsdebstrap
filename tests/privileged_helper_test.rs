@@ -395,3 +395,38 @@ impl Drop for BindMount {
             .status();
     }
 }
+
+// An initramfs is root-only on Debian and larger than one exchange with the helper, so
+// this is the export path a real build takes: several chunks, each resolved again through
+// the `/initrd.img` link, reassembled in the parent.
+#[test]
+#[ignore = "requires passwordless sudo"]
+fn the_helper_exports_a_root_only_file_larger_than_one_chunk() {
+    require_sudo!();
+    let fixture = RootOwnedRootfs::new();
+    let content: Vec<u8> = (0..9 * 1024 * 1024 + 123)
+        .map(|i: u32| (i % 251) as u8)
+        .collect();
+    let staged = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(staged.path(), &content).unwrap();
+    let image = fixture.path.join("etc/initrd.img-6.12.0-amd64");
+    sudo(&["cp", staged.path().to_str().unwrap(), image.as_str()]);
+    sudo(&["chmod", "600", image.as_str()]);
+    sudo(&[
+        "ln",
+        "-s",
+        "etc/initrd.img-6.12.0-amd64",
+        fixture.path.join("initrd.img").as_str(),
+    ]);
+    let ops = privileged(&fixture.path);
+
+    let mut sink = Vec::new();
+    let exported = ops
+        .export_file(&RelPath::parse("/initrd.img").unwrap(), &mut sink)
+        .unwrap()
+        .expect("the link resolves to the image");
+
+    assert_eq!(exported.size, content.len() as u64);
+    assert_eq!(exported.mode, FileMode::new(0o600));
+    assert!(sink == content, "the reassembled copy differs from the image");
+}

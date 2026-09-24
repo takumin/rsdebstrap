@@ -21,6 +21,8 @@ and run `rsdebstrap apply`.
 - **Declarative** — the entire rootfs build lives in one YAML profile.
 - **Multiple backends** — `mmdebstrap` or `debootstrap`.
 - **Three-phase pipeline** — `prepare` → `provision` → `assemble`, run in order.
+- **Boot artifacts** — `assemble.output` writes the kernel, the initramfs and a
+  squashfs image of the rootfs next to it.
 - **Provisioners** — inline or external shell scripts and mitamae recipes.
 - **Per-task isolation & privilege** — chroot isolation by default, with optional
   `sudo`/`doas` escalation, both overridable per task.

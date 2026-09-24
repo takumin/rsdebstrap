@@ -21,7 +21,9 @@ use camino::Utf8Path;
 use rustix::fs as rfs;
 use serde::{Deserialize, Serialize};
 
-use super::{FileMode, LocalRootfsOps, RelPath, RootfsOps, TakenEntry};
+use super::{
+    ExportChunk, ExportedFile, FileMode, FileStamp, LocalRootfsOps, RelPath, RootfsOps, TakenEntry,
+};
 use crate::error::RsdebstrapError;
 use crate::privilege::PrivilegeMethod;
 
@@ -60,12 +62,20 @@ pub enum Request {
         path: RelPath,
         entry: TakenEntry,
     },
+    // The one read. It returns bytes to the parent rather than writing them anywhere,
+    // because the destination is outside the rootfs and no `RelPath` can name it.
+    ReadChunk {
+        path: RelPath,
+        offset: u64,
+        expect: Option<FileStamp>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Response {
     Unit,
     Taken(Option<TakenEntry>),
+    Chunk(Option<ExportChunk>),
     Error(String),
 }
 
@@ -178,6 +188,11 @@ fn dispatch(anchor: &CheckedAnchor, request: Request) -> Response {
         Request::Remove { path } => ops.remove(&path).map(|()| Response::Unit),
         Request::Take { path } => ops.take(&path).map(Response::Taken),
         Request::PutBack { path, entry } => ops.put_back(&path, &entry).map(|()| Response::Unit),
+        Request::ReadChunk {
+            path,
+            offset,
+            expect,
+        } => ops.read_chunk(&path, offset, expect).map(Response::Chunk),
     };
     result.unwrap_or_else(|e| Response::Error(e.to_string()))
 }
@@ -399,7 +414,24 @@ impl PrivilegedRootfsOps {
         match self.request(&request)? {
             Response::Unit => Ok(()),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Taken(_) => Err(self.desynchronised()),
+            Response::Taken(_) | Response::Chunk(_) => Err(self.desynchronised()),
+        }
+    }
+
+    fn read_chunk(
+        &self,
+        path: &RelPath,
+        offset: u64,
+        expect: Option<FileStamp>,
+    ) -> Result<Option<ExportChunk>> {
+        match self.request(&Request::ReadChunk {
+            path: path.clone(),
+            offset,
+            expect,
+        })? {
+            Response::Chunk(chunk) => Ok(chunk),
+            Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
+            Response::Unit | Response::Taken(_) => Err(self.desynchronised()),
         }
     }
 }
@@ -435,8 +467,38 @@ impl RootfsOps for PrivilegedRootfsOps {
         match self.request(&Request::Take { path: path.clone() })? {
             Response::Taken(entry) => Ok(entry),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Unit => Err(self.desynchronised()),
+            Response::Unit | Response::Chunk(_) => Err(self.desynchronised()),
         }
+    }
+
+    fn export_file(&self, path: &RelPath, sink: &mut dyn Write) -> Result<Option<ExportedFile>> {
+        let Some(first) = self.read_chunk(path, 0, None)? else {
+            return Ok(None);
+        };
+        let (stamp, mode) = (first.stamp, first.mode);
+        let mut offset = 0;
+        let mut chunk = first;
+        loop {
+            // An empty chunk short of the stamped size would repeat forever; the helper
+            // refuses a short read, so this is a reply that did not come from it.
+            if chunk.data.is_empty() && offset < stamp.size() {
+                return Err(self.desynchronised());
+            }
+            sink.write_all(&chunk.data).map_err(|e| {
+                RsdebstrapError::io(format!("failed to write the export of {}", path), e)
+            })?;
+            offset += chunk.data.len() as u64;
+            if offset >= stamp.size() {
+                break;
+            }
+            chunk = self.read_chunk(path, offset, Some(stamp))?.ok_or_else(|| {
+                RsdebstrapError::Isolation(format!("{} vanished while it was being exported", path))
+            })?;
+        }
+        Ok(Some(ExportedFile {
+            mode,
+            size: stamp.size(),
+        }))
     }
 }
 
@@ -680,5 +742,42 @@ mod tests {
             .remove(&path)
             .expect_err("the channel must not still be usable");
         assert!(second.to_string().contains("closed"), "unexpected: {second}");
+    }
+
+    #[test]
+    fn read_chunk_round_trips_through_dispatch() {
+        let (_tmp, root) = rootfs();
+        std::fs::write(root.join("etc/image"), b"kernel").unwrap();
+        let anchor = CheckedAnchor::open(&root).unwrap();
+
+        let request = Request::ReadChunk {
+            path: RelPath::parse("/etc/image").unwrap(),
+            offset: 0,
+            expect: None,
+        };
+        let encoded = serde_json::to_string(&request).unwrap();
+        let response = round_trip(&anchor, serde_json::from_str(&encoded).unwrap());
+        let encoded = serde_json::to_string(&response).unwrap();
+        let Response::Chunk(Some(chunk)) = serde_json::from_str(&encoded).unwrap() else {
+            panic!("got {response:?}");
+        };
+        assert_eq!(chunk.data, b"kernel");
+        assert_eq!(chunk.stamp.size(), 6);
+    }
+
+    #[test]
+    fn read_chunk_of_an_absent_file_is_none() {
+        let (_tmp, root) = rootfs();
+        let anchor = CheckedAnchor::open(&root).unwrap();
+
+        let response = round_trip(
+            &anchor,
+            Request::ReadChunk {
+                path: RelPath::parse("/vmlinuz").unwrap(),
+                offset: 0,
+                expect: None,
+            },
+        );
+        assert!(matches!(response, Response::Chunk(None)), "got {response:?}");
     }
 }
