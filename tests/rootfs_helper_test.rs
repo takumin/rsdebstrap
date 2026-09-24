@@ -96,6 +96,23 @@ fn write_file_installs_content_and_mode() {
     }
 }
 
+// 493 is 0o755.
+#[test]
+fn create_dir_and_remove_dir_round_trip() {
+    let (_tmp, root) = seeded_rootfs();
+    let responses = run_session(
+        &root,
+        &[
+            r#"{"CreateDir":{"path":"/etc/keyrings","mode":493}}"#,
+            r#"{"CreateDir":{"path":"/etc/keyrings","mode":493}}"#,
+            r#"{"RemoveDir":{"path":"/etc/keyrings"}}"#,
+        ],
+    );
+
+    assert_eq!(responses, [r#"{"Flag":true}"#, r#"{"Flag":false}"#, r#"{"Flag":true}"#]);
+    assert!(!root.join("etc/keyrings").exists());
+}
+
 // The boundary that scopes the helper's root privilege: a `..` in a request is
 // refused while decoding, before any operation runs.
 #[test]

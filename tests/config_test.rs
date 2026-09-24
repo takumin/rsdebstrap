@@ -6,6 +6,7 @@ use rsdebstrap::RsdebstrapError;
 use rsdebstrap::bootstrap::mmdebstrap::{self, Format};
 use rsdebstrap::config::load_profile;
 use rsdebstrap::phase::ProvisionTask;
+use rsdebstrap::phase::prepare::apt::AptKeySource;
 use tempfile::tempdir;
 
 #[test]
@@ -374,6 +375,61 @@ provision:
         }
         _ => panic!("expected one shell task"),
     }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_resolves_apt_keyring_path_relative_to_profile_dir() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let keys_dir = temp_dir.path().join("keys");
+    std::fs::create_dir_all(&keys_dir)?;
+    let key_path = keys_dir.join("docker.asc");
+    std::fs::write(&key_path, "-----BEGIN PGP PUBLIC KEY BLOCK-----\n")?;
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+prepare:
+  apt:
+    keyrings:
+      - name: docker
+        path: keys/docker.asc
+    repositories:
+      - name: docker
+        uris: [https://download.docker.com/linux/debian]
+        suites: [trixie]
+        components: [stable]
+        signed_by: docker
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    let apt = profile
+        .prepare
+        .apt
+        .as_ref()
+        .expect("prepare.apt was declared");
+    match &apt.keyrings[0].source {
+        AptKeySource::Path(resolved) => assert_eq!(
+            resolved.canonicalize_utf8()?,
+            Utf8PathBuf::from_path_buf(key_path.canonicalize()?).unwrap()
+        ),
+        other => panic!("expected a path key, got {:?}", other),
+    }
+    profile.validate()?;
 
     Ok(())
 }

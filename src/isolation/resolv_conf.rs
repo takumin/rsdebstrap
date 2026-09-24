@@ -13,7 +13,9 @@ use tracing::info;
 
 use crate::config::{MountEntry, ResolvConfConfig};
 use crate::error::RsdebstrapError;
+use crate::isolation::apt_sources::AptConfigured;
 use crate::isolation::mount::Mounted;
+use crate::phase::prepare::AptTask;
 use crate::pipeline::Provisioned;
 use crate::rootfs::{FileMode, RelPath, RootfsOps, TakenEntry};
 
@@ -48,12 +50,12 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
 /// without the mounts or the DNS the profile asked for.
 ///
 /// Like [`Mounted`], it borrows the guards rather than standing for them: it carries the
-/// [`Mounted`] borrow forward and adds its own, so neither guard can be torn down or dropped
-/// while it is alive. A token that outlived them would say the prepare phase *had been* set
-/// up, which is not what provisioning needs to know.
+/// borrows [`AptConfigured`] holds forward and adds its own, so no prepare guard can be torn
+/// down or dropped while it is alive. A token that outlived them would say the prepare phase
+/// *had been* set up, which is not what provisioning needs to know.
 ///
 /// It also names what the guards were built from — the rootfs, the resolved mount entries,
-/// the resolv.conf config — so that
+/// the apt task, the resolv.conf config — so that
 /// [`check_prepared`](crate::pipeline::Pipeline::check_prepared) can hold it against what
 /// the pipeline's own `prepare` phase declares. Without that, guards armed for a different
 /// prepare config would carry a pipeline through provisioning with its prepare items
@@ -63,6 +65,7 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
 pub(crate) struct Prepared<'a> {
     rootfs: &'a Utf8Path,
     mounts: &'a [MountEntry],
+    apt: Option<&'a AptTask>,
     resolv_conf: Option<&'a ResolvConfConfig>,
     guard: PhantomData<&'a RootfsResolvConf>,
 }
@@ -78,6 +81,7 @@ impl<'a> Prepared<'a> {
         Self {
             rootfs,
             mounts: &[],
+            apt: None,
             resolv_conf: None,
             guard: PhantomData,
         }
@@ -91,6 +95,11 @@ impl<'a> Prepared<'a> {
     /// The mount entries the mount guard was built for.
     pub(crate) fn mounts(&self) -> &'a [MountEntry] {
         self.mounts
+    }
+
+    /// The apt task the apt guard was built for, if any.
+    pub(crate) fn apt(&self) -> Option<&'a AptTask> {
+        self.apt
     }
 
     /// The resolver config the resolv.conf guard was built for, if any.
@@ -178,20 +187,21 @@ impl RootfsResolvConf {
     /// before returning, so a failed setup leaves the rootfs as it was found.
     /// If that rollback fails too, the returned error says so and the guard
     /// stays armed, leaving the retry to `Drop`.
-    pub(crate) fn setup<'a>(&'a mut self, mounted: Mounted<'a>) -> Result<Prepared<'a>> {
+    pub(crate) fn setup<'a>(&'a mut self, configured: AptConfigured<'a>) -> Result<Prepared<'a>> {
         // Two guards for two different rootfs directories would otherwise combine into one
         // token naming neither.
-        if mounted.rootfs() != self.rootfs {
+        if configured.rootfs() != self.rootfs {
             return Err(RsdebstrapError::Isolation(format!(
-                "the mounts were established for {} but this guard is over {}",
-                mounted.rootfs(),
+                "the earlier prepare guards were armed for {} but this guard is over {}",
+                configured.rootfs(),
                 self.rootfs
             ))
             .into());
         }
         let prepared = Prepared {
-            rootfs: mounted.rootfs(),
-            mounts: mounted.entries(),
+            rootfs: configured.rootfs(),
+            mounts: configured.mounts(),
+            apt: configured.apt(),
             resolv_conf: self.config.as_ref(),
             guard: PhantomData,
         };
@@ -448,9 +458,19 @@ mod tests {
             None,
         );
         let mounted = mounts.mount().expect("an empty mount guard mounts nothing");
+        let mut apt = crate::isolation::apt_sources::RootfsAptSources::new(
+            &rootfs,
+            None,
+            g.ops.clone(),
+            false,
+            |url| panic!("no apt key to download from {}", url),
+        );
+        let configured = apt
+            .setup(mounted)
+            .expect("an empty apt guard writes nothing");
         // The `Prepared` is what provisioning would consume; these tests are about the
         // guard's own effect on the rootfs, so it is dropped here.
-        let _prepared = g.setup(mounted)?;
+        let _prepared = g.setup(configured)?;
         Ok(())
     }
 
@@ -576,6 +596,21 @@ mod tests {
             path: &RelPath,
         ) -> std::result::Result<Option<TakenEntry>, crate::error::RsdebstrapError> {
             self.inner.take(path)
+        }
+
+        fn create_dir(
+            &self,
+            path: &RelPath,
+            mode: FileMode,
+        ) -> std::result::Result<bool, crate::error::RsdebstrapError> {
+            self.inner.create_dir(path, mode)
+        }
+
+        fn remove_dir(
+            &self,
+            path: &RelPath,
+        ) -> std::result::Result<bool, crate::error::RsdebstrapError> {
+            self.inner.remove_dir(path)
         }
     }
 

@@ -7,7 +7,7 @@
 //! ## Phase structure
 //!
 //! - [`prepare`] — Preparation tasks before main provisioning (named-field
-//!   [`PrepareConfig`]: `mount`, `resolv_conf`)
+//!   [`PrepareConfig`]: `mount`, `apt`, `resolv_conf`)
 //! - [`provision`] — Main provisioning tasks (Shell, Mitamae), an ordered `Vec`
 //! - [`assemble`] — Finalization tasks after provisioning (named-field
 //!   [`AssembleConfig`]: `resolv_conf`, plus the `output` artifacts the pipeline writes
@@ -34,6 +34,7 @@ use tracing::info;
 pub use assemble::AssembleConfig;
 pub use assemble::AssembleResolvConfTask;
 pub use assemble::OutputConfig;
+pub use prepare::AptTask;
 pub use prepare::MountTask;
 pub use prepare::PrepareConfig;
 pub use prepare::ResolvConfTask;

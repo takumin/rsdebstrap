@@ -18,6 +18,7 @@ use tracing::{debug, info};
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
+use crate::isolation::apt_sources::AptRestored;
 use crate::isolation::mount::Unmounted;
 use crate::isolation::resolv_conf::{Prepared, Restored};
 use crate::isolation::{DirectProvider, IsolationProvider, PlainRootfsContext};
@@ -117,11 +118,12 @@ impl<'a> Pipeline<'a> {
     /// Executes all phases of the pipeline with per-task isolation contexts.
     ///
     /// For pipelines that declare no prepare tasks. What a prepare task declares — a mount,
-    /// a temporary resolv.conf — is carried by RAII guards that bracket provisioning, and
-    /// this method is by definition the case with nothing in between to hold them. So it
-    /// refuses a pipeline that declares any, rather than provisioning without the mounts or
-    /// the DNS the profile asked for and reporting success. [`run_apply`](crate::run_apply)
-    /// is the entry point that holds the guards across the phases.
+    /// an apt repository, a temporary resolv.conf — is carried by RAII guards that bracket
+    /// provisioning, and this method is by definition the case with nothing in between to hold
+    /// them. So it refuses a pipeline that declares any, rather than provisioning without the
+    /// mounts, the repositories or the DNS the profile asked for and reporting success.
+    /// [`run_apply`](crate::run_apply) is the entry point that holds the guards across the
+    /// phases.
     ///
     /// If the pipeline has no tasks at all, returns immediately.
     pub fn run(
@@ -134,7 +136,7 @@ impl<'a> Pipeline<'a> {
             // Names `run_apply`, not the staged entry points: those and both guards are
             // crate-private, so an instruction to call them is one the reader cannot follow.
             return Err(RsdebstrapError::Validation(
-                "pipeline declares prepare tasks, which need the mount and resolv.conf \
+                "pipeline declares prepare tasks, which need the mount, apt and resolv.conf \
                 guards held across provisioning: use rsdebstrap::run_apply, which holds \
                 them for the whole run"
                     .to_string(),
@@ -152,7 +154,8 @@ impl<'a> Pipeline<'a> {
         )?;
         // Not a claim that guards were run and found to have done nothing: the refusal
         // above is what makes "nothing was detached, nothing was mounted" true here.
-        let restored = Restored::nothing_was_detached(provisioned);
+        let restored =
+            AptRestored::nothing_was_written(Restored::nothing_was_detached(provisioned));
         self.run_assemble(Unmounted::nothing_was_mounted(restored), rootfs, &executor, &ops)
     }
 
@@ -228,6 +231,10 @@ impl<'a> Pipeline<'a> {
             .unwrap_or_default();
         if prepared.mounts() != declared_mounts.as_slice() {
             return mismatch("the mount guard was built for different entries");
+        }
+
+        if prepared.apt() != self.prepare.apt.as_ref() {
+            return mismatch("the apt guard was built for different repositories");
         }
 
         let declared_resolv_conf = self.prepare.resolv_conf.as_ref().map(|t| t.config());
@@ -426,6 +433,7 @@ mod tests {
     // Empty prepare/assemble phases shared by the provision-focused pipeline tests.
     static EMPTY_PREPARE: PrepareConfig = PrepareConfig {
         mount: None,
+        apt: None,
         resolv_conf: None,
     };
     static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig {
@@ -584,6 +592,19 @@ mod tests {
         ) -> std::result::Result<Option<TakenEntry>, RsdebstrapError> {
             Ok(None)
         }
+
+        fn create_dir(
+            &self,
+            path: &RelPath,
+            _mode: FileMode,
+        ) -> std::result::Result<bool, RsdebstrapError> {
+            self.writes.lock().unwrap().push(format!("mkdir {path}"));
+            Ok(true)
+        }
+
+        fn remove_dir(&self, _path: &RelPath) -> std::result::Result<bool, RsdebstrapError> {
+            Ok(true)
+        }
     }
 
     fn inline_task(content: &str) -> ProvisionTask {
@@ -676,6 +697,7 @@ mod tests {
     fn provisioning_refuses_guards_armed_for_a_different_prepare_phase() {
         let prepare = PrepareConfig {
             mount: None,
+            apt: None,
             resolv_conf: Some(crate::phase::ResolvConfTask {
                 copy: true,
                 name_servers: Vec::new(),
@@ -707,6 +729,51 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("resolv.conf guard was built for a different"),
+            "expected the error to name the mismatch, got: {}",
+            err
+        );
+    }
+
+    // The same gap for `prepare.apt`: without the comparison, provisioning would run its
+    // `apt-get install` against a rootfs that never had the declared repository written.
+    #[test]
+    fn provisioning_refuses_guards_that_wrote_no_apt_repositories() {
+        let prepare = PrepareConfig {
+            mount: None,
+            apt: Some(
+                yaml_serde::from_str(
+                    "repositories:\n  - name: x\n    uris: [https://example.com]\n    \
+                    suites: [trixie]\n    components: [main]\n",
+                )
+                .unwrap(),
+            ),
+            resolv_conf: None,
+        };
+        let tasks = [inline_task("echo 1")];
+        let pipeline = Pipeline::new(
+            &prepare,
+            &tasks,
+            &EMPTY_ASSEMBLE,
+            Utf8Path::new("/tmp"),
+            None,
+            &IsolationConfig::default(),
+        )
+        .expect("no task declares `privilege: true`, so resolution cannot fail");
+        let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
+        let rootfs = Utf8Path::new("/tmp/rootfs");
+
+        let err = pipeline
+            .run_prepare_and_provision(
+                Prepared::nothing_to_prepare(rootfs),
+                rootfs,
+                &executor,
+                &dry_run_ops(),
+            )
+            .expect_err("guards that wrote nothing cannot stand for a declared repository");
+
+        assert!(
+            err.to_string()
+                .contains("apt guard was built for different"),
             "expected the error to name the mismatch, got: {}",
             err
         );
@@ -746,6 +813,7 @@ mod tests {
     fn run_refuses_a_pipeline_that_declares_prepare_tasks() {
         let prepare = PrepareConfig {
             mount: None,
+            apt: None,
             resolv_conf: Some(crate::phase::ResolvConfTask {
                 copy: true,
                 name_servers: Vec::new(),

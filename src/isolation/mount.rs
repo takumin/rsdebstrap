@@ -19,7 +19,7 @@ use tracing::info;
 use crate::config::MountEntry;
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
-use crate::isolation::resolv_conf::Restored;
+use crate::isolation::apt_sources::AptRestored;
 use crate::privilege::PrivilegeMethod;
 use crate::rootfs::RelPath;
 
@@ -81,8 +81,8 @@ impl Unmounted {
     /// For a run with no mount guard, where nothing was ever mounted.
     ///
     /// The only way to obtain an `Unmounted` without unmounting anything, and it
-    /// still requires the resolv.conf restore to have happened first.
-    pub(crate) fn nothing_was_mounted(_restored: Restored) -> Self {
+    /// still requires the apt and resolv.conf restores to have happened first.
+    pub(crate) fn nothing_was_mounted(_restored: AptRestored) -> Self {
         Self(())
     }
 }
@@ -371,12 +371,12 @@ impl RootfsMounts {
 
     /// Unmounts everything in exchange for the token the assemble phase requires.
     ///
-    /// Taking [`Restored`] and yielding [`Unmounted`] is what places this between
-    /// the resolv.conf restore and assembly: assembly cannot be called without the
+    /// Taking [`AptRestored`] and yielding [`Unmounted`] is what places this between
+    /// the apt and resolv.conf restores and assembly: assembly cannot be called without the
     /// token, and the token cannot exist before the mounts are gone. A run that
     /// fails to unmount therefore never assembles, because the rootfs is not in
     /// the state assembly is defined against.
-    pub(crate) fn unmount_before_assembly(&mut self, _restored: Restored) -> Result<Unmounted> {
+    pub(crate) fn unmount_before_assembly(&mut self, _restored: AptRestored) -> Result<Unmounted> {
         self.unmount()?;
         Ok(Unmounted(()))
     }

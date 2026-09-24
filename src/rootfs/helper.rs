@@ -69,11 +69,19 @@ pub enum Request {
         offset: u64,
         expect: Option<FileStamp>,
     },
+    CreateDir {
+        path: RelPath,
+        mode: FileMode,
+    },
+    RemoveDir {
+        path: RelPath,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Response {
     Unit,
+    Flag(bool),
     Taken(Option<TakenEntry>),
     Chunk(Option<ExportChunk>),
     Error(String),
@@ -193,6 +201,8 @@ fn dispatch(anchor: &CheckedAnchor, request: Request) -> Response {
             offset,
             expect,
         } => ops.read_chunk(&path, offset, expect).map(Response::Chunk),
+        Request::CreateDir { path, mode } => ops.create_dir(&path, mode).map(Response::Flag),
+        Request::RemoveDir { path } => ops.remove_dir(&path).map(Response::Flag),
     };
     result.unwrap_or_else(|e| Response::Error(e.to_string()))
 }
@@ -414,7 +424,17 @@ impl PrivilegedRootfsOps {
         match self.request(&request)? {
             Response::Unit => Ok(()),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Taken(_) | Response::Chunk(_) => Err(self.desynchronised()),
+            Response::Flag(_) | Response::Taken(_) | Response::Chunk(_) => {
+                Err(self.desynchronised())
+            }
+        }
+    }
+
+    fn flag(&self, request: Request) -> Result<bool> {
+        match self.request(&request)? {
+            Response::Flag(flag) => Ok(flag),
+            Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
+            Response::Unit | Response::Taken(_) | Response::Chunk(_) => Err(self.desynchronised()),
         }
     }
 
@@ -431,7 +451,7 @@ impl PrivilegedRootfsOps {
         })? {
             Response::Chunk(chunk) => Ok(chunk),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Unit | Response::Taken(_) => Err(self.desynchronised()),
+            Response::Unit | Response::Flag(_) | Response::Taken(_) => Err(self.desynchronised()),
         }
     }
 }
@@ -467,8 +487,19 @@ impl RootfsOps for PrivilegedRootfsOps {
         match self.request(&Request::Take { path: path.clone() })? {
             Response::Taken(entry) => Ok(entry),
             Response::Error(message) => Err(RsdebstrapError::Isolation(message)),
-            Response::Unit | Response::Chunk(_) => Err(self.desynchronised()),
+            Response::Unit | Response::Flag(_) | Response::Chunk(_) => Err(self.desynchronised()),
         }
+    }
+
+    fn create_dir(&self, path: &RelPath, mode: FileMode) -> Result<bool> {
+        self.flag(Request::CreateDir {
+            path: path.clone(),
+            mode,
+        })
+    }
+
+    fn remove_dir(&self, path: &RelPath) -> Result<bool> {
+        self.flag(Request::RemoveDir { path: path.clone() })
     }
 
     fn export_file(&self, path: &RelPath, sink: &mut dyn Write) -> Result<Option<ExportedFile>> {
