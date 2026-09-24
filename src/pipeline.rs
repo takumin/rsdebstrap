@@ -584,6 +584,19 @@ mod tests {
         ) -> std::result::Result<Option<TakenEntry>, RsdebstrapError> {
             Ok(None)
         }
+
+        fn create_dir(
+            &self,
+            path: &RelPath,
+            _mode: FileMode,
+        ) -> std::result::Result<bool, RsdebstrapError> {
+            self.writes.lock().unwrap().push(format!("mkdir {path}"));
+            Ok(true)
+        }
+
+        fn remove_dir(&self, _path: &RelPath) -> std::result::Result<bool, RsdebstrapError> {
+            Ok(true)
+        }
     }
 
     fn inline_task(content: &str) -> ProvisionTask {

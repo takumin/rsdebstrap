@@ -378,6 +378,19 @@ pub trait RootfsOps: Send + Sync {
     /// lands wherever the caller writes it, which is outside the rootfs and so outside what
     /// a [`RelPath`] can name.
     fn export_file(&self, path: &RelPath, sink: &mut dyn Write) -> Result<Option<ExportedFile>>;
+
+    /// Creates the directory `path` carrying exactly `mode`, unless one is already there.
+    ///
+    /// Returns `true` if it created the directory and `false` if a directory already
+    /// existed. Anything else at `path` -- a symlink included, which is never followed -- is
+    /// an error. Only the final component is created; its parent must exist.
+    fn create_dir(&self, path: &RelPath, mode: FileMode) -> Result<bool>;
+
+    /// Removes the directory `path` if it is empty.
+    ///
+    /// Returns `true` if it is gone (or was never there) and `false` if it still holds
+    /// entries, in which case it is left alone. A symlink or a non-directory is an error.
+    fn remove_dir(&self, path: &RelPath) -> Result<bool>;
 }
 
 /// [`RootfsOps`] performed directly by this process.
@@ -1163,6 +1176,83 @@ impl RootfsOps for LocalRootfsOps {
             size,
         }))
     }
+
+    fn create_dir(&self, path: &RelPath, mode: FileMode) -> Result<bool> {
+        let parent = self.parent_dir(path)?;
+        let dir = parent.fd();
+        let name = path.file_name();
+
+        if self.existing_dir(dir, name, path)? {
+            return Ok(false);
+        }
+
+        // Built under a staging name and published with a no-replace rename, for the reasons
+        // `install_file` stages a file: the directory never exists at its own name with a
+        // mode other than `mode`, and whatever appears at that name in the meantime -- a
+        // symlink planted to redirect the next write into it -- makes the rename fail
+        // rather than be followed or replaced.
+        let staging = Self::staging_name(name);
+        rfs::mkdirat(dir, staging.as_str(), Mode::from_raw_mode(0o700))
+            .map_err(|e| self.io_err("stage directory", &self.at(path), e))?;
+        let chmod = rfs::openat(
+            dir,
+            staging.as_str(),
+            OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        // `mkdirat`'s mode is masked by the umask, so it is set on the descriptor to land
+        // exactly, as `install_file` does for a file.
+        .and_then(|fd| rfs::fchmod(&fd, Mode::from_raw_mode(mode.bits())));
+        let published = chmod.and_then(|()| {
+            rfs::renameat_with(dir, staging.as_str(), dir, name, rfs::RenameFlags::NOREPLACE)
+        });
+        match published {
+            Ok(()) => Ok(true),
+            Err(e) => {
+                let _ = rfs::unlinkat(dir, staging.as_str(), AtFlags::REMOVEDIR);
+                // Lost a race to something created at the name after the check above: it
+                // is judged the same way an entry found there up front would be.
+                if e == rustix::io::Errno::EXIST && self.existing_dir(dir, name, path)? {
+                    return Ok(false);
+                }
+                Err(self.io_err("create directory", &self.at(path), e))
+            }
+        }
+    }
+
+    fn remove_dir(&self, path: &RelPath) -> Result<bool> {
+        let parent = self.parent_dir(path)?;
+        // `AT_REMOVEDIR` does not follow a symlink at the final component; it fails with
+        // `ENOTDIR` instead, which is the refusal wanted here.
+        match rfs::unlinkat(parent.fd(), path.file_name(), AtFlags::REMOVEDIR) {
+            Ok(()) | Err(rustix::io::Errno::NOENT) => Ok(true),
+            Err(rustix::io::Errno::NOTEMPTY | rustix::io::Errno::EXIST) => Ok(false),
+            Err(e) => Err(self.io_err("remove directory", &self.at(path), e)),
+        }
+    }
+}
+
+impl LocalRootfsOps {
+    /// Whether `name` in `dir` is an existing directory: `false` if nothing is there, an
+    /// error if something other than a directory is.
+    fn existing_dir(&self, dir: BorrowedFd<'_>, name: &str, path: &RelPath) -> Result<bool> {
+        match rfs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => match FileType::from_raw_mode(stat.st_mode) {
+                FileType::Directory => Ok(true),
+                FileType::Symlink => Err(RsdebstrapError::Isolation(format!(
+                    "{} is a symlink, refusing to use it as a directory \
+                    (possible symlink attack)",
+                    self.at(path)
+                ))),
+                _ => Err(RsdebstrapError::Isolation(format!(
+                    "{} exists and is not a directory",
+                    self.at(path)
+                ))),
+            },
+            Err(rustix::io::Errno::NOENT) => Ok(false),
+            Err(e) => Err(self.io_err("stat", &self.at(path), e)),
+        }
+    }
 }
 
 /// [`RootfsOps`] that reports what it would do and changes nothing.
@@ -1228,6 +1318,17 @@ impl RootfsOps for DryRunRootfsOps {
             "dry run: refusing to export {}{}, there is nothing to read",
             self.rootfs, path
         )))
+    }
+
+    fn create_dir(&self, path: &RelPath, mode: FileMode) -> Result<bool> {
+        tracing::info!("dry run: create directory {}{} (mode {})", self.rootfs, path, mode);
+        // Nothing was created, so nothing is removed on teardown.
+        Ok(false)
+    }
+
+    fn remove_dir(&self, path: &RelPath) -> Result<bool> {
+        tracing::info!("dry run: remove directory {}{}", self.rootfs, path);
+        Ok(true)
     }
 }
 
@@ -1313,6 +1414,101 @@ mod tests {
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         std::fs::create_dir_all(root.join("etc")).unwrap();
         (tmp, root)
+    }
+
+    #[test]
+    fn create_dir_creates_the_directory_once() {
+        let (_tmp, root) = rootfs();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+        let path = RelPath::parse("/etc/keyrings").unwrap();
+
+        assert!(ops.create_dir(&path, FileMode::new(0o755)).unwrap());
+        assert!(root.join("etc/keyrings").is_dir());
+        assert!(
+            !ops.create_dir(&path, FileMode::new(0o755)).unwrap(),
+            "an existing directory is reported as not created"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(root.join("etc"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(leftovers, ["keyrings"], "no staging entry may be left behind");
+    }
+
+    // The case the operation exists to get right under privilege: adopting the link as the
+    // directory would send every write into it wherever the link points.
+    #[test]
+    fn create_dir_refuses_a_symlink_at_the_name() {
+        let (tmp, root) = rootfs();
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join("etc/keyrings")).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        let err = ops
+            .create_dir(&RelPath::parse("/etc/keyrings").unwrap(), FileMode::new(0o755))
+            .unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+    }
+
+    #[test]
+    fn create_dir_refuses_a_file_at_the_name() {
+        let (_tmp, root) = rootfs();
+        std::fs::write(root.join("etc/keyrings"), b"").unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        let err = ops
+            .create_dir(&RelPath::parse("/etc/keyrings").unwrap(), FileMode::new(0o755))
+            .unwrap_err();
+        assert!(err.to_string().contains("not a directory"), "{err}");
+    }
+
+    #[test]
+    fn create_dir_refuses_a_symlink_on_the_way() {
+        let (tmp, root) = rootfs();
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join("etc/apt")).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        assert!(
+            ops.create_dir(&RelPath::parse("/etc/apt/keyrings").unwrap(), FileMode::new(0o755))
+                .is_err()
+        );
+        assert!(!elsewhere.join("keyrings").exists());
+    }
+
+    #[test]
+    fn remove_dir_removes_only_an_empty_directory() {
+        let (_tmp, root) = rootfs();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+        let path = RelPath::parse("/etc/keyrings").unwrap();
+        std::fs::create_dir(root.join("etc/keyrings")).unwrap();
+        std::fs::write(root.join("etc/keyrings/k.asc"), b"").unwrap();
+
+        assert!(!ops.remove_dir(&path).unwrap(), "a non-empty directory is left alone");
+        assert!(root.join("etc/keyrings/k.asc").exists());
+
+        std::fs::remove_file(root.join("etc/keyrings/k.asc")).unwrap();
+        assert!(ops.remove_dir(&path).unwrap());
+        assert!(!root.join("etc/keyrings").exists());
+        assert!(ops.remove_dir(&path).unwrap(), "an absent directory counts as removed");
+    }
+
+    #[test]
+    fn remove_dir_refuses_a_symlink() {
+        let (tmp, root) = rootfs();
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join("etc/keyrings")).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        assert!(
+            ops.remove_dir(&RelPath::parse("/etc/keyrings").unwrap())
+                .is_err()
+        );
+        assert!(elsewhere.exists());
+        assert!(std::fs::symlink_metadata(root.join("etc/keyrings")).is_ok());
     }
 
     // `O_NOFOLLOW` on a whole-path `openat` covers the final component only, so this walks

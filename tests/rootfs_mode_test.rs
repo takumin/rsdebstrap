@@ -57,6 +57,25 @@ fn write_file_lands_the_requested_mode_under_a_restrictive_umask() {
     }
 }
 
+// The same promise for a directory. apt reads `/etc/apt/keyrings` as the unprivileged
+// `_apt` user, so one created 0700 under this umask would leave every keyring in it
+// unreadable and `apt-get update` failing on signatures.
+#[test]
+fn create_dir_lands_the_requested_mode_under_a_restrictive_umask() {
+    let (_tmp, root) = rootfs();
+    let ops = LocalRootfsOps::open(&root).unwrap();
+
+    for requested in [0o755, 0o700, 0o750] {
+        let path = RelPath::parse(&format!("/etc/dir-{requested:o}")).unwrap();
+        assert!(ops.create_dir(&path, FileMode::new(requested)).unwrap());
+        assert_eq!(
+            mode_of(&root.join(format!("etc/dir-{requested:o}"))),
+            requested,
+            "requested {requested:o}"
+        );
+    }
+}
+
 // The reason the exactness matters: a resolv.conf detached from the rootfs and restored
 // on teardown has to come back with the permissions it had, not with permissions the
 // build process's umask happened to allow.

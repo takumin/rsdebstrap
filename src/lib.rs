@@ -516,6 +516,18 @@ mod tests {
         ) -> std::result::Result<Option<rootfs::TakenEntry>, RsdebstrapError> {
             self.inner.take(path)
         }
+
+        fn create_dir(
+            &self,
+            path: &rootfs::RelPath,
+            mode: rootfs::FileMode,
+        ) -> std::result::Result<bool, RsdebstrapError> {
+            self.inner.create_dir(path, mode)
+        }
+
+        fn remove_dir(&self, path: &rootfs::RelPath) -> std::result::Result<bool, RsdebstrapError> {
+            self.inner.remove_dir(path)
+        }
     }
 
     // Timeline shared by the executor and the ops below, so the mount lifecycle
@@ -634,6 +646,18 @@ mod tests {
             path: &rootfs::RelPath,
         ) -> std::result::Result<Option<rootfs::TakenEntry>, RsdebstrapError> {
             self.inner.take(path)
+        }
+
+        fn create_dir(
+            &self,
+            path: &rootfs::RelPath,
+            mode: rootfs::FileMode,
+        ) -> std::result::Result<bool, RsdebstrapError> {
+            self.inner.create_dir(path, mode)
+        }
+
+        fn remove_dir(&self, path: &rootfs::RelPath) -> std::result::Result<bool, RsdebstrapError> {
+            self.inner.remove_dir(path)
         }
     }
 

@@ -430,3 +430,28 @@ fn the_helper_exports_a_root_only_file_larger_than_one_chunk() {
     assert_eq!(exported.mode, FileMode::new(0o600));
     assert!(sink == content, "the reassembled copy differs from the image");
 }
+
+// `/etc/apt/keyrings` is created as root in a real build, inside a directory this user
+// cannot enter. The owner and mode are what apt's own package ships it with.
+#[test]
+#[ignore = "requires passwordless sudo"]
+fn the_helper_creates_a_root_owned_directory_with_the_requested_mode() {
+    require_sudo!();
+    let fixture = RootOwnedRootfs::new();
+    let ops = privileged(&fixture.path);
+    let path = RelPath::parse("/etc/keyrings").unwrap();
+
+    assert!(ops.create_dir(&path, FileMode::new(0o755)).unwrap());
+    let out = std::process::Command::new("sudo")
+        .args([
+            "stat",
+            "-c",
+            "%u:%g %a",
+            fixture.path.join("etc/keyrings").as_str(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0:0 755");
+
+    assert!(ops.remove_dir(&path).unwrap());
+}

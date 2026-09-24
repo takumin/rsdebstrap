@@ -577,6 +577,21 @@ mod tests {
         ) -> std::result::Result<Option<TakenEntry>, crate::error::RsdebstrapError> {
             self.inner.take(path)
         }
+
+        fn create_dir(
+            &self,
+            path: &RelPath,
+            mode: FileMode,
+        ) -> std::result::Result<bool, crate::error::RsdebstrapError> {
+            self.inner.create_dir(path, mode)
+        }
+
+        fn remove_dir(
+            &self,
+            path: &RelPath,
+        ) -> std::result::Result<bool, crate::error::RsdebstrapError> {
+            self.inner.remove_dir(path)
+        }
     }
 
     #[test]
