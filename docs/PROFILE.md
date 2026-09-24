@@ -88,6 +88,7 @@ provision:                  # Optional main provisioning steps (ordered list)
       type: chroot
 assemble:                   # Optional finalization steps (named-field struct)
   apt_clean: true           # Optional: empty apt's cache and package lists (default false)
+  machine_id: uninitialized # Optional: reset /etc/machine-id (uninitialized | empty)
   resolv_conf:              # Permanent /etc/resolv.conf in final rootfs (at most one)
     name_servers: [8.8.8.8, 8.8.4.4]  # Generate resolv.conf with nameservers
     search: [example.com]   # Optional search domains
@@ -304,6 +305,24 @@ on the host. Two consequences follow, and both are enforced rather than document
 - It runs before the assemble `resolv_conf` and before `assemble.output`, so the squashfs image
   does not carry the removed files. Symlinks are removed as links and never followed, and a
   symlink in place of one of the directories themselves is an error
+
+## Assemble machine_id rules
+
+- `assemble.machine_id` rewrites `/etc/machine-id` so that machines booted from the image do
+  not share the ID the build generated (installing systemd or dbus creates one). The value
+  picks what machine-id(5) makes of the file at boot:
+  - `uninitialized` writes the string `uninitialized`: the first boot is treated as one
+    (`ConditionFirstBoot=` holds and unit presets are applied), and the ID generated then is
+    written to disk. This is what `mmdebstrap` leaves
+  - `empty` writes an empty file: an ID is generated at every boot and written to disk only if
+    `/etc` is writable, and no boot is treated as the first one. Suits a read-only root
+- The file is written as a regular file, mode `0444`, replacing whatever was there (a symlink is
+  replaced, never followed). It is not removed instead: with a read-only root, systemd can only
+  mount the generated ID over an existing file
+- `/var/lib/dbus/machine-id` is not touched. Debian ships it as a symlink to `/etc/machine-id`,
+  so it follows the reset; a rootfs where it is a regular file keeps the build's ID there
+- It runs after `assemble.apt_clean` and before the assemble `resolv_conf` and
+  `assemble.output`
 
 ## Assemble output rules
 

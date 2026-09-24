@@ -3,6 +3,8 @@
 //! This module provides the [`AssembleConfig`] named-field struct describing the
 //! tasks that run after the main provisioning phase:
 //! - [`apt_clean`](AssembleConfig::apt_clean) — empties apt's caches in the final rootfs
+//! - [`machine_id`](AssembleConfig::machine_id) — resets `/etc/machine-id` so each machine
+//!   generates its own
 //! - [`resolv_conf`](AssembleConfig::resolv_conf) — writes a permanent `/etc/resolv.conf`
 //! - [`output`](AssembleConfig::output) — writes the kernel, the initramfs and a squashfs
 //!   image of the rootfs next to it, once the rootfs is final
@@ -11,12 +13,14 @@
 //! validated after the fact.
 
 pub mod apt_clean;
+pub mod machine_id;
 pub mod output;
 pub mod resolv_conf;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+pub use machine_id::MachineId;
 pub use output::{BootFileOutput, OutputConfig, SquashfsCompression, SquashfsOutput};
 pub use resolv_conf::AssembleResolvConfTask;
 
@@ -35,6 +39,10 @@ pub struct AssembleConfig {
     /// can install anything.
     #[serde(default)]
     pub apt_clean: bool,
+    /// Reset `/etc/machine-id` in the final rootfs, so every machine booted from the image
+    /// generates its own ID rather than sharing the build's.
+    #[serde(default)]
+    pub machine_id: Option<MachineId>,
     /// resolv_conf task writing a permanent `/etc/resolv.conf` into the final rootfs.
     #[serde(default)]
     pub resolv_conf: Option<AssembleResolvConfTask>,
@@ -51,6 +59,9 @@ impl AssembleConfig {
         if self.apt_clean {
             items.push(&AptCleanTask);
         }
+        if let Some(machine_id) = &self.machine_id {
+            items.push(machine_id);
+        }
         if let Some(resolv_conf) = &self.resolv_conf {
             items.push(resolv_conf);
         }
@@ -64,7 +75,10 @@ impl AssembleConfig {
 
     /// Returns the number of configured assemble tasks, outputs included.
     pub fn len(&self) -> usize {
-        usize::from(self.apt_clean) + usize::from(self.resolv_conf.is_some()) + self.output.len()
+        usize::from(self.apt_clean)
+            + usize::from(self.machine_id.is_some())
+            + usize::from(self.resolv_conf.is_some())
+            + self.output.len()
     }
 }
 
@@ -92,6 +106,39 @@ mod tests {
             .collect();
         assert_eq!(names, ["apt_clean", "resolv_conf:generate"]);
         assert_eq!(config.len(), 2);
+    }
+
+    #[test]
+    fn items_run_machine_id_between_apt_clean_and_resolv_conf() {
+        let yaml = "resolv_conf:\n  link: ../run/x\nmachine_id: empty\napt_clean: true\n";
+        let config: AssembleConfig = yaml_serde::from_str(yaml).unwrap();
+        let names: Vec<_> = config
+            .items()
+            .iter()
+            .map(|item| item.name().into_owned())
+            .collect();
+        assert_eq!(names, ["apt_clean", "machine_id:empty", "resolv_conf:link"]);
+        assert_eq!(config.len(), 3);
+    }
+
+    #[test]
+    fn deserialize_machine_id_values() {
+        for (yaml, expected) in [
+            ("machine_id: uninitialized\n", Some(MachineId::Uninitialized)),
+            ("machine_id: empty\n", Some(MachineId::Empty)),
+            ("machine_id: null\n", None),
+        ] {
+            let config: AssembleConfig = yaml_serde::from_str(yaml).unwrap();
+            assert_eq!(config.machine_id, expected, "{yaml}");
+        }
+    }
+
+    #[test]
+    fn deserialize_rejects_an_unknown_machine_id() {
+        for yaml in ["machine_id: remove\n", "machine_id: true\n"] {
+            let result: Result<AssembleConfig, _> = yaml_serde::from_str(yaml);
+            assert!(result.is_err(), "{yaml} must be rejected");
+        }
     }
 
     #[test]

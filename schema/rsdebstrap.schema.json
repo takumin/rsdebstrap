@@ -273,6 +273,18 @@
 					"description": "Empty apt's download cache and package lists in the final rootfs, as `apt-get\ndistclean` would (default false). The image then needs `apt-get update` before it\ncan install anything.",
 					"type": "boolean"
 				},
+				"machine_id": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/MachineId"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "Reset `/etc/machine-id` in the final rootfs, so every machine booted from the image\ngenerates its own ID rather than sharing the build's."
+				},
 				"output": {
 					"anyOf": [
 						{
@@ -729,6 +741,21 @@
 						"type"
 					],
 					"type": "object"
+				}
+			]
+		},
+		"MachineId": {
+			"description": "What `/etc/machine-id` is reset to, per machine-id(5).",
+			"oneOf": [
+				{
+					"const": "uninitialized",
+					"description": "The string `uninitialized`: the next boot is the first boot (`ConditionFirstBoot=`\nholds, so presets apply), and the ID generated then is committed to disk.",
+					"type": "string"
+				},
+				{
+					"const": "empty",
+					"description": "An empty file: an ID is generated at every boot and committed if `/etc` is\nwritable, but no boot counts as the first one. Suits a read-only root.",
+					"type": "string"
 				}
 			]
 		},

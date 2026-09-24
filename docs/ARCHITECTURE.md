@@ -99,7 +99,7 @@ the one resolution produces.
 
 Each phase is flattened to a slice of trait objects before running: `PrepareConfig::items()` and
 `AssembleConfig::items()` emit their present `Option` fields in a **fixed execution order**
-(`mount → apt → resolv_conf`; `apt_clean → resolv_conf`), and provision maps its `Vec` to trait objects. `run_phase_items` and
+(`mount → apt → resolv_conf`; `apt_clean → machine_id → resolv_conf`), and provision maps its `Vec` to trait objects. `run_phase_items` and
 `validate_phase_items` are generic over `T: PhaseItem + ?Sized`, so the shared logging and
 error-context wrapping are written once; only the per-item action differs.
 
@@ -207,7 +207,7 @@ Key invariants:
   the invoking user, at `0600`, even when `mksquashfs` runs under `sudo`.
 
 `prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, apt, resolv_conf }`,
-`AssembleConfig { apt_clean, resolv_conf, output }`, `OutputConfig { kernel, initramfs, rootfs }`), not lists. This makes the singleton invariants structural:
+`AssembleConfig { apt_clean, machine_id, resolv_conf, output }`, `OutputConfig { kernel, initramfs, rootfs }`), not lists. This makes the singleton invariants structural:
 "at most one mount" / "at most one resolv_conf" hold because each is an `Option` (a duplicate
 YAML key is a `yaml_serde` parse error, an unknown key a `deny_unknown_fields` error), and the
 `mount → apt → resolv_conf` order is fixed by `items()` rather than by key order. The former
