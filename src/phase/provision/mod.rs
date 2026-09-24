@@ -13,6 +13,7 @@
 //!
 //! The compiler enforces exhaustiveness, ensuring all task types are handled.
 
+pub mod apt;
 pub mod mitamae;
 pub mod shell;
 
@@ -22,6 +23,7 @@ use camino::Utf8Path;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+pub use apt::AptGetTask;
 pub use mitamae::MitamaeTask;
 pub use shell::ShellTask;
 
@@ -44,6 +46,8 @@ pub enum ProvisionTask {
     Shell(ShellTask),
     /// Mitamae recipe execution task
     Mitamae(MitamaeTask),
+    /// `apt-get update` / `apt-get install` task
+    Apt(AptGetTask),
 }
 
 impl PhaseItem for ProvisionTask {
@@ -55,6 +59,7 @@ impl PhaseItem for ProvisionTask {
         match self {
             Self::Shell(task) => task.validate(),
             Self::Mitamae(task) => task.validate(),
+            Self::Apt(task) => task.validate(),
         }
     }
 }
@@ -98,6 +103,7 @@ impl ProvisionTask {
         match self {
             Self::Shell(task) => Cow::Owned(format!("shell:{}", task.name())),
             Self::Mitamae(task) => Cow::Owned(format!("mitamae:{}", task.name())),
+            Self::Apt(task) => Cow::Owned(format!("apt:{}", task.name())),
         }
     }
 
@@ -149,6 +155,7 @@ impl ProvisionTask {
         match self {
             Self::Shell(task) => task.execute(ctx, privilege),
             Self::Mitamae(task) => task.execute(ctx, privilege),
+            Self::Apt(task) => task.execute(ctx, privilege),
         }
     }
 
@@ -157,6 +164,7 @@ impl ProvisionTask {
         match self {
             Self::Shell(task) => task.script_path(),
             Self::Mitamae(task) => task.script_path(),
+            Self::Apt(_) => None,
         }
     }
 
@@ -165,13 +173,14 @@ impl ProvisionTask {
         match self {
             Self::Shell(task) => task.resolve_paths(base_dir),
             Self::Mitamae(task) => task.resolve_paths(base_dir),
+            Self::Apt(_) => {}
         }
     }
 
     /// Returns the binary path if this task uses an external binary.
     pub fn binary_path(&self) -> Option<&Utf8Path> {
         match self {
-            Self::Shell(_) => None,
+            Self::Shell(_) | Self::Apt(_) => None,
             Self::Mitamae(task) => task.binary(),
         }
     }
@@ -181,6 +190,7 @@ impl ProvisionTask {
         match self {
             Self::Shell(task) => task.privilege(),
             Self::Mitamae(task) => task.privilege(),
+            Self::Apt(task) => task.privilege(),
         }
     }
 
@@ -189,6 +199,7 @@ impl ProvisionTask {
         match self {
             Self::Shell(task) => task.task_isolation(),
             Self::Mitamae(task) => task.task_isolation(),
+            Self::Apt(task) => task.task_isolation(),
         }
     }
 }

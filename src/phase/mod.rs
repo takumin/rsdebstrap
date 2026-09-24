@@ -8,7 +8,7 @@
 //!
 //! - [`prepare`] — Preparation tasks before main provisioning (named-field
 //!   [`PrepareConfig`]: `mount`, `apt`, `resolv_conf`)
-//! - [`provision`] — Main provisioning tasks (Shell, Mitamae), an ordered `Vec`
+//! - [`provision`] — Main provisioning tasks (Shell, Mitamae, Apt), an ordered `Vec`
 //! - [`assemble`] — Finalization tasks after provisioning (named-field
 //!   [`AssembleConfig`]: `resolv_conf`, plus the `output` artifacts the pipeline writes
 //!   after them)
@@ -38,6 +38,7 @@ pub use prepare::AptTask;
 pub use prepare::MountTask;
 pub use prepare::PrepareConfig;
 pub use prepare::ResolvConfTask;
+pub use provision::AptGetTask;
 pub use provision::MitamaeTask;
 pub use provision::ProvisionTask;
 pub use provision::ResolvedProvisionTask;

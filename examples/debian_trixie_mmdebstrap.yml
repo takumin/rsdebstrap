@@ -4,7 +4,7 @@
 # This profile demonstrates all available features:
 #   - defaults: isolation (chroot), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
-#   - pipeline: prepare (mount, apt, resolv_conf), provision (shell + mitamae),
+#   - pipeline: prepare (mount, apt, resolv_conf), provision (apt + shell + mitamae),
 #     assemble (resolv_conf, output)
 
 dir: /tmp/debian-trixie-server-amd64
@@ -74,8 +74,8 @@ prepare:
 
   # Extra APT keyrings (/etc/apt/keyrings, created if missing), repositories
   # (deb822 files in /etc/apt/sources.list.d) and preferences
-  # (/etc/apt/preferences.d). Removed again before assemble unless `keep: true`. A provision task still has to run `apt-get update`
-  # before installing from them.
+  # (/etc/apt/preferences.d). Removed again before assemble unless `keep: true`. An apt
+  # provision task with `update: true` has to refresh the lists before installing from them.
   # apt:
   #   keyrings:
   #   - name: docker
@@ -111,12 +111,18 @@ prepare:
     copy: true
 
 provision:
+# apt-get update, then apt-get install --no-install-recommends. `update` defaults
+# to false; the first apt task needs it, since the bootstrap leaves no package lists.
+- type: apt
+  update: true
+  install: [vim, htop]
+  # recommends: true          # Install Recommends too
+
 - type: shell
   content: |-
     #!/bin/sh
     set -e
-    apt-get update
-    apt-get install -y vim htop
+    echo "provisioned by $(id -un)"
   # Per-task overrides (optional):
   #   privilege: false        # Disable privilege for this task
   #   privilege: { method: doas }  # Use a different method

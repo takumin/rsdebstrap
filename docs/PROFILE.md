@@ -72,6 +72,11 @@ provision:                  # Optional main provisioning steps (ordered list)
     shell: /bin/sh           # Optional: interpreter (default /bin/sh)
     privilege: false         # Disable privilege escalation for this task
     isolation: false         # Disable isolation (direct execution on host)
+  - type: apt
+    update: true            # Optional: run apt-get update first (default false)
+    install: [docker-ce]    # Optional: packages for apt-get install
+    recommends: false       # Optional: install Recommends too (default false)
+    privilege: true         # Optional: same meaning as on shell/mitamae
   - type: mitamae
     script: ./recipe.rb     # Mitamae recipe file
     # OR
@@ -190,7 +195,8 @@ on the host. Two consequences follow, and both are enforced rather than document
   `Signed-By`, so the keyring is trusted for the repositories that name it only. Several
   repositories may name one keyring; `signed_by` naming no `keyrings` entry is an error
 - Each repository is written to `/etc/apt/sources.list.d/<name>.sources` in deb822 format. It
-  only declares the repository: run `apt-get update` in a `provision` task before installing
+  only declares the repository: run `apt-get update` in a `provision` task (an apt task with
+  `update: true`, see [apt provision task rules](#apt-provision-task-rules)) before installing
   from it
 - `name` may hold only letters, digits, `_`, `-` and `.` and may not start with `.` — apt
   skips a file named otherwise. Names are unique within `keyrings`, within `repositories` and
@@ -253,6 +259,29 @@ on the host. Two consequences follow, and both are enforced rather than document
   previous entry intact and stages nothing a later run has to clear. A pre-existing
   `/etc/resolv.conf` is replaced whether it is a regular file or a symlink; a symlink is never
   followed, so the entry it pointed at is left untouched
+
+## apt provision task rules
+
+- `type: apt` runs `apt-get update` when `update: true`, then `apt-get install -y` for the
+  `install` list, inside the task's isolation. A task with neither is a validation error
+- `update` defaults to `false`, so that installs split over several apt tasks do not refresh
+  the package lists each time. Neither bootstrap backend leaves package lists behind by default
+  (mmdebstrap removes them unless told `--skip=cleanup/apt/lists`), so set
+  `update: true` on the first apt task (and on the first one after a task that changes the
+  apt sources). An install that fails in a task without it says so in the error
+- `recommends` defaults to `false`, which passes `--no-install-recommends`. Packages the
+  bootstrap should include from the base repositories belong in `bootstrap.include` instead;
+  this task is for what `prepare.apt` or an earlier task made available
+- `apt-get` runs with `DEBIAN_FRONTEND=noninteractive` and
+  `-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold`, so it never waits for
+  an answer; a conffile an earlier task changed is kept
+- Each `install` entry is `name[:arch][=version|/release]`: a Debian package name (lowercase
+  letters, digits, `+`, `-`, `.`; at least two characters, starting with a letter or digit, not
+  ending in `-`), then optionally an architecture, then a version or a target release. Anything
+  else — an option, a glob, whitespace — is a validation error, so no entry can reach
+  `apt-get` as an option
+- `privilege` works as on the other provision tasks. `isolation: false` is refused: it would
+  run the host's `apt-get` against the host
 
 ## Assemble output rules
 

@@ -1174,6 +1174,50 @@
 						"type"
 					],
 					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "`apt-get update` / `apt-get install` task",
+					"properties": {
+						"install": {
+							"description": "Packages to install with `apt-get install`. Each entry is a package name, optionally\nfollowed by `:<arch>`, and then optionally by `=<version>` or `/<release>`.",
+							"items": {
+								"type": "string"
+							},
+							"type": [
+								"array",
+								"null"
+							]
+						},
+						"isolation": {
+							"$ref": "#/$defs/TaskIsolation",
+							"default": null,
+							"description": "Isolation setting as declared in the profile. `false` is rejected: it would run the\nhost's `apt-get` against the host."
+						},
+						"privilege": {
+							"$ref": "#/$defs/Privilege",
+							"default": null,
+							"description": "Privilege escalation setting as declared in the profile."
+						},
+						"recommends": {
+							"default": false,
+							"description": "Install recommended packages too. Defaults to `false`\n(`--no-install-recommends`).",
+							"type": "boolean"
+						},
+						"type": {
+							"const": "apt",
+							"type": "string"
+						},
+						"update": {
+							"default": false,
+							"description": "Run `apt-get update` before installing. Defaults to `false`, so that splitting\ninstalls over several apt tasks does not refresh the package lists each time; set\nit on the first apt task, since a freshly bootstrapped rootfs has no package lists.",
+							"type": "boolean"
+						}
+					},
+					"required": [
+						"type"
+					],
+					"type": "object"
 				}
 			]
 		},
