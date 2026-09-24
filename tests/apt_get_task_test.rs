@@ -2,10 +2,13 @@
 
 mod helpers;
 
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+
 use camino::Utf8Path;
 use rsdebstrap::phase::{AptGetTask, ProvisionTask};
 use rsdebstrap::privilege::PrivilegeMethod;
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 
 use crate::helpers::MockContext;
 
@@ -25,6 +28,16 @@ fn apt_get(args: &[&str]) -> Vec<String> {
 
 fn packages(names: &[&str]) -> Vec<String> {
     names.iter().map(|s| s.to_string()).collect()
+}
+
+const POLICY_RC_D: &str = "usr/sbin/policy-rc.d";
+const DENY: &[u8] = b"#!/bin/sh\nexit 101\n";
+
+// The guard writes into `/usr/sbin`, which every real rootfs has and a bare tempdir does not.
+fn rootfs_with_sbin() -> TempDir {
+    let temp_dir = tempdir().unwrap();
+    fs::create_dir_all(temp_dir.path().join("usr/sbin")).unwrap();
+    temp_dir
 }
 
 fn parse(yaml: &str) -> AptGetTask {
@@ -50,7 +63,7 @@ fn deserialize_rejects_unknown_fields_and_non_string_packages() {
 
 #[test]
 fn update_and_install_run_in_that_order() {
-    let temp_dir = tempdir().unwrap();
+    let temp_dir = rootfs_with_sbin();
     let rootfs = Utf8Path::from_path(temp_dir.path()).unwrap();
     let context = MockContext::new(rootfs);
 
@@ -79,7 +92,7 @@ fn update_and_install_run_in_that_order() {
 
 #[test]
 fn install_without_update_does_not_refresh_the_lists() {
-    let temp_dir = tempdir().unwrap();
+    let temp_dir = rootfs_with_sbin();
     let rootfs = Utf8Path::from_path(temp_dir.path()).unwrap();
     let context = MockContext::new(rootfs);
 
@@ -93,7 +106,7 @@ fn install_without_update_does_not_refresh_the_lists() {
 
 #[test]
 fn update_alone_runs_no_install() {
-    let temp_dir = tempdir().unwrap();
+    let temp_dir = rootfs_with_sbin();
     let rootfs = Utf8Path::from_path(temp_dir.path()).unwrap();
     let context = MockContext::new(rootfs);
 
@@ -108,7 +121,7 @@ fn update_alone_runs_no_install() {
 // from a rootfs whose package lists nothing has populated yet.
 #[test]
 fn a_failed_install_without_update_points_at_the_package_lists() {
-    let temp_dir = tempdir().unwrap();
+    let temp_dir = rootfs_with_sbin();
     let rootfs = Utf8Path::from_path(temp_dir.path()).unwrap();
     let context = MockContext::with_failure(rootfs, 100);
 
@@ -128,7 +141,7 @@ fn a_failed_install_without_update_points_at_the_package_lists() {
 
 #[test]
 fn a_failed_update_stops_before_install_and_carries_no_hint() {
-    let temp_dir = tempdir().unwrap();
+    let temp_dir = rootfs_with_sbin();
     let rootfs = Utf8Path::from_path(temp_dir.path()).unwrap();
     let context = MockContext::with_failure(rootfs, 100);
 
@@ -151,6 +164,66 @@ fn dry_run_still_hands_the_commands_to_the_executor() {
         .expect("should succeed");
 
     assert_eq!(context.executed_commands().len(), 2);
+}
+
+#[test]
+fn install_runs_under_a_policy_denying_service_starts_and_removes_it_after() {
+    let temp_dir = rootfs_with_sbin();
+    let rootfs = Utf8Path::from_path(temp_dir.path()).unwrap();
+    let context = MockContext::new(rootfs).with_probe(POLICY_RC_D);
+
+    AptGetTask::new(true, packages(&["nginx"]))
+        .execute(&context, None)
+        .expect("should succeed");
+
+    // `update` runs no maintainer scripts, so it runs without the policy.
+    assert_eq!(context.probed(), [None, Some(DENY.to_vec())]);
+    assert!(!rootfs.join(POLICY_RC_D).exists());
+}
+
+#[test]
+fn a_policy_the_rootfs_already_had_is_put_back_after_the_install() {
+    let temp_dir = rootfs_with_sbin();
+    let rootfs = Utf8Path::from_path(temp_dir.path()).unwrap();
+    let path = rootfs.join(POLICY_RC_D);
+    fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
+    let context = MockContext::new(rootfs).with_probe(POLICY_RC_D);
+
+    AptGetTask::new(false, packages(&["nginx"]))
+        .execute(&context, None)
+        .expect("should succeed");
+
+    assert_eq!(context.probed(), [Some(DENY.to_vec())]);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "#!/bin/sh\nexit 0\n");
+    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o7777, 0o750);
+}
+
+#[test]
+fn a_failed_install_still_removes_the_policy() {
+    let temp_dir = rootfs_with_sbin();
+    let rootfs = Utf8Path::from_path(temp_dir.path()).unwrap();
+    let context = MockContext::with_failure(rootfs, 100).with_probe(POLICY_RC_D);
+
+    AptGetTask::new(false, packages(&["nginx"]))
+        .execute(&context, None)
+        .unwrap_err();
+
+    assert_eq!(context.probed(), [Some(DENY.to_vec())]);
+    assert!(!rootfs.join(POLICY_RC_D).exists());
+}
+
+#[test]
+fn dry_run_writes_no_policy() {
+    let temp_dir = rootfs_with_sbin();
+    let rootfs = Utf8Path::from_path(temp_dir.path()).unwrap();
+    let context = MockContext::new_dry_run(rootfs).with_probe(POLICY_RC_D);
+
+    AptGetTask::new(false, packages(&["nginx"]))
+        .execute(&context, None)
+        .expect("should succeed");
+
+    assert_eq!(context.probed(), [None]);
 }
 
 #[test]
