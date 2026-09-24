@@ -1,7 +1,7 @@
 //! Build artifacts the assemble phase writes next to the rootfs: a kernel, an initramfs,
 //! and a squashfs image of the rootfs itself.
 //!
-//! These are not [`AssembleItem`](crate::phase::AssembleItem)s. An assemble item writes the
+//! These are not `AssembleItem`s. An assemble item writes the
 //! rootfs's final state and cannot run a program; an output reads that final state and
 //! writes *outside* the rootfs, and packing it into a squashfs image means running
 //! `mksquashfs`. So outputs are declarations the pipeline acts on once every assemble item
@@ -141,7 +141,7 @@ impl OutputConfig {
             + usize::from(self.rootfs.is_some())
     }
 
-    /// The file names the outputs are written under, in [`items`](Self::items) order.
+    /// The file names the outputs are written under, in the order they are written.
     pub fn files(&self) -> Vec<&str> {
         self.items().iter().map(OutputItem::file).collect()
     }
