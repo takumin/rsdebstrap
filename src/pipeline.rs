@@ -438,6 +438,7 @@ mod tests {
     };
     static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig {
         apt_clean: false,
+        machine_id: None,
         resolv_conf: None,
         output: crate::phase::OutputConfig {
             kernel: None,

@@ -32,8 +32,8 @@ use camino::{Utf8Path, Utf8PathBuf};
 use tracing::info;
 
 pub use assemble::AssembleConfig;
-pub use assemble::AssembleResolvConfTask;
 pub use assemble::OutputConfig;
+pub use assemble::{AssembleResolvConfTask, MachineId};
 pub use prepare::AptTask;
 pub use prepare::MountTask;
 pub use prepare::PrepareConfig;
