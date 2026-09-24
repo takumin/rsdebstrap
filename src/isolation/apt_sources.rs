@@ -98,8 +98,8 @@ impl<'a> AptConfigured<'a> {
 
 /// Evidence that the entries not marked `keep` have been removed again.
 ///
-/// [`RootfsMounts::unmount_before_assembly`](crate::isolation::mount::RootfsMounts::unmount_before_assembly)
-/// requires one. The removal has to land inside the mounted window for the reason
+/// [`unmount_before_assembly`](super::mount::RootfsMounts::unmount_before_assembly) requires
+/// one. The removal has to land inside the mounted window for the reason
 /// [`RootfsResolvConf::restore`](crate::isolation::resolv_conf::RootfsResolvConf::restore)
 /// gives: a `prepare.mount` over `/etc` would otherwise take it to the directory underneath.
 /// It is taken after the resolv.conf restore, so the two guards unwind in the reverse of

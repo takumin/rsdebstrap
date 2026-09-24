@@ -118,11 +118,12 @@ impl<'a> Pipeline<'a> {
     /// Executes all phases of the pipeline with per-task isolation contexts.
     ///
     /// For pipelines that declare no prepare tasks. What a prepare task declares — a mount,
-    /// an apt repository, a temporary resolv.conf — is carried by RAII guards that bracket provisioning, and
-    /// this method is by definition the case with nothing in between to hold them. So it
-    /// refuses a pipeline that declares any, rather than provisioning without the mounts,
-    /// the repositories or the DNS the profile asked for and reporting success. [`run_apply`](crate::run_apply)
-    /// is the entry point that holds the guards across the phases.
+    /// an apt repository, a temporary resolv.conf — is carried by RAII guards that bracket
+    /// provisioning, and this method is by definition the case with nothing in between to hold
+    /// them. So it refuses a pipeline that declares any, rather than provisioning without the
+    /// mounts, the repositories or the DNS the profile asked for and reporting success.
+    /// [`run_apply`](crate::run_apply) is the entry point that holds the guards across the
+    /// phases.
     ///
     /// If the pipeline has no tasks at all, returns immediately.
     pub fn run(

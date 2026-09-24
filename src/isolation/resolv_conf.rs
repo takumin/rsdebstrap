@@ -51,8 +51,8 @@ pub(crate) fn generate_resolv_conf(config: &ResolvConfConfig) -> String {
 ///
 /// Like [`Mounted`], it borrows the guards rather than standing for them: it carries the
 /// borrows [`AptConfigured`] holds forward and adds its own, so no prepare guard can be torn
-/// down or dropped while it is alive. A token that outlived them would say the prepare phase *had been* set
-/// up, which is not what provisioning needs to know.
+/// down or dropped while it is alive. A token that outlived them would say the prepare phase
+/// *had been* set up, which is not what provisioning needs to know.
 ///
 /// It also names what the guards were built from — the rootfs, the resolved mount entries,
 /// the apt task, the resolv.conf config — so that

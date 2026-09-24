@@ -620,6 +620,7 @@ mod tests {
 
     #[test]
     fn deserialize_full_task() {
+        // editorconfig-checker-disable
         let yaml = r#"
 keyrings:
   - name: docker
@@ -636,6 +637,7 @@ repositories:
     signed_by: docker
     keep: true
 "#;
+        // editorconfig-checker-enable
         let task: AptTask = yaml_serde::from_str(yaml).unwrap();
         let keyring = &task.keyrings[0];
         assert!(matches!(&keyring.source, AptKeySource::Url(u) if u.ends_with("/gpg")));
