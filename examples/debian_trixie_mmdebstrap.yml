@@ -72,9 +72,9 @@ prepare:
     #   target: /dev
     #   options: [bind]
 
-  # Extra APT keyrings (/etc/apt/keyrings, created if missing) and repositories
-  # (deb822 files in /etc/apt/sources.list.d). Removed again before assemble
-  # unless `keep: true`. A provision task still has to run `apt-get update`
+  # Extra APT keyrings (/etc/apt/keyrings, created if missing), repositories
+  # (deb822 files in /etc/apt/sources.list.d) and preferences
+  # (/etc/apt/preferences.d). Removed again before assemble unless `keep: true`. A provision task still has to run `apt-get update`
   # before installing from them.
   # apt:
   #   keyrings:
@@ -90,6 +90,14 @@ prepare:
   #     components: [stable]
   #     signed_by: docker
   #     keep: true
+  #   # apt_preferences(5) pins, one stanza each
+  #   preferences:
+  #   - name: docker
+  #     pins:
+  #     - packages: [containerd.io]
+  #       pin: origin download.docker.com
+  #       priority: 1001
+  #       explanation: prefer Docker's build over Debian's
 
   # Copy host's /etc/resolv.conf into the chroot for DNS resolution.
   # Needed because the 'recommends' preset mounts tmpfs on /run,

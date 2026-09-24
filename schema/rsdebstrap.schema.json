@@ -78,6 +78,68 @@
 			],
 			"type": "object"
 		},
+		"AptPin": {
+			"additionalProperties": false,
+			"description": "One apt_preferences(5) stanza.",
+			"properties": {
+				"explanation": {
+					"description": "`Explanation`: a one-line comment for the stanza.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"packages": {
+					"description": "`Package`: package names, glob patterns, `/regex/`, or `src:` names; `*` for every\npackage.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"pin": {
+					"description": "`Pin`: what the priority applies to, starting with `release`, `origin` or `version`\n(e.g. `release n=trixie-backports`, `origin \"download.docker.com\"`, `version 5.8*`).",
+					"type": "string"
+				},
+				"priority": {
+					"description": "`Pin-Priority`. Must not be zero: apt ignores a pin with priority 0.",
+					"format": "int32",
+					"type": "integer"
+				}
+			},
+			"required": [
+				"packages",
+				"pin",
+				"priority"
+			],
+			"type": "object"
+		},
+		"AptPreference": {
+			"additionalProperties": false,
+			"description": "One APT preferences file, holding one stanza per pin.",
+			"properties": {
+				"keep": {
+					"default": false,
+					"description": "Keep the preferences file in the final rootfs. When `false` (the default) it is\nremoved after provisioning and before assemble, and whatever was at that path before\nis put back.",
+					"type": "boolean"
+				},
+				"name": {
+					"description": "File name stem for the preferences file. Letters, digits, `_`, `-` and `.` only (what\napt reads from `preferences.d`), unique within `preferences`.",
+					"type": "string"
+				},
+				"pins": {
+					"description": "The pins, written as stanzas in this order.",
+					"items": {
+						"$ref": "#/$defs/AptPin"
+					},
+					"type": "array"
+				}
+			},
+			"required": [
+				"name",
+				"pins"
+			],
+			"type": "object"
+		},
 		"AptRepository": {
 			"additionalProperties": false,
 			"description": "One APT repository, rendered as a deb822 `.sources` file.",
@@ -167,12 +229,22 @@
 		},
 		"AptTask": {
 			"additionalProperties": false,
-			"description": "apt task declaring keyrings and APT repositories for the prepare phase.\n\nAt most one `AptTask` may appear in the prepare phase.",
+			"description": "apt task declaring keyrings, APT repositories and APT preferences for the prepare phase.\n\nAt most one `AptTask` may appear in the prepare phase.",
 			"properties": {
 				"keyrings": {
 					"description": "OpenPGP keyrings to install. Each one is written to `/etc/apt/keyrings/<name>.asc`\n(ASCII-armored) or `<name>.gpg` (binary); `/etc/apt/keyrings` is created if the\nrootfs has none. A repository uses one by naming it in `signed_by`.",
 					"items": {
 						"$ref": "#/$defs/AptKeyring"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				},
+				"preferences": {
+					"description": "APT preferences to apply before provisioning. Each one is written to\n`/etc/apt/preferences.d/<name>.pref` (see apt_preferences(5)).",
+					"items": {
+						"$ref": "#/$defs/AptPreference"
 					},
 					"type": [
 						"array",
@@ -893,7 +965,7 @@
 						}
 					],
 					"default": null,
-					"description": "apt task declaring APT repositories (and their keys) for provisioning."
+					"description": "apt task declaring APT repositories, their keys and preferences for provisioning."
 				},
 				"mount": {
 					"anyOf": [

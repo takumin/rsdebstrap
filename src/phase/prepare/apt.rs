@@ -1,11 +1,11 @@
 //! apt task implementation for the prepare phase.
 //!
-//! This module provides the [`AptTask`] data structure declaring OpenPGP keyrings and APT
+//! This module provides the [`AptTask`] data structure declaring OpenPGP keyrings, APT
 //! repositories — deb822 `.sources` files that may name one of those keyrings in their
-//! `Signed-By` — that provisioning should see. Like the other prepare tasks it only
-//! declares: the files are written and, unless an entry says `keep: true`, removed again
-//! by a guard at the pipeline level (`isolation::apt_sources`), after provisioning and
-//! before assemble.
+//! `Signed-By` — and APT preferences (pins) that provisioning should see. Like the other
+//! prepare tasks it only declares: the files are written and, unless an entry says
+//! `keep: true`, removed again by a guard at the pipeline level (`isolation::apt_sources`),
+//! after provisioning and before assemble.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -21,6 +21,9 @@ use crate::rootfs::RelPath;
 /// Directory the generated `.sources` files are written to.
 const SOURCES_DIR: &str = "/etc/apt/sources.list.d";
 
+/// Directory the generated preferences files are written to.
+const PREFERENCES_DIR: &str = "/etc/apt/preferences.d";
+
 /// Directory keyrings are written to, created when the rootfs does not have it.
 ///
 /// Not `/etc/apt/trusted.gpg.d`: a key there is trusted for every repository, and the point
@@ -34,7 +37,7 @@ pub(crate) const KEYRINGS_DIR: &str = "/etc/apt/keyrings";
 /// the server's to choose.
 pub(crate) const MAX_KEY_SIZE: u64 = 1 << 20;
 
-/// apt task declaring keyrings and APT repositories for the prepare phase.
+/// apt task declaring keyrings, APT repositories and APT preferences for the prepare phase.
 ///
 /// At most one `AptTask` may appear in the prepare phase.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
@@ -59,6 +62,56 @@ pub struct AptTask {
     )]
     #[schemars(with = "Option<Vec<AptRepository>>")]
     pub repositories: Vec<AptRepository>,
+    /// APT preferences to apply before provisioning. Each one is written to
+    /// `/etc/apt/preferences.d/<name>.pref` (see apt_preferences(5)).
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_to_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[schemars(with = "Option<Vec<AptPreference>>")]
+    pub preferences: Vec<AptPreference>,
+}
+
+/// One APT preferences file, holding one stanza per pin.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AptPreference {
+    /// File name stem for the preferences file. Letters, digits, `_`, `-` and `.` only (what
+    /// apt reads from `preferences.d`), unique within `preferences`.
+    #[serde(deserialize_with = "crate::de::string")]
+    pub name: String,
+    /// The pins, written as stanzas in this order.
+    pub pins: Vec<AptPin>,
+    /// Keep the preferences file in the final rootfs. When `false` (the default) it is
+    /// removed after provisioning and before assemble, and whatever was at that path before
+    /// is put back.
+    #[serde(default)]
+    pub keep: bool,
+}
+
+/// One apt_preferences(5) stanza.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AptPin {
+    /// `Package`: package names, glob patterns, `/regex/`, or `src:` names; `*` for every
+    /// package.
+    #[serde(deserialize_with = "crate::de::string_list")]
+    #[schemars(with = "Vec<String>")]
+    pub packages: Vec<String>,
+    /// `Pin`: what the priority applies to, starting with `release`, `origin` or `version`
+    /// (e.g. `release n=trixie-backports`, `origin "download.docker.com"`, `version 5.8*`).
+    #[serde(deserialize_with = "crate::de::string")]
+    pub pin: String,
+    /// `Pin-Priority`. Must not be zero: apt ignores a pin with priority 0.
+    pub priority: i32,
+    /// `Explanation`: a one-line comment for the stanza.
+    #[serde(
+        default,
+        deserialize_with = "crate::de::opt_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub explanation: Option<String>,
 }
 
 /// One APT repository, rendered as a deb822 `.sources` file.
@@ -341,9 +394,9 @@ impl AptTask {
     /// Validates every entry, that names are unique, and that each `signed_by` names a
     /// keyring that lives at least as long as the repository.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        if self.keyrings.is_empty() && self.repositories.is_empty() {
+        if self.keyrings.is_empty() && self.repositories.is_empty() && self.preferences.is_empty() {
             return Err(RsdebstrapError::Validation(
-                "apt must declare at least one keyring or repository".to_string(),
+                "apt must declare at least one keyring, repository or preference".to_string(),
             ));
         }
 
@@ -382,6 +435,17 @@ impl AptTask {
                 return Err(RsdebstrapError::Validation(format!(
                     "apt repository '{}' is kept, so its keyring '{}' must be kept too",
                     repo.name, keyring.name
+                )));
+            }
+        }
+
+        let mut names = HashSet::new();
+        for preference in &self.preferences {
+            preference.validate()?;
+            if !names.insert(preference.name.as_str()) {
+                return Err(RsdebstrapError::Validation(format!(
+                    "apt preference name '{}' is used more than once",
+                    preference.name
                 )));
             }
         }
@@ -466,6 +530,96 @@ impl AptRepository {
             (false, true) => invalid("components must not be empty".to_string()),
             _ => Ok(()),
         }
+    }
+}
+
+impl AptPreference {
+    /// Where this preferences file is written.
+    ///
+    /// apt reads a file in `preferences.d` only if it has no extension or `.pref`, so a name
+    /// containing `.` would be skipped without the extension.
+    pub(crate) fn preferences_path(&self) -> RelPath {
+        RelPath::parse(&format!("{}/{}.pref", PREFERENCES_DIR, self.name))
+            .expect("a validated preference name forms a single path component")
+    }
+
+    /// Renders the preferences file, one stanza per pin, separated by blank lines.
+    pub(crate) fn render(&self) -> String {
+        let stanzas: Vec<String> = self
+            .pins
+            .iter()
+            .map(|pin| {
+                let mut lines = Vec::new();
+                if let Some(explanation) = &pin.explanation {
+                    lines.push(format!("Explanation: {}", explanation));
+                }
+                lines.push(format!("Package: {}", pin.packages.join(" ")));
+                lines.push(format!("Pin: {}", pin.pin));
+                lines.push(format!("Pin-Priority: {}", pin.priority));
+                lines.join("\n") + "\n"
+            })
+            .collect();
+        format!("# Generated by rsdebstrap\n{}", stanzas.join("\n"))
+    }
+
+    fn validate(&self) -> Result<(), RsdebstrapError> {
+        validate_name("preference", &self.name)?;
+        if self.pins.is_empty() {
+            return Err(RsdebstrapError::Validation(format!(
+                "apt preference '{}': pins must not be empty",
+                self.name
+            )));
+        }
+        for (i, pin) in self.pins.iter().enumerate() {
+            pin.validate().map_err(|msg| {
+                RsdebstrapError::Validation(format!(
+                    "apt preference '{}': pins[{}]: {}",
+                    self.name, i, msg
+                ))
+            })?;
+        }
+        Ok(())
+    }
+}
+
+impl AptPin {
+    fn validate(&self) -> Result<(), String> {
+        if self.packages.is_empty() {
+            return Err("packages must not be empty".to_string());
+        }
+        // `Package` separates its values by whitespace, as deb822 fields do.
+        if let Some(value) = self
+            .packages
+            .iter()
+            .find(|v| v.is_empty() || v.chars().any(|c| c.is_whitespace() || c.is_control()))
+        {
+            return Err(format!("packages entry {:?} is empty or contains whitespace", value));
+        }
+        // A newline would end the field, and the rest of the value would be read as another
+        // field or as the next stanza.
+        for (field, value) in [
+            ("pin", Some(&self.pin)),
+            ("explanation", self.explanation.as_ref()),
+        ] {
+            if let Some(value) = value
+                && value.chars().any(char::is_control)
+            {
+                return Err(format!("{} {:?} contains a control character", field, value));
+            }
+        }
+        match self.pin.split_once(' ') {
+            Some(("release" | "origin" | "version", rest)) if !rest.trim().is_empty() => {}
+            _ => {
+                return Err(format!(
+                    "pin {:?} must be 'release <filter>', 'origin <host>' or 'version <version>'",
+                    self.pin
+                ));
+            }
+        }
+        if self.priority == 0 {
+            return Err("priority must not be 0, which apt ignores the pin for".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -559,10 +713,12 @@ impl PhaseItem for AptTask {
     fn name(&self) -> Cow<'_, str> {
         let keyrings: Vec<&str> = self.keyrings.iter().map(|k| k.name.as_str()).collect();
         let repos: Vec<&str> = self.repositories.iter().map(|r| r.name.as_str()).collect();
+        let prefs: Vec<&str> = self.preferences.iter().map(|p| p.name.as_str()).collect();
         Cow::Owned(format!(
-            "apt:keyrings[{}],repositories[{}]",
+            "apt:keyrings[{}],repositories[{}],preferences[{}]",
             keyrings.join(","),
-            repos.join(",")
+            repos.join(","),
+            prefs.join(",")
         ))
     }
 
@@ -608,6 +764,31 @@ mod tests {
         AptTask {
             keyrings,
             repositories,
+            preferences: vec![],
+        }
+    }
+
+    fn pin(pin: &str, priority: i32) -> AptPin {
+        AptPin {
+            packages: vec!["*".to_string()],
+            pin: pin.to_string(),
+            priority,
+            explanation: None,
+        }
+    }
+
+    fn preference(name: &str, pins: Vec<AptPin>) -> AptPreference {
+        AptPreference {
+            name: name.to_string(),
+            pins,
+            keep: false,
+        }
+    }
+
+    fn with_preferences(preferences: Vec<AptPreference>) -> AptTask {
+        AptTask {
+            preferences,
+            ..task(vec![], vec![])
         }
     }
 
@@ -930,5 +1111,120 @@ repositories:
             })
             .collect();
         assert_eq!(paths, ["/profiles/keys/a.asc", "/abs/b.asc"]);
+    }
+
+    #[test]
+    fn deserialize_preferences() {
+        // editorconfig-checker-disable
+        let yaml = r#"
+preferences:
+  - name: backports
+    keep: true
+    pins:
+      - packages: ["*"]
+        pin: release n=trixie-backports
+        priority: 100
+      - packages: [linux-image-amd64, "src:linux"]
+        pin: release n=trixie-backports
+        priority: 990
+        explanation: newer kernel
+"#;
+        // editorconfig-checker-enable
+        let task: AptTask = yaml_serde::from_str(yaml).unwrap();
+        let p = &task.preferences[0];
+        assert!(p.keep);
+        assert_eq!(p.pins.len(), 2);
+        assert_eq!(p.pins[1].packages, ["linux-image-amd64", "src:linux"]);
+        assert_eq!(p.pins[1].priority, 990);
+        assert_eq!(p.pins[1].explanation.as_deref(), Some("newer kernel"));
+        assert!(task.validate().is_ok());
+    }
+
+    #[test]
+    fn deserialize_pin_rejects_a_missing_priority() {
+        let yaml = "packages: ['*']\npin: origin example.com\n";
+        assert!(yaml_serde::from_str::<AptPin>(yaml).is_err());
+    }
+
+    #[test]
+    fn render_preferences_writes_one_stanza_per_pin() {
+        let mut second = pin("origin \"download.docker.com\"", -10);
+        second.packages = vec!["docker-ce".to_string(), "containerd.io".to_string()];
+        second.explanation = Some("not from docker".to_string());
+        let p = preference("mixed", vec![pin("release n=trixie-backports", 500), second]);
+        assert_eq!(
+            p.render(),
+            "# Generated by rsdebstrap\n\
+            Package: *\n\
+            Pin: release n=trixie-backports\n\
+            Pin-Priority: 500\n\
+            \n\
+            Explanation: not from docker\n\
+            Package: docker-ce containerd.io\n\
+            Pin: origin \"download.docker.com\"\n\
+            Pin-Priority: -10\n"
+        );
+    }
+
+    #[test]
+    fn preferences_path_uses_the_pref_extension() {
+        // Without `.pref`, apt would take `.backports` as an extension and skip the file.
+        assert_eq!(
+            preference("trixie.backports", vec![])
+                .preferences_path()
+                .to_string(),
+            "/etc/apt/preferences.d/trixie.backports.pref"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_preferences_alone() {
+        let t = with_preferences(vec![preference("p", vec![pin("version 1.*", 1001)])]);
+        assert!(t.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_preference_names() {
+        let p = preference("p", vec![pin("version 1.*", 1001)]);
+        let msg = validation_message(with_preferences(vec![p.clone(), p]).validate());
+        assert!(msg.contains("preference name 'p' is used more than once"), "{}", msg);
+    }
+
+    #[test]
+    fn validate_rejects_a_preference_name_apt_would_ignore() {
+        let t = with_preferences(vec![preference("a/b", vec![pin("version 1.*", 1)])]);
+        let msg = validation_message(t.validate());
+        assert!(msg.contains("must be non-empty"), "{}", msg);
+    }
+
+    #[test]
+    fn validate_rejects_a_preference_without_pins() {
+        let msg = validation_message(with_preferences(vec![preference("p", vec![])]).validate());
+        assert!(msg.contains("pins must not be empty"), "{}", msg);
+    }
+
+    #[test]
+    fn validate_rejects_malformed_pins() {
+        let mut no_packages = pin("version 1.*", 1);
+        no_packages.packages = vec![];
+        let mut spaced_package = pin("version 1.*", 1);
+        spaced_package.packages = vec!["a b".to_string()];
+        let mut injected_explanation = pin("version 1.*", 1);
+        injected_explanation.explanation = Some("x\nPin-Priority: 1001".to_string());
+        for (bad, expected) in [
+            (no_packages, "packages must not be empty"),
+            (spaced_package, "contains whitespace"),
+            (pin("release a=x\nPin-Priority: 1001", 1), "control character"),
+            (injected_explanation, "control character"),
+            (pin("suite trixie", 1), "must be 'release"),
+            (pin("release", 1), "must be 'release"),
+            (pin("release ", 1), "must be 'release"),
+            (pin("version 1.*", 0), "must not be 0"),
+        ] {
+            let t = with_preferences(vec![preference("p", vec![bad])]);
+            let msg = validation_message(t.validate());
+            assert!(msg.contains("apt preference 'p': pins[0]"), "{}", msg);
+            assert!(msg.contains(expected), "expected {:?} in {}", expected, msg);
+        }
     }
 }
