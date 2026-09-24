@@ -391,6 +391,15 @@ pub trait RootfsOps: Send + Sync {
     /// Returns `true` if it is gone (or was never there) and `false` if it still holds
     /// entries, in which case it is left alone. A symlink or a non-directory is an error.
     fn remove_dir(&self, path: &RelPath) -> Result<bool>;
+
+    /// Removes everything inside the directory `path` except the entries named in `keep`,
+    /// and returns how many entries were removed, counting those inside subdirectories.
+    ///
+    /// `path` itself stays. Subdirectories are emptied and removed; `keep` applies only to
+    /// the entries directly inside `path`. A symlink is removed, never followed. A `path` that
+    /// does not exist -- at any component -- removes nothing, while a symlink or a
+    /// non-directory on the way to it or at it is an error.
+    fn clear_dir(&self, path: &RelPath, keep: &[String]) -> Result<u64>;
 }
 
 /// [`RootfsOps`] performed directly by this process.
@@ -1230,9 +1239,90 @@ impl RootfsOps for LocalRootfsOps {
             Err(e) => Err(self.io_err("remove directory", &self.at(path), e)),
         }
     }
+
+    fn clear_dir(&self, path: &RelPath, keep: &[String]) -> Result<u64> {
+        let parent = match self.parent_dir(path) {
+            Ok(parent) => parent,
+            Err(RsdebstrapError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                return Ok(0);
+            }
+            Err(e) => return Err(e),
+        };
+        let dir = match rfs::openat(
+            parent.fd(),
+            path.file_name(),
+            OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(dir) => dir,
+            Err(rustix::io::Errno::NOENT) => return Ok(0),
+            Err(e) => return Err(open_error(e, &self.at(path))),
+        };
+
+        self.empty_dir(&dir, &self.at(path), keep)
+    }
 }
 
 impl LocalRootfsOps {
+    /// Removes everything in `dir` except the entries named in `keep`, descending into
+    /// subdirectories through descriptors, and returns how many entries were removed.
+    ///
+    /// Each subdirectory is opened `O_NOFOLLOW` before it is emptied, so the recursion only
+    /// ever works inside a directory it holds; a symlink swapped in for one is refused by the
+    /// open rather than followed.
+    fn empty_dir(&self, dir: &OwnedFd, at: &str, keep: &[String]) -> Result<u64> {
+        // Listed in full before anything is unlinked: whether `getdents` still returns an
+        // entry after the directory changed under it is unspecified.
+        let mut names = Vec::new();
+        let entries = rfs::Dir::read_from(dir).map_err(|e| self.io_err("list", at, e))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| self.io_err("list", at, e))?;
+            let name = entry.file_name();
+            let bytes = name.to_bytes();
+            if bytes == b"." || bytes == b".." || keep.iter().any(|k| k.as_bytes() == bytes) {
+                continue;
+            }
+            names.push(name.to_owned());
+        }
+
+        let mut removed = 0;
+        for name in names {
+            let entry_at = format!("{}/{}", at, name.to_string_lossy());
+            // `unlinkat` without `AT_REMOVEDIR` never follows the final component, so a
+            // symlink is removed as a link. `EISDIR` is the kernel telling us the entry is a
+            // directory, which avoids trusting `d_type` -- some filesystems do not fill it in.
+            match rfs::unlinkat(dir, name.as_c_str(), AtFlags::empty()) {
+                Ok(()) => {
+                    removed += 1;
+                    continue;
+                }
+                Err(rustix::io::Errno::NOENT) => continue,
+                Err(rustix::io::Errno::ISDIR) => {}
+                Err(e) => return Err(self.io_err("remove", &entry_at, e)),
+            }
+            let sub = match rfs::openat(
+                dir,
+                name.as_c_str(),
+                OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+                Mode::empty(),
+            ) {
+                Ok(sub) => sub,
+                Err(rustix::io::Errno::NOENT) => continue,
+                Err(e) => return Err(open_error(e, &entry_at)),
+            };
+            removed += self.empty_dir(&sub, &entry_at, &[])?;
+            drop(sub);
+            match rfs::unlinkat(dir, name.as_c_str(), AtFlags::REMOVEDIR) {
+                Ok(()) => removed += 1,
+                Err(rustix::io::Errno::NOENT) => {}
+                Err(e) => return Err(self.io_err("remove directory", &entry_at, e)),
+            }
+        }
+        Ok(removed)
+    }
+
     /// Whether `name` in `dir` is an existing directory: `false` if nothing is there, an
     /// error if something other than a directory is.
     fn existing_dir(&self, dir: BorrowedFd<'_>, name: &str, path: &RelPath) -> Result<bool> {
@@ -1329,6 +1419,11 @@ impl RootfsOps for DryRunRootfsOps {
     fn remove_dir(&self, path: &RelPath) -> Result<bool> {
         tracing::info!("dry run: remove directory {}{}", self.rootfs, path);
         Ok(true)
+    }
+
+    fn clear_dir(&self, path: &RelPath, _keep: &[String]) -> Result<u64> {
+        tracing::info!("dry run: remove the contents of {}{}", self.rootfs, path);
+        Ok(0)
     }
 }
 
@@ -1493,6 +1588,93 @@ mod tests {
         assert!(ops.remove_dir(&path).unwrap());
         assert!(!root.join("etc/keyrings").exists());
         assert!(ops.remove_dir(&path).unwrap(), "an absent directory counts as removed");
+    }
+
+    #[test]
+    fn clear_dir_empties_subdirectories_but_keeps_named_top_level_entries() {
+        let (_tmp, root) = rootfs();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+        std::fs::create_dir_all(root.join("etc/cache/partial")).unwrap();
+        std::fs::create_dir_all(root.join("etc/cache/sub/deeper")).unwrap();
+        std::fs::write(root.join("etc/cache/lock"), b"").unwrap();
+        std::fs::write(root.join("etc/cache/a.deb"), b"").unwrap();
+        std::fs::write(root.join("etc/cache/partial/b.deb"), b"").unwrap();
+        std::fs::write(root.join("etc/cache/sub/deeper/lock"), b"").unwrap();
+
+        let removed = ops
+            .clear_dir(
+                &RelPath::parse("/etc/cache").unwrap(),
+                &["lock".to_string(), "partial".to_string()],
+            )
+            .unwrap();
+
+        // `a.deb`, and `sub` with the two entries below it. `keep` does not reach into
+        // `sub`, so its `lock` goes too.
+        assert_eq!(removed, 4);
+        let mut left: Vec<_> = std::fs::read_dir(root.join("etc/cache"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["lock", "partial"]);
+        assert!(
+            root.join("etc/cache/partial/b.deb").exists(),
+            "a kept directory is not descended into"
+        );
+    }
+
+    #[test]
+    fn clear_dir_of_an_absent_directory_removes_nothing() {
+        let (_tmp, root) = rootfs();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        assert_eq!(
+            ops.clear_dir(&RelPath::parse("/etc/missing").unwrap(), &[])
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            ops.clear_dir(&RelPath::parse("/var/cache/apt").unwrap(), &[])
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn clear_dir_refuses_a_symlinked_directory() {
+        let (tmp, root) = rootfs();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("precious"), b"").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("etc/cache")).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        let err = ops
+            .clear_dir(&RelPath::parse("/etc/cache").unwrap(), &[])
+            .unwrap_err();
+
+        assert!(err.to_string().contains("symlink"), "unexpected error: {err}");
+        assert!(outside.join("precious").exists());
+    }
+
+    #[test]
+    fn clear_dir_removes_a_symlinked_subdirectory_as_a_link() {
+        let (tmp, root) = rootfs();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("precious"), b"").unwrap();
+        std::fs::create_dir(root.join("etc/cache")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("etc/cache/link")).unwrap();
+        let ops = LocalRootfsOps::open(&root).unwrap();
+
+        assert_eq!(
+            ops.clear_dir(&RelPath::parse("/etc/cache").unwrap(), &[])
+                .unwrap(),
+            1
+        );
+
+        assert!(outside.join("precious").exists());
+        assert!(std::fs::symlink_metadata(root.join("etc/cache/link")).is_err());
     }
 
     #[test]

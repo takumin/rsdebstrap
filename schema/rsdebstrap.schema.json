@@ -268,6 +268,11 @@
 			"additionalProperties": false,
 			"description": "Assemble phase configuration (named-field, schema-first).\n\nEach field is an optional singleton; a duplicate YAML key is rejected by `yaml_serde` at\nparse time and an unknown key by `deny_unknown_fields`.",
 			"properties": {
+				"apt_clean": {
+					"default": false,
+					"description": "Empty apt's download cache and package lists in the final rootfs, as `apt-get\ndistclean` would (default false). The image then needs `apt-get update` before it\ncan install anything.",
+					"type": "boolean"
+				},
 				"output": {
 					"anyOf": [
 						{

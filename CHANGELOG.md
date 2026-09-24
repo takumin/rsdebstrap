@@ -108,6 +108,11 @@ and this project adheres to
   `false` so installs split over several tasks do not refresh the lists each
   time. Package entries are validated as `name[:arch][=version|/release]`, so
   none can reach `apt-get` as an option, and `isolation: false` is refused.
+- `assemble.apt_clean: true`, which empties apt's download cache
+  (`/var/cache/apt`) and package lists (`/var/lib/apt/lists`) in the final
+  rootfs, like `apt-get distclean`. The assemble phase cannot run a program, so
+  this is done through the rootfs helper without following symlinks rather than
+  by running `apt-get`.
 - `tests/privileged_helper_test.rs`, which exercises real `sudo` escalation
   against a root-owned rootfs. `#[ignore]`d and self-skipping when passwordless
   sudo is unavailable.

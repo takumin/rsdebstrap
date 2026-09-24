@@ -612,6 +612,14 @@ mod tests {
         ) -> std::result::Result<bool, crate::error::RsdebstrapError> {
             self.inner.remove_dir(path)
         }
+
+        fn clear_dir(
+            &self,
+            path: &RelPath,
+            keep: &[String],
+        ) -> std::result::Result<u64, crate::error::RsdebstrapError> {
+            self.inner.clear_dir(path, keep)
+        }
     }
 
     #[test]

@@ -455,3 +455,32 @@ fn the_helper_creates_a_root_owned_directory_with_the_requested_mode() {
 
     assert!(ops.remove_dir(&path).unwrap());
 }
+
+// apt's cache in a real build is root-owned, and `archives/partial` is `_apt`-owned with
+// mode 0700, so emptying it takes root.
+#[test]
+#[ignore = "requires passwordless sudo"]
+fn the_helper_empties_a_root_owned_directory() {
+    require_sudo!();
+    let fixture = RootOwnedRootfs::new();
+    let cache = fixture.path.join("etc/cache");
+    sudo(&["mkdir", "-p", cache.join("sub").as_str()]);
+    sudo(&[
+        "touch",
+        cache.join("lock").as_str(),
+        cache.join("sub/a.deb").as_str(),
+    ]);
+    sudo(&["chmod", "700", cache.join("sub").as_str()]);
+    let ops = privileged(&fixture.path);
+
+    let removed = ops
+        .clear_dir(&RelPath::parse("/etc/cache").unwrap(), &["lock".to_string()])
+        .unwrap();
+
+    assert_eq!(removed, 2);
+    let out = std::process::Command::new("sudo")
+        .args(["ls", "-A", cache.as_str()])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "lock");
+}

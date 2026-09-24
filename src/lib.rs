@@ -553,6 +553,14 @@ mod tests {
         fn remove_dir(&self, path: &rootfs::RelPath) -> std::result::Result<bool, RsdebstrapError> {
             self.inner.remove_dir(path)
         }
+
+        fn clear_dir(
+            &self,
+            path: &rootfs::RelPath,
+            keep: &[String],
+        ) -> std::result::Result<u64, RsdebstrapError> {
+            self.inner.clear_dir(path, keep)
+        }
     }
 
     // Timeline shared by the executor and the ops below, so the mount lifecycle
@@ -683,6 +691,14 @@ mod tests {
 
         fn remove_dir(&self, path: &rootfs::RelPath) -> std::result::Result<bool, RsdebstrapError> {
             self.inner.remove_dir(path)
+        }
+
+        fn clear_dir(
+            &self,
+            path: &rootfs::RelPath,
+            keep: &[String],
+        ) -> std::result::Result<u64, RsdebstrapError> {
+            self.inner.clear_dir(path, keep)
         }
     }
 

@@ -87,6 +87,7 @@ provision:                  # Optional main provisioning steps (ordered list)
     isolation:               # Optional: override defaults.isolation
       type: chroot
 assemble:                   # Optional finalization steps (named-field struct)
+  apt_clean: true           # Optional: empty apt's cache and package lists (default false)
   resolv_conf:              # Permanent /etc/resolv.conf in final rootfs (at most one)
     name_servers: [8.8.8.8, 8.8.4.4]  # Generate resolv.conf with nameservers
     search: [example.com]   # Optional search domains
@@ -282,6 +283,20 @@ on the host. Two consequences follow, and both are enforced rather than document
   `apt-get` as an option
 - `privilege` works as on the other provision tasks. `isolation: false` is refused: it would
   run the host's `apt-get` against the host
+
+## Assemble apt_clean rules
+
+- `assemble.apt_clean: true` does the work of `apt-get distclean` without running it (the
+  assemble phase cannot run a program): it empties `/var/cache/apt` — the downloaded `.deb`
+  files, `pkgcache.bin` and `srcpkgcache.bin` — and the package lists in `/var/lib/apt/lists`.
+  The image then needs `apt-get update` before it can install anything
+- Files and subdirectories alike are removed. What the `apt` package ships is kept: the
+  `archives` and `partial` directories (emptied) and the `lock` files
+- The paths are apt's defaults; a `Dir::Cache` or `Dir::State` setting inside the rootfs is not
+  consulted. A rootfs without these directories is not an error
+- It runs before the assemble `resolv_conf` and before `assemble.output`, so the squashfs image
+  does not carry the removed files. Symlinks are removed as links and never followed, and a
+  symlink in place of one of the directories themselves is an error
 
 ## Assemble output rules
 

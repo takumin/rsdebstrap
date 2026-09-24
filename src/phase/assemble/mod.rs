@@ -2,6 +2,7 @@
 //!
 //! This module provides the [`AssembleConfig`] named-field struct describing the
 //! tasks that run after the main provisioning phase:
+//! - [`apt_clean`](AssembleConfig::apt_clean) — empties apt's caches in the final rootfs
 //! - [`resolv_conf`](AssembleConfig::resolv_conf) — writes a permanent `/etc/resolv.conf`
 //! - [`output`](AssembleConfig::output) — writes the kernel, the initramfs and a squashfs
 //!   image of the rootfs next to it, once the rootfs is final
@@ -9,6 +10,7 @@
 //! The named-field shape makes "at most one resolv_conf" structural rather than
 //! validated after the fact.
 
+pub mod apt_clean;
 pub mod output;
 pub mod resolv_conf;
 
@@ -19,6 +21,7 @@ pub use output::{BootFileOutput, OutputConfig, SquashfsCompression, SquashfsOutp
 pub use resolv_conf::AssembleResolvConfTask;
 
 use crate::phase::AssembleItem;
+use apt_clean::AptCleanTask;
 
 /// Assemble phase configuration (named-field, schema-first).
 ///
@@ -27,6 +30,11 @@ use crate::phase::AssembleItem;
 #[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssembleConfig {
+    /// Empty apt's download cache and package lists in the final rootfs, as `apt-get
+    /// distclean` would (default false). The image then needs `apt-get update` before it
+    /// can install anything.
+    #[serde(default)]
+    pub apt_clean: bool,
     /// resolv_conf task writing a permanent `/etc/resolv.conf` into the final rootfs.
     #[serde(default)]
     pub resolv_conf: Option<AssembleResolvConfTask>,
@@ -40,6 +48,9 @@ impl AssembleConfig {
     /// Returns the present phase items in execution order.
     pub(crate) fn items(&self) -> Vec<&dyn AssembleItem> {
         let mut items: Vec<&dyn AssembleItem> = Vec::new();
+        if self.apt_clean {
+            items.push(&AptCleanTask);
+        }
         if let Some(resolv_conf) = &self.resolv_conf {
             items.push(resolv_conf);
         }
@@ -53,7 +64,7 @@ impl AssembleConfig {
 
     /// Returns the number of configured assemble tasks, outputs included.
     pub fn len(&self) -> usize {
-        usize::from(self.resolv_conf.is_some()) + self.output.len()
+        usize::from(self.apt_clean) + usize::from(self.resolv_conf.is_some()) + self.output.len()
     }
 }
 
@@ -68,6 +79,32 @@ mod tests {
         assert!(config.resolv_conf.is_some());
         assert_eq!(config.len(), 1);
         assert!(!config.is_empty());
+    }
+
+    #[test]
+    fn items_run_apt_clean_before_resolv_conf() {
+        let yaml = "resolv_conf:\n  name_servers:\n  - 8.8.8.8\napt_clean: true\n";
+        let config: AssembleConfig = yaml_serde::from_str(yaml).unwrap();
+        let names: Vec<_> = config
+            .items()
+            .iter()
+            .map(|item| item.name().into_owned())
+            .collect();
+        assert_eq!(names, ["apt_clean", "resolv_conf:generate"]);
+        assert_eq!(config.len(), 2);
+    }
+
+    #[test]
+    fn apt_clean_false_adds_no_item() {
+        let config: AssembleConfig = yaml_serde::from_str("apt_clean: false\n").unwrap();
+        assert!(config.items().is_empty());
+        assert!(config.is_empty());
+    }
+
+    #[test]
+    fn deserialize_rejects_a_non_bool_apt_clean() {
+        let result: Result<AssembleConfig, _> = yaml_serde::from_str("apt_clean:\n  lists: true\n");
+        assert!(result.is_err(), "apt_clean takes a bool, not a mapping");
     }
 
     #[test]
