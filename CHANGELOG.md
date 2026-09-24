@@ -91,6 +91,13 @@ and this project adheres to
   and `rootfs` packs it into a squashfs image with `mksquashfs`, escalated with
   `defaults.privilege`. Each output is staged under a temporary name and
   renamed into place, so a failed build leaves no partial file.
+- `prepare.apt`, with two lists: `keyrings`, OpenPGP keys written to
+  `/etc/apt/keyrings` (from a host file, inline, or downloaded over https with an
+  optional `sha256` pin), and `repositories`, deb822 `.sources` files that name
+  a keyring as their `Signed-By` through `signed_by`. `/etc/apt/keyrings` is
+  created if the rootfs lacks it, without following symlinks. Entries are
+  removed again before `assemble` unless marked `keep: true`, and whatever they
+  replaced is put back.
 - `tests/privileged_helper_test.rs`, which exercises real `sudo` escalation
   against a root-owned rootfs. `#[ignore]`d and self-skipping when passwordless
   sudo is unavailable.

@@ -4,7 +4,7 @@
 # This profile demonstrates all available features:
 #   - defaults: isolation (chroot), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
-#   - pipeline: prepare (mount, resolv_conf), provision (shell + mitamae),
+#   - pipeline: prepare (mount, apt, resolv_conf), provision (shell + mitamae),
 #     assemble (resolv_conf, output)
 
 dir: /tmp/debian-trixie-server-amd64
@@ -71,6 +71,25 @@ prepare:
     # - source: /dev
     #   target: /dev
     #   options: [bind]
+
+  # Extra APT keyrings (/etc/apt/keyrings, created if missing) and repositories
+  # (deb822 files in /etc/apt/sources.list.d). Removed again before assemble
+  # unless `keep: true`. A provision task still has to run `apt-get update`
+  # before installing from them.
+  # apt:
+  #   keyrings:
+  #   - name: docker
+  #     # Or `path: ./keys/docker.asc`, or inline `content: |`
+  #     url: https://download.docker.com/linux/debian/gpg
+  #     # sha256: <64 hex digits>  # Pin the downloaded key
+  #     keep: true
+  #   repositories:
+  #   - name: docker
+  #     uris: [https://download.docker.com/linux/debian]
+  #     suites: [trixie]
+  #     components: [stable]
+  #     signed_by: docker
+  #     keep: true
 
   # Copy host's /etc/resolv.conf into the chroot for DNS resolution.
   # Needed because the 'recommends' preset mounts tmpfs on /run,

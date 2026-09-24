@@ -4,18 +4,21 @@
 //! tasks that run before the main provisioning phase. Each role is a fixed,
 //! optional singleton field:
 //! - [`mount`](PrepareConfig::mount) — declares filesystem mounts for the rootfs
+//! - [`apt`](PrepareConfig::apt) — declares APT repositories and their keys
 //! - [`resolv_conf`](PrepareConfig::resolv_conf) — declares resolv.conf setup for DNS resolution
 //!
-//! The named-field shape makes "at most one mount", "at most one resolv_conf",
-//! and the fixed `mount → resolv_conf` execution order structural rather than
-//! validated after the fact.
+//! The named-field shape makes "at most one" of each, and the fixed
+//! `mount → apt → resolv_conf` execution order, structural rather than validated
+//! after the fact.
 
+pub mod apt;
 pub mod mount;
 pub mod resolv_conf;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+pub use apt::AptTask;
 pub use mount::MountTask;
 pub use resolv_conf::ResolvConfTask;
 
@@ -23,7 +26,7 @@ use crate::phase::PhaseItem;
 
 /// Prepare phase configuration (named-field, schema-first).
 ///
-/// Both fields are optional singletons. A duplicate YAML key (e.g. two `mount`
+/// Every field is an optional singleton. A duplicate YAML key (e.g. two `mount`
 /// entries) is rejected by `yaml_serde` at parse time, and an unknown key is
 /// rejected by `deny_unknown_fields` — so the "at most one" invariants hold
 /// structurally instead of being validated after parsing.
@@ -33,18 +36,24 @@ pub struct PrepareConfig {
     /// Mount task declaring filesystem mounts for the rootfs.
     #[serde(default)]
     pub mount: Option<MountTask>,
+    /// apt task declaring APT repositories (and their keys) for provisioning.
+    #[serde(default)]
+    pub apt: Option<AptTask>,
     /// resolv_conf task declaring DNS configuration for the chroot.
     #[serde(default)]
     pub resolv_conf: Option<ResolvConfTask>,
 }
 
 impl PrepareConfig {
-    /// Returns the present phase items in fixed execution order: `mount` then
+    /// Returns the present phase items in fixed execution order: `mount`, `apt`,
     /// `resolv_conf`. The order is structural, independent of YAML key order.
     pub(crate) fn items(&self) -> Vec<&dyn PhaseItem> {
         let mut items: Vec<&dyn PhaseItem> = Vec::new();
         if let Some(mount) = &self.mount {
             items.push(mount);
+        }
+        if let Some(apt) = &self.apt {
+            items.push(apt);
         }
         if let Some(resolv_conf) = &self.resolv_conf {
             items.push(resolv_conf);
@@ -54,12 +63,14 @@ impl PrepareConfig {
 
     /// Returns true if no prepare tasks are configured.
     pub fn is_empty(&self) -> bool {
-        self.mount.is_none() && self.resolv_conf.is_none()
+        self.mount.is_none() && self.apt.is_none() && self.resolv_conf.is_none()
     }
 
     /// Returns the number of configured prepare tasks.
     pub fn len(&self) -> usize {
-        usize::from(self.mount.is_some()) + usize::from(self.resolv_conf.is_some())
+        usize::from(self.mount.is_some())
+            + usize::from(self.apt.is_some())
+            + usize::from(self.resolv_conf.is_some())
     }
 }
 
@@ -118,13 +129,18 @@ mod tests {
     }
 
     #[test]
-    fn items_are_fixed_order_mount_then_resolv_conf() {
-        // resolv_conf declared before mount in YAML; items() still yields mount first.
-        let yaml = "resolv_conf:\n  copy: true\nmount:\n  preset: recommends\n";
+    fn items_are_fixed_order_mount_then_apt_then_resolv_conf() {
+        // Declared in reverse in YAML; items() still yields the structural order.
+        let yaml = "resolv_conf:\n  copy: true\n\
+            apt:\n  repositories:\n    - name: x\n      uris: [https://e.com]\n      \
+            suites: [s]\n      components: [main]\n\
+            mount:\n  preset: recommends\n";
         let config: PrepareConfig = yaml_serde::from_str(yaml).unwrap();
         let items = config.items();
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 3);
+        assert_eq!(config.len(), 3);
         assert!(items[0].name().starts_with("mount:"));
-        assert!(items[1].name().starts_with("resolv_conf:"));
+        assert_eq!(items[1].name(), "apt:keyrings[],repositories[x]");
+        assert!(items[2].name().starts_with("resolv_conf:"));
     }
 }

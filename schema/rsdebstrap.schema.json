@@ -1,5 +1,197 @@
 {
 	"$defs": {
+		"AptKeyring": {
+			"additionalProperties": false,
+			"oneOf": [
+				{
+					"properties": {
+						"path": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"path"
+					]
+				},
+				{
+					"properties": {
+						"content": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"content"
+					]
+				},
+				{
+					"properties": {
+						"url": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"url"
+					]
+				}
+			],
+			"properties": {
+				"content": {
+					"description": "The key inline, ASCII-armored (`-----BEGIN PGP PUBLIC KEY BLOCK-----`).",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"keep": {
+					"default": false,
+					"description": "Keep the keyring in the final rootfs. When `false` (the default) it is removed after\nprovisioning and before assemble, and whatever was at that path before is put back.",
+					"type": "boolean"
+				},
+				"name": {
+					"description": "File name stem for the keyring, and what a repository's `signed_by` names. Letters,\ndigits, `_`, `-` and `.` only, unique within `keyrings`.",
+					"type": "string"
+				},
+				"path": {
+					"description": "Path to a key file on the host (ASCII-armored or binary). Relative paths are\nresolved against the profile's directory.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"sha256": {
+					"description": "Expected SHA-256 of the key's bytes, as 64 hex digits. Checked before anything is\nwritten; recommended with `url`, where the bytes are the server's to choose.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"url": {
+					"description": "`https` URL to download the key from while the prepare phase runs.",
+					"type": [
+						"string",
+						"null"
+					]
+				}
+			},
+			"required": [
+				"name"
+			],
+			"type": "object"
+		},
+		"AptRepository": {
+			"additionalProperties": false,
+			"description": "One APT repository, rendered as a deb822 `.sources` file.",
+			"properties": {
+				"architectures": {
+					"description": "deb822 `Architectures`. Omitted from the file when empty, so apt uses its\nconfigured architectures.",
+					"items": {
+						"type": "string"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				},
+				"components": {
+					"description": "deb822 `Components`. Required unless every suite is an exact path.",
+					"items": {
+						"type": "string"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				},
+				"keep": {
+					"default": false,
+					"description": "Keep the repository in the final rootfs. When `false` (the default) its file is\nremoved after provisioning and before assemble, and whatever was at that path before\nis put back. A kept repository's keyring must be kept too.",
+					"type": "boolean"
+				},
+				"name": {
+					"description": "File name stem for the `.sources` file. Letters, digits, `_`, `-` and `.` only (what\napt reads from `sources.list.d`), unique within `repositories`.",
+					"type": "string"
+				},
+				"signed_by": {
+					"description": "Name of an entry in `keyrings` to write as this repository's `Signed-By`. Without\nit, apt verifies against the keys it already trusts.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"suites": {
+					"description": "deb822 `Suites`. A suite ending in `/` is an exact path, which takes no\n`components`.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"types": {
+					"default": [
+						"deb"
+					],
+					"description": "deb822 `Types` (default: `[deb]`).",
+					"items": {
+						"$ref": "#/$defs/AptSourceType"
+					},
+					"type": "array"
+				},
+				"uris": {
+					"description": "deb822 `URIs`: repository base URIs.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				}
+			},
+			"required": [
+				"name",
+				"uris",
+				"suites"
+			],
+			"type": "object"
+		},
+		"AptSourceType": {
+			"description": "deb822 `Types` value.",
+			"oneOf": [
+				{
+					"const": "deb",
+					"description": "Binary packages.",
+					"type": "string"
+				},
+				{
+					"const": "deb-src",
+					"description": "Source packages.",
+					"type": "string"
+				}
+			]
+		},
+		"AptTask": {
+			"additionalProperties": false,
+			"description": "apt task declaring keyrings and APT repositories for the prepare phase.\n\nAt most one `AptTask` may appear in the prepare phase.",
+			"properties": {
+				"keyrings": {
+					"description": "OpenPGP keyrings to install. Each one is written to `/etc/apt/keyrings/<name>.asc`\n(ASCII-armored) or `<name>.gpg` (binary); `/etc/apt/keyrings` is created if the\nrootfs has none. A repository uses one by naming it in `signed_by`.",
+					"items": {
+						"$ref": "#/$defs/AptKeyring"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				},
+				"repositories": {
+					"description": "APT repositories to configure before provisioning. Each one is written to\n`/etc/apt/sources.list.d/<name>.sources` in deb822 format.",
+					"items": {
+						"$ref": "#/$defs/AptRepository"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				}
+			},
+			"type": "object"
+		},
 		"AssembleConfig": {
 			"additionalProperties": false,
 			"description": "Assemble phase configuration (named-field, schema-first).\n\nEach field is an optional singleton; a duplicate YAML key is rejected by `yaml_serde` at\nparse time and an unknown key by `deny_unknown_fields`.",
@@ -689,8 +881,20 @@
 		},
 		"PrepareConfig": {
 			"additionalProperties": false,
-			"description": "Prepare phase configuration (named-field, schema-first).\n\nBoth fields are optional singletons. A duplicate YAML key (e.g. two `mount`\nentries) is rejected by `yaml_serde` at parse time, and an unknown key is\nrejected by `deny_unknown_fields` — so the \"at most one\" invariants hold\nstructurally instead of being validated after parsing.",
+			"description": "Prepare phase configuration (named-field, schema-first).\n\nEvery field is an optional singleton. A duplicate YAML key (e.g. two `mount`\nentries) is rejected by `yaml_serde` at parse time, and an unknown key is\nrejected by `deny_unknown_fields` — so the \"at most one\" invariants hold\nstructurally instead of being validated after parsing.",
 			"properties": {
+				"apt": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/AptTask"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "apt task declaring APT repositories (and their keys) for provisioning."
+				},
 				"mount": {
 					"anyOf": [
 						{

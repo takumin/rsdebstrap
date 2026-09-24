@@ -99,7 +99,7 @@ the one resolution produces.
 
 Each phase is flattened to a slice of trait objects before running: `PrepareConfig::items()` and
 `AssembleConfig::items()` emit their present `Option` fields in a **fixed execution order**
-(`mount → resolv_conf`), and provision maps its `Vec` to trait objects. `run_phase_items` and
+(`mount → apt → resolv_conf`), and provision maps its `Vec` to trait objects. `run_phase_items` and
 `validate_phase_items` are generic over `T: PhaseItem + ?Sized`, so the shared logging and
 error-context wrapping are written once; only the per-item action differs.
 
@@ -121,7 +121,8 @@ Key invariants:
 
   That ordering is carried by token types rather than by comment and convention, and the
   chain starts before provisioning rather than after it. `RootfsMounts::mount` yields a
-  `Mounted`; `RootfsResolvConf::setup` consumes one and yields a `Prepared`;
+  `Mounted`; `RootfsAptSources::setup` consumes one and yields an `AptConfigured`;
+  `RootfsResolvConf::setup` consumes that and yields a `Prepared`;
   `Pipeline::run_prepare_and_provision` requires that. Both borrow the guard they came from,
   the way `ValidatedProfile` borrows its profile: `Drop` releases the mounts whatever the
   caller does, so a token that only *stood for* them could outlive them and still be
@@ -143,6 +144,7 @@ Key invariants:
 
   From there: `Pipeline::run_prepare_and_provision` yields a `Provisioned`;
   `RootfsResolvConf::restore` consumes one and yields a `Restored`;
+  `RootfsAptSources::restore` consumes that and yields an `AptRestored`;
   `RootfsMounts::unmount_before_assembly` consumes that
   and yields an `Unmounted`; `Pipeline::run_assemble` requires an `Unmounted`. Assembling
   before either teardown is therefore a compile error, not a review finding.
@@ -204,11 +206,11 @@ Key invariants:
   and handed to `mksquashfs -noappend`, which truncates it in place: the image stays owned by
   the invoking user, at `0600`, even when `mksquashfs` runs under `sudo`.
 
-`prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, resolv_conf }`,
+`prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, apt, resolv_conf }`,
 `AssembleConfig { resolv_conf, output }`, `OutputConfig { kernel, initramfs, rootfs }`), not lists. This makes the singleton invariants structural:
 "at most one mount" / "at most one resolv_conf" hold because each is an `Option` (a duplicate
 YAML key is a `yaml_serde` parse error, an unknown key a `deny_unknown_fields` error), and the
-`mount → resolv_conf` order is fixed by `items()` rather than by key order. The former
+`mount → apt → resolv_conf` order is fixed by `items()` rather than by key order. The former
 count/order validators (`validate_prepare_order`, and the count checks in
 `validate_mounts`/`validate_resolv_conf`/`validate_assemble_resolv_conf`) were therefore
 removed; only cross-field checks remain in `Profile::validate_*` (mounts → privilege;
@@ -311,7 +313,17 @@ patterns run throughout `src/isolation/`:
   same-sized file recreated within one timestamp tick can reuse both the inode number and the
   change time. Holding one would mean per-request state in a process running as root, which the
   helper deliberately does not have.
-- **RAII lifecycle managers.** `RootfsMounts` and `RootfsResolvConf` (plus
+- **Directories are created staged and published without replacing.** `RootfsOps::create_dir`
+  exists for `/etc/apt/keyrings`, which older apt does not ship and which `prepare.apt` then
+  writes keyrings into as root. A plain `mkdirat` at the name would do, except for what comes
+  after: the writes into it resolve the directory again, so the one thing that must never
+  happen is adopting a symlink planted at that name as "the directory". An existing entry is
+  inspected with `AT_SYMLINK_NOFOLLOW` and only a real directory is accepted; otherwise the
+  directory is made under a staging name, `fchmod`ed to its exact mode (umask would mask
+  `mkdirat`'s), and moved into place with `RENAME_NOREPLACE`, so an entry that appears at the
+  name meanwhile fails the rename instead of being replaced or followed. `remove_dir` removes
+  only an empty directory: what provisioning put there is not the guard's to delete.
+- **RAII lifecycle managers.** `RootfsMounts`, `RootfsAptSources` and `RootfsResolvConf` (plus
   `StagedFileGuard` in `src/phase/mod.rs`, which removes scripts and binaries staged
   into the rootfs) all guarantee cleanup via `Drop`, including on error paths. Mounts
   unmount in reverse order and `unmount()` is idempotent, collecting errors across entries.

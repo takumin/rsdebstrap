@@ -763,6 +763,10 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
         }
     }
 
+    if let Some(apt) = &mut profile.prepare.apt {
+        apt.resolve_paths(profile_dir);
+    }
+
     for task in profile.provision.iter_mut() {
         task.resolve_paths(profile_dir);
     }

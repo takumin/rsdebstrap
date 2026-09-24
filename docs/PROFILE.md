@@ -32,6 +32,25 @@ prepare:                    # Optional preparation steps (named-field struct)
       - source: /dev
         target: /dev
         options: [bind]
+  apt:                      # APT keyrings and repositories (at most one)
+    keyrings:               # Optional: OpenPGP keyrings
+      - name: docker        # -> /etc/apt/keyrings/docker.{asc,gpg}
+        url: https://download.docker.com/linux/debian/gpg
+        # OR
+        # path: ./keys/docker.asc  # Host file, relative to the profile
+        # content: |               # Inline, ASCII-armored
+        #   -----BEGIN PGP PUBLIC KEY BLOCK-----
+        sha256: <64 hex digits>  # Optional: pin the key's bytes
+        keep: true          # Optional: keep in the final rootfs (default false)
+    repositories:           # Optional: deb822 repositories
+      - name: docker        # -> /etc/apt/sources.list.d/docker.sources
+        types: [deb]        # Optional: deb | deb-src (default [deb])
+        uris: [https://download.docker.com/linux/debian]
+        suites: [trixie]
+        components: [stable]  # Required unless every suite ends in '/'
+        architectures: [amd64]  # Optional
+        signed_by: docker   # Optional: a keyrings entry, written as Signed-By
+        keep: true          # Optional: keep in the final rootfs (default false)
   resolv_conf:              # resolv.conf setup for DNS in chroot (at most one)
     copy: true              # Copy host's /etc/resolv.conf
     # OR
@@ -78,8 +97,8 @@ assemble:                   # Optional finalization steps (named-field struct)
   only YAML strings. Numbers, booleans, and `null` are parse errors — quote values that look like
   scalars (`suite: "13"`). `dir` must additionally be non-empty.
 - On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`,
-  `assemble.output`, `mounts`, `options`, `name_servers`, `search`, `mitamae`, `mitamae.binary`),
-  an explicit `null`, an empty
+  `assemble.output`, `mounts`, `options`, `name_servers`, `search`, the apt `keyrings`,
+  `repositories`, `components` and `architectures`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty
   value (e.g. a section whose entries are all commented out), and omitting the key are
   equivalent — all mean "use the default".
 - That list is exhaustive: the list fields inside the internally tagged `bootstrap:` maps
@@ -151,6 +170,48 @@ on the host. Two consequences follow, and both are enforced rather than document
 - Mounts cover `prepare` and `provision` only: they are released after `provision` and before
   `assemble`, so assemble tasks see the rootfs as the image will have it. A failed unmount
   skips `assemble` for that reason
+
+## apt task rules
+
+- `apt` is configured in the `prepare` phase under the `apt` key (a singleton `Option`). The
+  pipeline applies `mount`, then `apt`, then `resolv_conf`, whatever the key order
+- `keyrings` and `repositories` are separate lists, and at least one of them must be non-empty.
+  A repository uses a keyring by naming it in `signed_by`, which is written as the repository's
+  `Signed-By`, so the keyring is trusted for the repositories that name it only. Several
+  repositories may name one keyring; `signed_by` naming no `keyrings` entry is an error
+- Each repository is written to `/etc/apt/sources.list.d/<name>.sources` in deb822 format. It
+  only declares the repository: run `apt-get update` in a `provision` task before installing
+  from it
+- `name` may hold only letters, digits, `_`, `-` and `.` and may not start with `.` — apt
+  skips a file named otherwise. Names are unique within `keyrings` and within `repositories`;
+  a keyring and a repository may share one
+- `uris`, `suites` and `components` values may not contain whitespace (deb822 separates values
+  with it). `uris` must parse as URIs. A suite ending in `/` is an exact path and takes no
+  `components`; otherwise `components` is required, and exact and distribution suites may not
+  be mixed
+- A keyring takes exactly one of `path`, `content` or `url`. It is written to
+  `/etc/apt/keyrings/<name>.asc` if ASCII-armored or `<name>.gpg` if binary, mode `0644`.
+  Inline `content` must be ASCII-armored. Anything that is not an OpenPGP public key —
+  including a secret key or an HTML error page — is refused
+- If the rootfs has no `/etc/apt/keyrings` (apt before 2.4, e.g. Debian bullseye), it is
+  created with mode `0755`, owned by whoever performs rootfs modifications (root, with
+  `defaults.privilege`). `/etc/apt` is resolved without following symlinks, and a symlink or a
+  non-directory at `/etc/apt/keyrings` is an error rather than something to write through. The
+  directory is built under a temporary name and moved into place without replacing anything,
+  so it never exists at its own name with another mode. `/etc/apt` itself must exist
+- `url` must be `https`, redirects included, and is verified against the host's trust store.
+  The key is downloaded when the prepare phase runs (not in a dry run, and not by `validate`),
+  and at most 1 MiB is accepted. `sha256`, if given, is checked against the bytes from any
+  source; for inline `content` that happens when the profile is validated
+- Every keyring is read, downloaded and checked before the first change, so a bad key fails
+  the run with the rootfs untouched. A failed change rolls back everything done so far
+- After `provision` and before `assemble`, keyrings and repositories without `keep: true` are
+  removed, and whatever was at those paths before is put back. Entries with `keep: true` stay
+  in the final rootfs. A kept repository must name a kept keyring, since the image would
+  otherwise carry a `Signed-By` pointing at nothing. As with `resolv_conf`, the originals are
+  held in memory, not in a backup file
+- A `/etc/apt/keyrings` created by the run is removed with its keyrings unless one of them is
+  kept. If provisioning put something else in it, it is left in place with a warning
 
 ## resolv.conf task rules
 

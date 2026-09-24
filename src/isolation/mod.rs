@@ -41,6 +41,7 @@ impl TaskCommandToken {
     }
 }
 
+pub(crate) mod apt_sources;
 pub mod chroot;
 pub mod direct;
 pub(crate) mod mount;
