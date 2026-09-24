@@ -98,6 +98,10 @@ and this project adheres to
   created if the rootfs lacks it, without following symlinks. Entries are
   removed again before `assemble` unless marked `keep: true`, and whatever they
   replaced is put back.
+- `prepare.apt.preferences`, apt_preferences(5) pins written to
+  `/etc/apt/preferences.d/<name>.pref`, one stanza per entry of `pins`
+  (`packages`, `pin`, `priority`, optional `explanation`). Like repositories,
+  they are removed before `assemble` unless marked `keep: true`.
 - `tests/privileged_helper_test.rs`, which exercises real `sudo` escalation
   against a root-owned rootfs. `#[ignore]`d and self-skipping when passwordless
   sudo is unavailable.

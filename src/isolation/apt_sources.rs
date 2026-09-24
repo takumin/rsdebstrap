@@ -1,8 +1,8 @@
-//! APT keyring and repository lifecycle within a rootfs.
+//! APT keyring, repository and preferences lifecycle within a rootfs.
 //!
-//! [`RootfsAptSources`] is an RAII guard that writes the keyrings and repositories
-//! `prepare.apt` declares, so provisioning can install from them, and afterwards removes the
-//! ones not marked `keep`, putting back whatever they replaced.
+//! [`RootfsAptSources`] is an RAII guard that writes the keyrings, repositories and
+//! preferences `prepare.apt` declares, so provisioning can install from them, and afterwards
+//! removes the ones not marked `keep`, putting back whatever they replaced.
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -26,7 +26,8 @@ use crate::rootfs::{FileMode, RelPath, RootfsOps, TakenEntry};
 /// others.
 const KEYRINGS_DIR_MODE: FileMode = FileMode::new(0o755);
 
-/// Mode keyrings and `.sources` files are written with, readable by `_apt` for that reason.
+/// Mode keyrings, `.sources` and `.pref` files are written with, readable by `_apt` for that
+/// reason.
 const FILE_MODE: FileMode = FileMode::new(0o644);
 
 /// Downloads a keyring given by `url`. A function pointer rather than a call to
@@ -63,7 +64,7 @@ pub(crate) fn fetch_https(url: &str) -> Result<Vec<u8>> {
         .with_context(|| format!("failed to read apt keyring from {}", url))
 }
 
-/// Evidence that the mounts are up and the apt keyrings and repositories are written.
+/// Evidence that the mounts are up and the apt keyrings, repositories and preferences are written.
 ///
 /// [`RootfsResolvConf::setup`](crate::isolation::resolv_conf::RootfsResolvConf::setup)
 /// requires one, so the `Prepared` it yields cannot exist unless this guard ran. Like
@@ -138,7 +139,7 @@ impl Written {
     }
 }
 
-/// RAII guard for the keyrings and APT repositories `prepare.apt` declares.
+/// RAII guard for the keyrings, APT repositories and preferences `prepare.apt` declares.
 ///
 /// Setup detaches whatever is at each path it writes, holding it in memory as a
 /// [`TakenEntry`] the way the resolv.conf guard does, and creates `/etc/apt/keyrings` if the
@@ -218,6 +219,13 @@ impl RootfsAptSources {
             for repo in &config.repositories {
                 info!("would write apt repository {} to {}", repo.sources_path(), self.rootfs);
             }
+            for preference in &config.preferences {
+                info!(
+                    "would write apt preferences {} to {}",
+                    preference.preferences_path(),
+                    self.rootfs
+                );
+            }
             return Ok(self.evidence(mounted));
         }
 
@@ -244,7 +252,11 @@ impl RootfsAptSources {
             let sources = repo.render_sources(signed_by).into_bytes();
             files.push((repo.sources_path(), sources, repo.keep));
         }
-        let count = (config.keyrings.len(), config.repositories.len());
+        for preference in &config.preferences {
+            let rendered = preference.render().into_bytes();
+            files.push((preference.preferences_path(), rendered, preference.keep));
+        }
+        let count = (config.keyrings.len(), config.repositories.len(), config.preferences.len());
         // Kept if any keyring in it is: removing it would take a kept keyring with it.
         let keyrings_dir =
             (!config.keyrings.is_empty()).then(|| config.keyrings.iter().any(|k| k.keep));
@@ -268,8 +280,8 @@ impl RootfsAptSources {
         }
 
         info!(
-            "configured {} apt keyring(s) and {} repository(ies) in {}",
-            count.0, count.1, self.rootfs
+            "configured {} apt keyring(s), {} repository(ies) and {} preference file(s) in {}",
+            count.0, count.1, count.2, self.rootfs
         );
         Ok(self.evidence(mounted))
     }
@@ -304,7 +316,10 @@ impl RootfsAptSources {
         let had_entries = self.written.iter().any(|w| !w.keep());
         self.unwind(false)?;
         if had_entries {
-            info!("removed temporary apt keyrings and repositories from {}", self.rootfs);
+            info!(
+                "removed temporary apt keyrings, repositories and preferences from {}",
+                self.rootfs
+            );
         }
         Ok(())
     }
@@ -435,8 +450,8 @@ impl Drop for RootfsAptSources {
             && let Err(e) = self.teardown()
         {
             tracing::error!(
-                "failed to remove temporary apt keyrings and repositories during cleanup: \
-                {:#}. {} may still hold them",
+                "failed to remove temporary apt keyrings, repositories and preferences during \
+                cleanup: {:#}. {} may still hold them",
                 e,
                 self.rootfs
             );
@@ -463,7 +478,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
-    use crate::phase::prepare::apt::{AptRepository, AptSourceType};
+    use crate::phase::prepare::apt::{AptPin, AptPreference, AptRepository, AptSourceType};
     use crate::rootfs::LocalRootfsOps;
 
     const ARMORED: &str =
@@ -474,7 +489,21 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
         fs::create_dir_all(rootfs.join("etc/apt/sources.list.d")).unwrap();
+        fs::create_dir_all(rootfs.join("etc/apt/preferences.d")).unwrap();
         (temp, rootfs)
+    }
+
+    fn preference(name: &str, keep: bool) -> AptPreference {
+        AptPreference {
+            name: name.to_string(),
+            pins: vec![AptPin {
+                packages: vec!["*".to_string()],
+                pin: "release n=trixie-backports".to_string(),
+                priority: 500,
+                explanation: None,
+            }],
+            keep,
+        }
     }
 
     fn repo(name: &str, keep: bool, signed_by: Option<&str>) -> AptRepository {
@@ -525,11 +554,16 @@ mod tests {
         repositories: Vec<AptRepository>,
         fetch: KeyFetcher,
     ) -> RootfsAptSources {
-        let ops = Arc::new(LocalRootfsOps::open(rootfs).unwrap());
         let config = AptTask {
             keyrings,
             repositories,
+            preferences: vec![],
         };
+        guard_for(rootfs, config, fetch)
+    }
+
+    fn guard_for(rootfs: &Utf8Path, config: AptTask, fetch: KeyFetcher) -> RootfsAptSources {
+        let ops = Arc::new(LocalRootfsOps::open(rootfs).unwrap());
         RootfsAptSources::new(rootfs, Some(config), ops, false, fetch)
     }
 
@@ -776,11 +810,59 @@ mod tests {
                 AptKeySource::Url("https://e.com/k".into()),
             )],
             repositories: vec![repo("x", false, Some("k"))],
+            preferences: vec![preference("p", false)],
         };
         let mut g = RootfsAptSources::new(&rootfs, Some(config), ops, true, no_network);
         setup_guard(&mut g).unwrap();
         assert!(is_empty_dir(&rootfs.join("etc/apt/sources.list.d")));
+        assert!(is_empty_dir(&rootfs.join("etc/apt/preferences.d")));
         assert!(!rootfs.join("etc/apt/keyrings").exists());
+    }
+
+    #[test]
+    fn preferences_are_written_and_only_temporary_ones_removed() {
+        let (_temp, rootfs) = rootfs_with_apt_dirs();
+        let existing = rootfs.join("etc/apt/preferences.d/temp.pref");
+        fs::write(&existing, "original\n").unwrap();
+        let config = AptTask {
+            keyrings: vec![],
+            repositories: vec![],
+            preferences: vec![preference("kept", true), preference("temp", false)],
+        };
+        let mut g = guard_for(&rootfs, config, no_network);
+        setup_guard(&mut g).unwrap();
+
+        let kept = rootfs.join("etc/apt/preferences.d/kept.pref");
+        let content = fs::read_to_string(&kept).unwrap();
+        assert!(content.contains("Pin: release n=trixie-backports\n"), "{}", content);
+        assert_eq!(fs::metadata(&kept).unwrap().permissions().mode() & 0o777, 0o644);
+        assert!(
+            fs::read_to_string(&existing)
+                .unwrap()
+                .contains("Pin-Priority: 500")
+        );
+
+        g.teardown().unwrap();
+        assert!(kept.exists());
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "original\n");
+        assert!(!rootfs.join("etc/apt/keyrings").exists(), "no keyrings, no directory");
+    }
+
+    #[test]
+    fn a_failed_preference_write_rolls_back_the_repositories_before_it() {
+        let (_temp, rootfs) = rootfs_with_apt_dirs();
+        // No preferences.d: the preference's write fails after the repository was written.
+        fs::remove_dir(rootfs.join("etc/apt/preferences.d")).unwrap();
+        let config = AptTask {
+            keyrings: vec![],
+            repositories: vec![repo("x", true, None)],
+            preferences: vec![preference("p", true)],
+        };
+        let mut g = guard_for(&rootfs, config, no_network);
+
+        assert!(setup_guard(&mut g).is_err());
+        assert!(is_empty_dir(&rootfs.join("etc/apt/sources.list.d")));
+        assert!(g.written.is_empty());
     }
 
     // Needs the network, so it is `#[ignore]`d; run it with `cargo test -- --ignored` to check

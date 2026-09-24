@@ -4,7 +4,7 @@
 //! tasks that run before the main provisioning phase. Each role is a fixed,
 //! optional singleton field:
 //! - [`mount`](PrepareConfig::mount) — declares filesystem mounts for the rootfs
-//! - [`apt`](PrepareConfig::apt) — declares APT repositories and their keys
+//! - [`apt`](PrepareConfig::apt) — declares APT repositories, their keys and preferences
 //! - [`resolv_conf`](PrepareConfig::resolv_conf) — declares resolv.conf setup for DNS resolution
 //!
 //! The named-field shape makes "at most one" of each, and the fixed
@@ -36,7 +36,7 @@ pub struct PrepareConfig {
     /// Mount task declaring filesystem mounts for the rootfs.
     #[serde(default)]
     pub mount: Option<MountTask>,
-    /// apt task declaring APT repositories (and their keys) for provisioning.
+    /// apt task declaring APT repositories, their keys and preferences for provisioning.
     #[serde(default)]
     pub apt: Option<AptTask>,
     /// resolv_conf task declaring DNS configuration for the chroot.
@@ -140,7 +140,7 @@ mod tests {
         assert_eq!(items.len(), 3);
         assert_eq!(config.len(), 3);
         assert!(items[0].name().starts_with("mount:"));
-        assert_eq!(items[1].name(), "apt:keyrings[],repositories[x]");
+        assert_eq!(items[1].name(), "apt:keyrings[],repositories[x],preferences[]");
         assert!(items[2].name().starts_with("resolv_conf:"));
     }
 }

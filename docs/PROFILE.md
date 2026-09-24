@@ -32,7 +32,7 @@ prepare:                    # Optional preparation steps (named-field struct)
       - source: /dev
         target: /dev
         options: [bind]
-  apt:                      # APT keyrings and repositories (at most one)
+  apt:                      # APT keyrings, repositories and preferences (at most one)
     keyrings:               # Optional: OpenPGP keyrings
       - name: docker        # -> /etc/apt/keyrings/docker.{asc,gpg}
         url: https://download.docker.com/linux/debian/gpg
@@ -51,6 +51,14 @@ prepare:                    # Optional preparation steps (named-field struct)
         architectures: [amd64]  # Optional
         signed_by: docker   # Optional: a keyrings entry, written as Signed-By
         keep: true          # Optional: keep in the final rootfs (default false)
+    preferences:            # Optional: apt_preferences(5) pins
+      - name: backports     # -> /etc/apt/preferences.d/backports.pref
+        pins:               # One stanza per pin
+          - packages: [linux-image-amd64]  # Package: names, globs, /regex/, src:name, *
+            pin: release n=trixie-backports  # Pin: release … | origin … | version …
+            priority: 990   # Pin-Priority: non-zero integer
+            explanation: newer kernel  # Optional: one-line Explanation
+        keep: false         # Optional: keep in the final rootfs (default false)
   resolv_conf:              # resolv.conf setup for DNS in chroot (at most one)
     copy: true              # Copy host's /etc/resolv.conf
     # OR
@@ -98,7 +106,8 @@ assemble:                   # Optional finalization steps (named-field struct)
   scalars (`suite: "13"`). `dir` must additionally be non-empty.
 - On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`,
   `assemble.output`, `mounts`, `options`, `name_servers`, `search`, the apt `keyrings`,
-  `repositories`, `components` and `architectures`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty
+  `repositories`, `preferences`, `components` and `architectures`, `mitamae`,
+  `mitamae.binary`), an explicit `null`, an empty
   value (e.g. a section whose entries are all commented out), and omitting the key are
   equivalent — all mean "use the default".
 - That list is exhaustive: the list fields inside the internally tagged `bootstrap:` maps
@@ -175,7 +184,8 @@ on the host. Two consequences follow, and both are enforced rather than document
 
 - `apt` is configured in the `prepare` phase under the `apt` key (a singleton `Option`). The
   pipeline applies `mount`, then `apt`, then `resolv_conf`, whatever the key order
-- `keyrings` and `repositories` are separate lists, and at least one of them must be non-empty.
+- `keyrings`, `repositories` and `preferences` are separate lists, and at least one of them
+  must be non-empty.
   A repository uses a keyring by naming it in `signed_by`, which is written as the repository's
   `Signed-By`, so the keyring is trusted for the repositories that name it only. Several
   repositories may name one keyring; `signed_by` naming no `keyrings` entry is an error
@@ -183,8 +193,8 @@ on the host. Two consequences follow, and both are enforced rather than document
   only declares the repository: run `apt-get update` in a `provision` task before installing
   from it
 - `name` may hold only letters, digits, `_`, `-` and `.` and may not start with `.` — apt
-  skips a file named otherwise. Names are unique within `keyrings` and within `repositories`;
-  a keyring and a repository may share one
+  skips a file named otherwise. Names are unique within `keyrings`, within `repositories` and
+  within `preferences`; entries in different lists may share one
 - `uris`, `suites` and `components` values may not contain whitespace (deb822 separates values
   with it). `uris` must parse as URIs. A suite ending in `/` is an exact path and takes no
   `components`; otherwise `components` is required, and exact and distribution suites may not
@@ -212,6 +222,17 @@ on the host. Two consequences follow, and both are enforced rather than document
   held in memory, not in a backup file
 - A `/etc/apt/keyrings` created by the run is removed with its keyrings unless one of them is
   kept. If provisioning put something else in it, it is left in place with a warning
+- Each preference is written to `/etc/apt/preferences.d/<name>.pref` (the `.pref` extension
+  keeps a name containing `.` from being skipped by apt), mode `0644`, one apt_preferences(5)
+  stanza per entry of `pins`, in order. `/etc/apt/preferences.d` must exist (apt ships it).
+  Like a repository, it is removed after `provision` unless `keep: true`, and whatever it
+  replaced is put back
+- A pin needs non-empty `packages` (written as `Package`, so `*`, globs, `/regex/` and
+  `src:` names work; no whitespace inside a value), `pin` starting with `release`, `origin`
+  or `version` followed by its argument, and a non-zero `priority` (apt ignores a pin with
+  priority 0). `pin` and `explanation` may not contain a newline or other control character.
+  The value after `release`/`origin`/`version` is passed through as written; apt, not the
+  profile loader, decides what it matches
 
 ## resolv.conf task rules
 
