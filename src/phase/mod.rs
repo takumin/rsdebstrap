@@ -10,7 +10,8 @@
 //!   [`PrepareConfig`]: `mount`, `resolv_conf`)
 //! - [`provision`] — Main provisioning tasks (Shell, Mitamae), an ordered `Vec`
 //! - [`assemble`] — Finalization tasks after provisioning (named-field
-//!   [`AssembleConfig`]: `resolv_conf`)
+//!   [`AssembleConfig`]: `resolv_conf`, plus the `output` artifacts the pipeline writes
+//!   after them)
 //!
 //! Adding a new task to a named-field phase requires:
 //! 1. Adding an `Option<...>` field to the phase config struct
@@ -32,6 +33,7 @@ use tracing::info;
 
 pub use assemble::AssembleConfig;
 pub use assemble::AssembleResolvConfTask;
+pub use assemble::OutputConfig;
 pub use prepare::MountTask;
 pub use prepare::PrepareConfig;
 pub use prepare::ResolvConfTask;

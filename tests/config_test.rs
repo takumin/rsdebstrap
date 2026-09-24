@@ -858,6 +858,87 @@ fn test_load_profile_assemble_rejects_unknown_task_type() -> Result<()> {
 }
 
 #[test]
+fn test_load_profile_assemble_output() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs
+          format: directory
+        assemble:
+          output:
+            kernel:
+              file: vmlinuz
+            initramfs:
+              file: initrd.img
+              source: /boot/initrd.img-6.12.0-amd64
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    assert_eq!(profile.assemble.len(), 2);
+    assert_eq!(profile.assemble.output.files(), vec!["vmlinuz", "initrd.img"]);
+    profile.validate()?;
+
+    Ok(())
+}
+
+#[test]
+fn test_validate_rejects_an_output_over_the_bootstrap_target() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs
+          format: directory
+        assemble:
+          output:
+            kernel:
+              file: rootfs
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(err.to_string().contains("bootstrap target"), "unexpected error: {err}");
+
+    Ok(())
+}
+
+#[test]
+fn test_validate_rejects_two_outputs_with_one_name() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs
+          format: directory
+        assemble:
+          output:
+            kernel:
+              file: boot.img
+            initramfs:
+              file: boot.img
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(err.to_string().contains("boot.img"), "unexpected error: {err}");
+
+    Ok(())
+}
+
+#[test]
 fn test_load_profile_with_provision_tasks() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml(crate::yaml!(

@@ -1,31 +1,39 @@
 //! Assemble phase module for post-provisioning tasks.
 //!
 //! This module provides the [`AssembleConfig`] named-field struct describing the
-//! tasks that run after the main provisioning phase. Currently the only role is:
+//! tasks that run after the main provisioning phase:
 //! - [`resolv_conf`](AssembleConfig::resolv_conf) — writes a permanent `/etc/resolv.conf`
+//! - [`output`](AssembleConfig::output) — writes the kernel, the initramfs and a squashfs
+//!   image of the rootfs next to it, once the rootfs is final
 //!
 //! The named-field shape makes "at most one resolv_conf" structural rather than
 //! validated after the fact.
 
+pub mod output;
 pub mod resolv_conf;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+pub use output::{BootFileOutput, OutputConfig, SquashfsCompression, SquashfsOutput};
 pub use resolv_conf::AssembleResolvConfTask;
 
 use crate::phase::AssembleItem;
 
 /// Assemble phase configuration (named-field, schema-first).
 ///
-/// The single field is an optional singleton; a duplicate YAML key is rejected
-/// by `yaml_serde` at parse time and an unknown key by `deny_unknown_fields`.
+/// Each field is an optional singleton; a duplicate YAML key is rejected by `yaml_serde` at
+/// parse time and an unknown key by `deny_unknown_fields`.
 #[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssembleConfig {
     /// resolv_conf task writing a permanent `/etc/resolv.conf` into the final rootfs.
     #[serde(default)]
     pub resolv_conf: Option<AssembleResolvConfTask>,
+    /// Build artifacts written into `dir` after the rootfs is final.
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[schemars(with = "Option<OutputConfig>")]
+    pub output: OutputConfig,
 }
 
 impl AssembleConfig {
@@ -38,14 +46,14 @@ impl AssembleConfig {
         items
     }
 
-    /// Returns true if no assemble tasks are configured.
+    /// Returns true if no assemble tasks or outputs are configured.
     pub fn is_empty(&self) -> bool {
-        self.resolv_conf.is_none()
+        self.len() == 0
     }
 
-    /// Returns the number of configured assemble tasks.
+    /// Returns the number of configured assemble tasks, outputs included.
     pub fn len(&self) -> usize {
-        usize::from(self.resolv_conf.is_some())
+        usize::from(self.resolv_conf.is_some()) + self.output.len()
     }
 }
 

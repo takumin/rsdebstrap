@@ -514,6 +514,15 @@ mod tests {
     }
 
     impl RootfsOps for FailFirstWrites {
+        fn export_file(
+            &self,
+            path: &RelPath,
+            sink: &mut dyn std::io::Write,
+        ) -> std::result::Result<Option<crate::rootfs::ExportedFile>, crate::error::RsdebstrapError>
+        {
+            self.inner.export_file(path, sink)
+        }
+
         fn write_file(
             &self,
             path: &RelPath,

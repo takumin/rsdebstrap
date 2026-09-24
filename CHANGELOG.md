@@ -85,6 +85,12 @@ and this project adheres to
 
 ### Added
 
+- `assemble.output`, which writes build artifacts into `dir` once the rootfs is
+  final: `kernel` and `initramfs` copy the images out of the rootfs (by default
+  through Debian's `/vmlinuz` and `/initrd.img` links, confined to the rootfs),
+  and `rootfs` packs it into a squashfs image with `mksquashfs`, escalated with
+  `defaults.privilege`. Each output is staged under a temporary name and
+  renamed into place, so a failed build leaves no partial file.
 - `tests/privileged_helper_test.rs`, which exercises real `sudo` escalation
   against a root-owned rootfs. `#[ignore]`d and self-skipping when passwordless
   sudo is unavailable.

@@ -60,6 +60,16 @@ assemble:                   # Optional finalization steps (named-field struct)
     search: [example.com]   # Optional search domains
     # OR
     # link: ../run/systemd/resolve/stub-resolv.conf  # Create symlink instead
+  output:                   # Optional build artifacts written into `dir`
+    kernel:
+      file: vmlinuz         # File name in `dir`
+      source: /vmlinuz      # Optional: default /vmlinuz, then /boot/vmlinuz
+    initramfs:
+      file: initrd.img      # File name in `dir`
+      source: /initrd.img   # Optional: default /initrd.img, then /boot/initrd.img
+    rootfs:
+      file: rootfs.squashfs # File name in `dir`
+      compression: zstd     # Optional: gzip | lzo | lz4 | xz | zstd (mksquashfs default: gzip)
 ```
 
 ## YAML scalar and null rules
@@ -67,8 +77,9 @@ assemble:                   # Optional finalization steps (named-field struct)
 - String-typed fields (paths, suite/target names, mount sources/options, search domains) accept
   only YAML strings. Numbers, booleans, and `null` are parse errors — quote values that look like
   scalars (`suite: "13"`). `dir` must additionally be non-empty.
-- On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`, `mounts`,
-  `options`, `name_servers`, `search`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty
+- On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`,
+  `assemble.output`, `mounts`, `options`, `name_servers`, `search`, `mitamae`, `mitamae.binary`),
+  an explicit `null`, an empty
   value (e.g. a section whose entries are all commented out), and omitting the key are
   equivalent — all mean "use the default".
 - That list is exhaustive: the list fields inside the internally tagged `bootstrap:` maps
@@ -161,6 +172,30 @@ on the host. Two consequences follow, and both are enforced rather than document
   `/etc/resolv.conf` is replaced whether it is a regular file or a symlink; a symlink is never
   followed, so the entry it pointed at is left untouched
 
+## Assemble output rules
+
+- `assemble.output` writes build artifacts into `dir`, next to the bootstrap target. Each `file`
+  is a plain file name (no `/`, not `.` or `..`); two outputs may not share one, and none may be
+  the bootstrap `target`
+- Outputs are written after every other assemble task, in the order `kernel`, `initramfs`,
+  `rootfs`, so they reflect the rootfs in its final state (the assemble `resolv_conf` included)
+- Each output is staged under a temporary name in `dir` and renamed over `file`, so an existing
+  file is replaced atomically and a failed build leaves no partial file behind. `dir` must be
+  writable by the user running `rsdebstrap`
+- `kernel` / `initramfs` copy one file out of the rootfs. `source` is an absolute path inside the
+  rootfs; without it, `/vmlinuz` then `/boot/vmlinuz` (`/initrd.img` then `/boot/initrd.img`) are
+  tried, which are the links Debian's kernel packages keep pointing at the newest installed
+  version. Symlinks are followed, but resolved as if the rootfs were `/`, so no link can lead the
+  read outside it; this needs Linux 5.6 or newer. Finding none of the candidates is an error
+- The copy keeps the source's permission bits (Debian installs the initramfs readable by root
+  only) and is owned by the user running `rsdebstrap`. With `defaults.privilege` set, the file is
+  read through the privileged helper described below, so a root-only source can be copied
+- `rootfs` runs `mksquashfs <rootfs> <file> -noappend -one-file-system [-comp <compression>]`.
+  `mksquashfs` must be on `PATH` (checked when the profile is validated) and is escalated with
+  `defaults.privilege`, like `mount`; there is no per-output `privilege` key. The image is owned by
+  the user running `rsdebstrap` with mode `0600`, because it holds every file of the rootfs.
+  `-one-file-system` keeps anything still mounted under the rootfs out of the image
+
 ## How rootfs modifications are performed
 
 Both `resolv_conf` tasks change files inside the rootfs, which normally needs root. Rather than
@@ -176,5 +211,6 @@ Two consequences are visible from a profile:
   `/etc/resolv.conf` — including `/etc` itself — is an error, not something to follow. Only the
   final component may be a symlink, and it is replaced rather than written through.
 
-Process execution (`mount`, `umount`, `chroot`, the bootstrap backend, provision tasks) still
-escalates per command, so those keep their own `privilege` settings.
+Process execution (`mount`, `umount`, `chroot`, the bootstrap backend, `mksquashfs`, provision
+tasks) still escalates per command. `mount`, `umount` and `mksquashfs` use `defaults.privilege`;
+the bootstrap backend and provision tasks keep their own `privilege` settings.
