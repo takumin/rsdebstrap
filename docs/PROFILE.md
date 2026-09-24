@@ -276,6 +276,13 @@ on the host. Two consequences follow, and both are enforced rather than document
 - `apt-get` runs with `DEBIAN_FRONTEND=noninteractive` and
   `-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold`, so it never waits for
   an answer; a conffile an earlier task changed is kept
+- While `apt-get install` runs, `/usr/sbin/policy-rc.d` is a script exiting 101, so maintainer
+  scripts do not start the services they install: a service started in the chroot would run
+  on the host, keep the rootfs busy and fail the unmount. Whatever was there before is put
+  back afterwards, including when the install fails; if the install itself replaced the file
+  (a package shipping its own policy), the new one is left in place. `apt-get update` runs
+  without it. Services still start on the booted system; the policy is not in the final
+  rootfs
 - Each `install` entry is `name[:arch][=version|/release]`: a Debian package name (lowercase
   letters, digits, `+`, `-`, `.`; at least two characters, starting with a letter or digit, not
   ending in `-`), then optionally an architecture, then a version or a target release. Anything

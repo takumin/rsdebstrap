@@ -108,6 +108,9 @@ and this project adheres to
   `false` so installs split over several tasks do not refresh the lists each
   time. Package entries are validated as `name[:arch][=version|/release]`, so
   none can reach `apt-get` as an option, and `isolation: false` is refused.
+  While `apt-get install` runs, `/usr/sbin/policy-rc.d` denies service starts
+  (exit 101), so maintainer scripts do not start daemons on the build host; the
+  rootfs's own policy, if any, is put back afterwards.
 - `assemble.apt_clean: true`, which empties apt's download cache
   (`/var/cache/apt`) and package lists (`/var/lib/apt/lists`) in the final
   rootfs, like `apt-get distclean`. The assemble phase cannot run a program, so

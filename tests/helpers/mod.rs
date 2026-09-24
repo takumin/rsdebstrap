@@ -485,6 +485,8 @@ pub struct MockContext {
     executed_commands: RefCell<Vec<Vec<String>>>,
     executed_privileges: RefCell<Vec<Option<rsdebstrap::privilege::PrivilegeMethod>>>,
     return_no_status: bool,
+    probe: Option<Utf8PathBuf>,
+    probed: RefCell<Vec<Option<Vec<u8>>>>,
 }
 
 impl MockContext {
@@ -500,7 +502,22 @@ impl MockContext {
             executed_commands: RefCell::new(Vec::new()),
             executed_privileges: RefCell::new(Vec::new()),
             return_no_status: false,
+            probe: None,
+            probed: RefCell::new(Vec::new()),
         }
+    }
+
+    // Records the content of `path` inside the rootfs as each command runs, for asserting
+    // on what a task put in place around the command rather than only on its argv.
+    pub fn with_probe(self, path: &str) -> Self {
+        Self {
+            probe: Some(self.rootfs.join(path.trim_start_matches('/'))),
+            ..self
+        }
+    }
+
+    pub fn probed(&self) -> Vec<Option<Vec<u8>>> {
+        self.probed.borrow().clone()
     }
 
     pub fn new_dry_run(rootfs: &Utf8Path) -> Self {
@@ -568,6 +585,9 @@ impl IsolationContext for MockContext {
     ) -> Result<ExecutionResult> {
         self.executed_commands.borrow_mut().push(command.to_vec());
         self.executed_privileges.borrow_mut().push(privilege);
+        if let Some(probe) = &self.probe {
+            self.probed.borrow_mut().push(std::fs::read(probe).ok());
+        }
 
         if self.should_error {
             anyhow::bail!("{}", self.error_message.as_deref().unwrap_or("mock error"));

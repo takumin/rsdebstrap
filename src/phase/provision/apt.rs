@@ -8,11 +8,20 @@
 use anyhow::{Context, Result};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use tracing::info;
+use tracing::{error, info, warn};
 
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::privilege::{Privilege, PrivilegeMethod};
+use crate::rootfs::{FileMode, RelPath, RootfsOps, TakenEntry};
+
+/// Where `invoke-rc.d` and `deb-systemd-invoke` look for a policy before starting a service
+/// from a maintainer script.
+const POLICY_RC_D: &str = "/usr/sbin/policy-rc.d";
+
+/// Exit status 101 is "action forbidden by policy": the service is not started, and the
+/// maintainer script carries on as if it had been.
+const POLICY_RC_D_DENY: &[u8] = b"#!/bin/sh\nexit 101\n";
 
 /// apt task data and execution logic.
 ///
@@ -157,7 +166,20 @@ impl AptGetTask {
                 args.push("--no-install-recommends");
             }
             args.extend(self.install.iter().map(String::as_str));
-            let result = run_apt_get(context, privilege, args);
+            let result = if context.dry_run() {
+                info!("would write {} denying service starts during the install", POLICY_RC_D);
+                run_apt_get(context, privilege, args)
+            } else {
+                let policy = PolicyRcD::deny(context.rootfs_ops())?;
+                let result = run_apt_get(context, privilege, args);
+                let restored = policy.restore();
+                match (&result, restored) {
+                    (Ok(()), Err(e)) => return Err(e),
+                    (Err(_), Err(e)) => error!("{:#}", e),
+                    (_, Ok(())) => {}
+                }
+                result
+            };
             if !self.update {
                 return result.context(
                     "apt-get install failed in a task without `update: true`; if no earlier \
@@ -200,6 +222,84 @@ fn run_apt_get<'a>(
     let command = apt_get_command(args);
     let result = crate::phase::execute_in_context(context, &command, "apt-get", privilege)?;
     crate::phase::check_execution_result(&result, &command, context.name(), context.dry_run())
+}
+
+/// Keeps maintainer scripts from starting services while packages are installed.
+///
+/// A chroot shares the host's process and network namespaces, so a service started inside
+/// it is a host daemon that outlives the build: it keeps the rootfs busy so the unmount
+/// fails, and may take the host's ports. mmdebstrap guards its own installs the same way.
+///
+/// Whatever was at [`POLICY_RC_D`] is detached for the install and put back afterwards;
+/// `Drop` does that too, for a path out that skipped [`Self::restore`].
+struct PolicyRcD<'a> {
+    ops: &'a dyn RootfsOps,
+    path: RelPath,
+    original: Option<TakenEntry>,
+    pending: bool,
+}
+
+impl<'a> PolicyRcD<'a> {
+    fn deny(ops: &'a dyn RootfsOps) -> Result<Self> {
+        let path = crate::config::rootfs_path(POLICY_RC_D);
+        let original = ops
+            .take(&path)
+            .with_context(|| format!("failed to detach {}", path))?;
+        // Built before the write, so a failed write still puts the original back on drop.
+        let guard = Self {
+            ops,
+            path,
+            original,
+            pending: true,
+        };
+        ops.write_file(&guard.path, POLICY_RC_D_DENY, FileMode::new(0o755))
+            .with_context(|| format!("failed to write {}", guard.path))?;
+        Ok(guard)
+    }
+
+    fn restore(mut self) -> Result<()> {
+        self.undo()
+    }
+
+    /// Idempotent: a step that failed is retried by the next call, one that succeeded is not
+    /// undone twice.
+    fn undo(&mut self) -> Result<()> {
+        if !self.pending {
+            return Ok(());
+        }
+        let current = self
+            .ops
+            .take(&self.path)
+            .with_context(|| format!("failed to remove {}", self.path))?;
+        match current {
+            None => {}
+            Some(TakenEntry::File { ref content, .. }) if content == POLICY_RC_D_DENY => {}
+            // A package the install pulled in ships its own policy, which is what the rootfs
+            // should end up with.
+            Some(installed) => {
+                warn!(
+                    "{} was replaced during the install, leaving the new one in place",
+                    self.path
+                );
+                self.original = Some(installed);
+            }
+        }
+        if let Some(original) = &self.original {
+            self.ops
+                .put_back(&self.path, original)
+                .with_context(|| format!("failed to restore {}", self.path))?;
+        }
+        self.pending = false;
+        Ok(())
+    }
+}
+
+impl Drop for PolicyRcD<'_> {
+    fn drop(&mut self) {
+        if let Err(e) = self.undo() {
+            error!("{:#}; the rootfs may be left denying every service start", e);
+        }
+    }
 }
 
 /// Refuses anything but `name[:arch][=version|/release]`.
@@ -280,6 +380,27 @@ fn validate_package_spec(spec: &str) -> Result<(), RsdebstrapError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rootfs::LocalRootfsOps;
+
+    #[test]
+    fn a_policy_a_package_installed_is_left_in_place() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("usr/sbin")).unwrap();
+        let rootfs = camino::Utf8Path::from_path(temp.path()).unwrap();
+        let ops = LocalRootfsOps::open(rootfs).unwrap();
+        let path = crate::config::rootfs_path(POLICY_RC_D);
+
+        let policy = PolicyRcD::deny(&ops).unwrap();
+        // What unpacking a package that ships its own, such as policy-rcd-declarative, does.
+        ops.write_file(&path, b"#!/bin/sh\nexec policy-rc.d.real \"$@\"\n", FileMode::new(0o755))
+            .unwrap();
+        policy.restore().unwrap();
+
+        assert_eq!(
+            std::fs::read(path.to_host_path(rootfs)).unwrap(),
+            b"#!/bin/sh\nexec policy-rc.d.real \"$@\"\n"
+        );
+    }
 
     #[test]
     fn package_spec_acceptance_set() {
