@@ -40,7 +40,10 @@ tracing-subscriber = "0.3.19"
 # Downloads `prepare.apt` keys given by `url`. Verified against the host's trust store
 # (platform-verifier) rather than bundled roots, so a key served behind an internal CA works;
 # no gzip, since a key is a few kilobytes.
-ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier"] }
+ureq = { version = "3.4.2", default-features = false, features = [
+  "rustls",
+  "platform-verifier",
+] }
 url = "2.5.8"
 uuid = { version = "1.20.0", features = ["v4"] }
 which = "8.0.0"
