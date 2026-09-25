@@ -132,8 +132,8 @@ mod tests {
     fn items_are_fixed_order_mount_then_apt_then_resolv_conf() {
         // Declared in reverse in YAML; items() still yields the structural order.
         let yaml = "resolv_conf:\n  copy: true\n\
-            apt:\n  repositories:\n    - name: x\n      uris: [https://e.com]\n      \
-            suites: [s]\n      components: [main]\n\
+            apt:\n  repositories:\n    - name: x\n      sources:\n        - uris: [https://e.com]\n          \
+            suites: [s]\n          components: [main]\n\
             mount:\n  preset: recommends\n";
         let config: PrepareConfig = yaml_serde::from_str(yaml).unwrap();
         let items = config.items();

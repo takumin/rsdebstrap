@@ -32,7 +32,7 @@ pub struct AssembleAptTask {
     /// entries below are written (default false).
     #[serde(default)]
     pub remove_sources_list: bool,
-    /// OpenPGP keyrings to write, as `prepare.apt.keyrings` does. A repository here uses one
+    /// OpenPGP keyrings to write, as `prepare.apt.keyrings` does. A source here uses one
     /// by naming it in `signed_by`, or names a keyring file in the rootfs by absolute path.
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
     #[schemars(with = "Option<Vec<AptKeyring>>")]
@@ -162,9 +162,10 @@ dist_clean: true
 remove_sources_list: true
 repositories:
   - name: debian
-    uris: [https://deb.debian.org/debian]
-    suites: [trixie]
-    components: [main]
+    sources:
+      - uris: [https://deb.debian.org/debian]
+        suites: [trixie]
+        components: [main]
 ";
     // editorconfig-checker-enable
 
@@ -228,8 +229,8 @@ repositories:
     #[test]
     fn validate_checks_the_entries_as_prepare_does() {
         let task = parse(
-            "repositories:\n  - name: x\n    uris: [https://e.com]\n    suites: [s]\n    \
-            components: [main]\n    signed_by: k\n",
+            "repositories:\n  - name: x\n    sources:\n      - uris: [https://e.com]\n        \
+            suites: [s]\n        components: [main]\n        signed_by: k\n",
         );
         let err = task.validate().unwrap_err();
         assert!(err.to_string().contains("names no entry in keyrings"), "{err}");
