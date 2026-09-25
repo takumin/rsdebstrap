@@ -167,10 +167,12 @@ impl ResolvConfConfig {
                     domain.escape_default()
                 )));
             }
-            if domain.contains(' ') {
+            // resolv.conf(5) splits the `search` line on spaces and tabs alike, so a tab would
+            // turn one declared domain into two.
+            if domain.chars().any(char::is_whitespace) {
                 return Err(RsdebstrapError::Validation(format!(
-                    "resolv_conf: search domain '{}' must not contain spaces",
-                    domain
+                    "resolv_conf: search domain '{}' must not contain whitespace",
+                    domain.escape_default()
                 )));
             }
         }
@@ -1464,7 +1466,19 @@ mod tests {
         };
         let err = config.validate().unwrap_err();
         assert!(matches!(err, RsdebstrapError::Validation(_)));
-        assert!(err.to_string().contains("spaces"));
+        assert!(err.to_string().contains("whitespace"));
+    }
+
+    #[test]
+    fn test_resolv_conf_validate_search_domain_with_tab() {
+        let config = ResolvConfConfig {
+            copy: false,
+            name_servers: vec!["8.8.8.8".parse().unwrap()],
+            search: vec!["example\t.com".to_string()],
+        };
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, RsdebstrapError::Validation(_)));
+        assert!(err.to_string().contains("whitespace"));
     }
 
     #[test]
