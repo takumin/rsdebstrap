@@ -84,12 +84,14 @@ prepare:
     # installed. The security archive lives under a different URI, so it is a separate file.
     repositories:
     - name: debian
-      uris: [https://deb.debian.org/debian]
+      uris:
+      - https://deb.debian.org/debian
       suites: [trixie, trixie-updates]
       components: [main, contrib]
       signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
     - name: debian-security
-      uris: [https://security.debian.org/debian-security]
+      uris:
+      - https://security.debian.org/debian-security
       suites: [trixie-security]
       components: [main, contrib]
       signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
