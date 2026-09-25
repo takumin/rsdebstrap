@@ -18,7 +18,7 @@ use crate::isolation::mount::Mounted;
 use crate::phase::prepare::AptTask;
 use crate::phase::prepare::apt::{
     AptKeySource, AptKeyring, AptPreference, AptRepository, KEYRINGS_DIR, KeyFormat, MAX_KEY_SIZE,
-    SignedBy, sources_list_path,
+    sources_list_path,
 };
 use crate::rootfs::{FileMode, RelPath, RootfsOps};
 
@@ -150,19 +150,7 @@ impl AptChanges<'_> {
             files.push((path, bytes));
         }
         for repo in self.repositories {
-            let signed_by = match repo.signed_by()? {
-                Some(SignedBy::Keyring(name)) => {
-                    Some(keyring_paths.get(name).cloned().ok_or_else(|| {
-                        RsdebstrapError::Validation(format!(
-                            "apt repository '{}': signed_by '{}' names no entry in keyrings",
-                            repo.name, name
-                        ))
-                    })?)
-                }
-                Some(SignedBy::Path(path)) => Some(path),
-                None => None,
-            };
-            files.push((repo.sources_path(), repo.render_sources(signed_by.as_ref()).into_bytes()));
+            files.push((repo.sources_path(), repo.render_sources(&keyring_paths)?.into_bytes()));
         }
         for preference in self.preferences {
             files.push((preference.preferences_path(), preference.render().into_bytes()));
@@ -258,7 +246,7 @@ mod tests {
     use camino::Utf8PathBuf;
 
     use super::*;
-    use crate::phase::prepare::apt::{AptPin, AptSourceType};
+    use crate::phase::prepare::apt::{AptPin, AptSource, AptSourceType};
     use crate::rootfs::LocalRootfsOps;
 
     const ARMORED: &str =
@@ -288,12 +276,14 @@ mod tests {
     fn repo(name: &str, signed_by: Option<&str>) -> AptRepository {
         AptRepository {
             name: name.to_string(),
-            types: vec![AptSourceType::Deb],
-            uris: vec!["https://example.com/debian".to_string()],
-            suites: vec!["trixie".to_string()],
-            components: vec!["main".to_string()],
-            architectures: vec![],
-            signed_by: signed_by.map(str::to_string),
+            sources: vec![AptSource {
+                types: vec![AptSourceType::Deb],
+                uris: vec!["https://example.com/debian".to_string()],
+                suites: vec!["trixie".to_string()],
+                components: vec!["main".to_string()],
+                architectures: vec![],
+                signed_by: signed_by.map(str::to_string),
+            }],
         }
     }
 

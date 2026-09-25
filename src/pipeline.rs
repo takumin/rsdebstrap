@@ -753,8 +753,9 @@ mod tests {
             mount: None,
             apt: Some(
                 yaml_serde::from_str(
-                    "repositories:\n  - name: x\n    uris: [https://example.com]\n    \
-                    suites: [trixie]\n    components: [main]\n",
+                    "repositories:\n  - name: x\n    sources:\n      \
+                    - uris: [https://example.com]\n        suites: [trixie]\n        \
+                    components: [main]\n",
                 )
                 .unwrap(),
             ),

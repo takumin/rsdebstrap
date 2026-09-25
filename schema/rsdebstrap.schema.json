@@ -43,7 +43,7 @@
 					]
 				},
 				"name": {
-					"description": "File name stem for the keyring, and what a repository's `signed_by` names. Letters,\ndigits, `_`, `-` and `.` only, unique within `keyrings`.",
+					"description": "File name stem for the keyring, and what a source's `signed_by` names. Letters,\ndigits, `_`, `-` and `.` only, unique within `keyrings`.",
 					"type": "string"
 				},
 				"path": {
@@ -132,7 +132,29 @@
 		},
 		"AptRepository": {
 			"additionalProperties": false,
-			"description": "One APT repository, rendered as a deb822 `.sources` file.",
+			"description": "One deb822 `.sources` file, holding one stanza per source.",
+			"properties": {
+				"name": {
+					"description": "File name stem for the `.sources` file. Letters, digits, `_`, `-` and `.` only (what\napt reads from `sources.list.d`), unique within `repositories`.",
+					"type": "string"
+				},
+				"sources": {
+					"description": "The sources, written as stanzas in this order.",
+					"items": {
+						"$ref": "#/$defs/AptSource"
+					},
+					"type": "array"
+				}
+			},
+			"required": [
+				"name",
+				"sources"
+			],
+			"type": "object"
+		},
+		"AptSource": {
+			"additionalProperties": false,
+			"description": "One deb822 stanza.",
 			"properties": {
 				"architectures": {
 					"description": "deb822 `Architectures`. Omitted from the file when empty, so apt uses its\nconfigured architectures.",
@@ -154,12 +176,8 @@
 						"null"
 					]
 				},
-				"name": {
-					"description": "File name stem for the `.sources` file. Letters, digits, `_`, `-` and `.` only (what\napt reads from `sources.list.d`), unique within `repositories`.",
-					"type": "string"
-				},
 				"signed_by": {
-					"description": "Keyring to write as this repository's `Signed-By`: the name of an entry in\n`keyrings`, or an absolute path to a keyring file in the rootfs (e.g.\n`/usr/share/keyrings/debian-archive-keyring.gpg`). Without it, apt verifies against\nthe keys it already trusts.",
+					"description": "Keyring to write as this stanza's `Signed-By`: the name of an entry in `keyrings`, or\nan absolute path to a keyring file in the rootfs (e.g.\n`/usr/share/keyrings/debian-archive-keyring.gpg`). Without it, apt verifies against\nthe keys it already trusts.",
 					"type": [
 						"string",
 						"null"
@@ -191,7 +209,6 @@
 				}
 			},
 			"required": [
-				"name",
 				"uris",
 				"suites"
 			],
@@ -217,7 +234,7 @@
 			"description": "apt task declaring keyrings, APT repositories and APT preferences for the prepare phase.\n\nAt most one `AptTask` may appear in the prepare phase.",
 			"properties": {
 				"keyrings": {
-					"description": "OpenPGP keyrings to install. Each one is written to `/etc/apt/keyrings/<name>.asc`\n(ASCII-armored) or `<name>.gpg` (binary); `/etc/apt/keyrings` is created if the\nrootfs has none. A repository uses one by naming it in `signed_by`.",
+					"description": "OpenPGP keyrings to install. Each one is written to `/etc/apt/keyrings/<name>.asc`\n(ASCII-armored) or `<name>.gpg` (binary); `/etc/apt/keyrings` is created if the\nrootfs has none. A source uses one by naming it in `signed_by`.",
 					"items": {
 						"$ref": "#/$defs/AptKeyring"
 					},
@@ -264,7 +281,7 @@
 				},
 				"keyrings": {
 					"default": [],
-					"description": "OpenPGP keyrings to write, as `prepare.apt.keyrings` does. A repository here uses one\nby naming it in `signed_by`, or names a keyring file in the rootfs by absolute path.",
+					"description": "OpenPGP keyrings to write, as `prepare.apt.keyrings` does. A source here uses one\nby naming it in `signed_by`, or names a keyring file in the rootfs by absolute path.",
 					"items": {
 						"$ref": "#/$defs/AptKeyring"
 					},

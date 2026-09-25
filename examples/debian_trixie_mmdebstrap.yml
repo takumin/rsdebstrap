@@ -80,23 +80,24 @@ prepare:
   # anything the image should not keep, such as a build mirror. An apt
   # provision task with `update: true` has to refresh the lists before installing from them.
   apt:
-    # Debian's own repositories as deb822 files, signed by the keyring the bootstrap
-    # installed. The security archive lives under a different URI, so it is a separate file.
+    # Debian's own repositories as one deb822 file, signed by the keyring the bootstrap
+    # installed. The security archive lives under a different URI, so it is a stanza of
+    # its own.
     repositories:
     - name: debian
-      uris:
-      - https://deb.debian.org/debian
-      # trixie-backports is marked NotAutomatic, so apt takes a package from it only when
-      # asked (`<package>/trixie-backports`), and then keeps upgrading it from there.
-      suites: [trixie, trixie-updates, trixie-backports]
-      components: [main, contrib, non-free-firmware]
-      signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
-    - name: debian-security
-      uris:
-      - https://security.debian.org/debian-security
-      suites: [trixie-security]
-      components: [main, contrib, non-free-firmware]
-      signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
+      sources:
+      - uris:
+        - https://deb.debian.org/debian
+        # trixie-backports is marked NotAutomatic, so apt takes a package from it only when
+        # asked (`<package>/trixie-backports`), and then keeps upgrading it from there.
+        suites: [trixie, trixie-updates, trixie-backports]
+        components: [main, contrib, non-free-firmware]
+        signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
+      - uris:
+        - https://security.debian.org/debian-security
+        suites: [trixie-security]
+        components: [main, contrib, non-free-firmware]
+        signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
     # Delete the bootstrap's /etc/apt/sources.list, so the `debian` repository above
     # replaces it instead of duplicating it.
     remove_sources_list: true
@@ -108,10 +109,11 @@ prepare:
     #   # sha256: <64 hex digits>  # Pin the downloaded key
     # repositories:
     # - name: docker
-    #   uris: [https://download.docker.com/linux/debian]
-    #   suites: [trixie]
-    #   components: [stable]
-    #   signed_by: docker
+    #   sources:
+    #   - uris: [https://download.docker.com/linux/debian]
+    #     suites: [trixie]
+    #     components: [stable]
+    #     signed_by: docker
     # # apt_preferences(5) pins, one stanza each
     # preferences:
     # - name: docker
@@ -179,9 +181,10 @@ assemble:
     # image at the public mirror after building from another.
     # repositories:
     # - name: debian
-    #   uris: [https://deb.debian.org/debian]
-    #   suites: [trixie, trixie-updates]
-    #   components: [main, contrib]
+    #   sources:
+    #   - uris: [https://deb.debian.org/debian]
+    #     suites: [trixie, trixie-updates]
+    #     components: [main, contrib]
 
   # Resets /etc/machine-id so each machine booted from the image generates its
   # own ID. `empty` suits a read-only root; `uninitialized` instead makes the next

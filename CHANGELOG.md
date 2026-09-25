@@ -99,8 +99,9 @@ and this project adheres to
   path into the bootstrap target is rejected when the profile is validated.
 - `prepare.apt`, with two lists: `keyrings`, OpenPGP keys written to
   `/etc/apt/keyrings` (from a host file, inline, or downloaded over https with an
-  optional `sha256` pin), and `repositories`, deb822 `.sources` files that name
-  a keyring as their `Signed-By` through `signed_by`. `/etc/apt/keyrings` is
+  optional `sha256` pin), and `repositories`, deb822 `.sources` files with one
+  stanza per entry of `sources`, each of which may name a keyring as its
+  `Signed-By` through `signed_by`. `/etc/apt/keyrings` is
   created if the rootfs lacks it, without following symlinks. Entries stay in
   the final rootfs; `assemble.apt` writes over them where the image should
   differ.

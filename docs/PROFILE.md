@@ -43,12 +43,13 @@ prepare:                    # Optional preparation steps (named-field struct)
         sha256: <64 hex digits>  # Optional: pin the key's bytes
     repositories:           # Optional: deb822 repositories
       - name: docker        # -> /etc/apt/sources.list.d/docker.sources
-        types: [deb]        # Optional: deb | deb-src (default [deb])
-        uris: [https://download.docker.com/linux/debian]
-        suites: [trixie]
-        components: [stable]  # Required unless every suite ends in '/'
-        architectures: [amd64]  # Optional
-        signed_by: docker   # Optional: keyrings entry or absolute rootfs path -> Signed-By
+        sources:            # One stanza per source
+          - types: [deb]    # Optional: deb | deb-src (default [deb])
+            uris: [https://download.docker.com/linux/debian]
+            suites: [trixie]
+            components: [stable]  # Required unless every suite ends in '/'
+            architectures: [amd64]  # Optional
+            signed_by: docker  # Optional: keyrings entry or absolute rootfs path -> Signed-By
     preferences:            # Optional: apt_preferences(5) pins
       - name: backports     # -> /etc/apt/preferences.d/backports.pref
         pins:               # One stanza per pin
@@ -91,9 +92,10 @@ assemble:                   # Optional finalization steps (named-field struct)
     keyrings: []            # Optional: as prepare.apt.keyrings
     repositories:           # Optional: as prepare.apt.repositories
       - name: debian        # -> /etc/apt/sources.list.d/debian.sources (replaced)
-        uris: [https://deb.debian.org/debian]
-        suites: [trixie]
-        components: [main]
+        sources:
+          - uris: [https://deb.debian.org/debian]
+            suites: [trixie]
+            components: [main]
     preferences: []         # Optional: as prepare.apt.preferences
   machine_id: uninitialized # Optional: reset /etc/machine-id (uninitialized | empty)
   resolv_conf:              # Permanent /etc/resolv.conf in final rootfs (at most one)
@@ -208,9 +210,9 @@ on the host. Two consequences follow, and both are enforced rather than document
   pipeline applies `mount`, then `apt`, then `resolv_conf`, whatever the key order
 - `keyrings`, `repositories` and `preferences` are separate lists, and at least one of them
   must be non-empty unless `remove_sources_list` is set.
-  A repository uses a keyring by naming it in `signed_by`, which is written as the repository's
-  `Signed-By`, so the keyring is trusted for the repositories that name it only. Several
-  repositories may name one keyring; `signed_by` naming no `keyrings` entry is an error
+  A source uses a keyring by naming it in `signed_by`, which is written as the stanza's
+  `Signed-By`, so the keyring is trusted for the sources that name it only. Several
+  sources may name one keyring; `signed_by` naming no `keyrings` entry is an error
 - `signed_by` may instead be an absolute path to a keyring file in the rootfs, such as
   `/usr/share/keyrings/debian-archive-keyring.gpg`, written as `Signed-By` verbatim. A value
   starting with `/` is a path; anything else is a `keyrings` name (names cannot contain `/`).
@@ -218,8 +220,10 @@ on the host. Two consequences follow, and both are enforced rather than document
   (apt would read those as more than one value). Whether the file exists is not checked: apt
   reports a missing keyring at `apt-get update`, and in `assemble.apt` the file may come from a
   package installed in `provision`
-- Each repository is written to `/etc/apt/sources.list.d/<name>.sources` in deb822 format. It
-  only declares the repository: run `apt-get update` in a `provision` task (an apt task with
+- Each repository is written to `/etc/apt/sources.list.d/<name>.sources` in deb822 format, one
+  stanza per entry of `sources`, in order, separated by blank lines; `sources` must not be
+  empty. Sources that belong together — Debian's archive and its security archive, which lives
+  under another URI — go in one file this way. The file only declares the repository: run `apt-get update` in a `provision` task (an apt task with
   `update: true`, see [apt provision task rules](#apt-provision-task-rules)) before installing
   from it
 - `name` may hold only letters, digits, `_`, `-` and `.` and may not start with `.` — apt
@@ -324,7 +328,7 @@ on the host. Two consequences follow, and both are enforced rather than document
 - `assemble.apt` writes apt's configuration into the final rootfs where it should differ from
   what the build used. `keyrings`, `repositories` and `preferences` take the entries
   `prepare.apt` does, with the same rules and files, and replace a file of the same name —
-  one `prepare.apt` wrote included. A repository's `signed_by` names an entry in
+  one `prepare.apt` wrote included. A source's `signed_by` names an entry in
   `assemble.apt.keyrings` or is an absolute path to a keyring file in the rootfs
 - Building from one mirror and shipping another:
 
@@ -334,16 +338,18 @@ on the host. Two consequences follow, and both are enforced rather than document
       remove_sources_list: true
       repositories:
         - name: debian              # provisioning installs from the build mirror
-          uris: [https://mirror.internal/debian]
-          suites: [trixie]
-          components: [main]
+          sources:
+            - uris: [https://mirror.internal/debian]
+              suites: [trixie]
+              components: [main]
   assemble:
     apt:
       repositories:
         - name: debian              # the image points at the public mirror
-          uris: [https://deb.debian.org/debian]
-          suites: [trixie]
-          components: [main]
+          sources:
+            - uris: [https://deb.debian.org/debian]
+              suites: [trixie]
+              components: [main]
   ```
 
 - `remove_sources_list: true` deletes `/etc/apt/sources.list`, as in `prepare.apt`

@@ -8,7 +8,7 @@
 //! entry types are shared with `assemble.apt`.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -49,7 +49,7 @@ pub(crate) const MAX_KEY_SIZE: u64 = 1 << 20;
 pub struct AptTask {
     /// OpenPGP keyrings to install. Each one is written to `/etc/apt/keyrings/<name>.asc`
     /// (ASCII-armored) or `<name>.gpg` (binary); `/etc/apt/keyrings` is created if the
-    /// rootfs has none. A repository uses one by naming it in `signed_by`.
+    /// rootfs has none. A source uses one by naming it in `signed_by`.
     #[serde(
         default,
         deserialize_with = "crate::de::null_to_default",
@@ -124,7 +124,7 @@ pub struct AptPin {
     pub explanation: Option<String>,
 }
 
-/// One APT repository, rendered as a deb822 `.sources` file.
+/// One deb822 `.sources` file, holding one stanza per source.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AptRepository {
@@ -132,6 +132,14 @@ pub struct AptRepository {
     /// apt reads from `sources.list.d`), unique within `repositories`.
     #[serde(deserialize_with = "crate::de::string")]
     pub name: String,
+    /// The sources, written as stanzas in this order.
+    pub sources: Vec<AptSource>,
+}
+
+/// One deb822 stanza.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AptSource {
     /// deb822 `Types` (default: `[deb]`).
     #[serde(default = "default_types")]
     pub types: Vec<AptSourceType>,
@@ -161,8 +169,8 @@ pub struct AptRepository {
     )]
     #[schemars(with = "Option<Vec<String>>")]
     pub architectures: Vec<String>,
-    /// Keyring to write as this repository's `Signed-By`: the name of an entry in
-    /// `keyrings`, or an absolute path to a keyring file in the rootfs (e.g.
+    /// Keyring to write as this stanza's `Signed-By`: the name of an entry in `keyrings`, or
+    /// an absolute path to a keyring file in the rootfs (e.g.
     /// `/usr/share/keyrings/debian-archive-keyring.gpg`). Without it, apt verifies against
     /// the keys it already trusts.
     #[serde(
@@ -223,7 +231,7 @@ pub struct AptKeyring {
 #[serde(deny_unknown_fields)]
 #[schemars(extend("oneOf" = key_source_one_of()))]
 struct RawAptKeyring {
-    /// File name stem for the keyring, and what a repository's `signed_by` names. Letters,
+    /// File name stem for the keyring, and what a source's `signed_by` names. Letters,
     /// digits, `_`, `-` and `.` only, unique within `keyrings`.
     #[serde(deserialize_with = "crate::de::string")]
     name: String,
@@ -439,19 +447,11 @@ pub(crate) fn validate_entries(
 
     let mut names = HashSet::new();
     for repo in repositories {
-        repo.validate()?;
+        repo.validate(&keyrings)?;
         if !names.insert(repo.name.as_str()) {
             return Err(RsdebstrapError::Validation(format!(
                 "apt repository name '{}' is used more than once",
                 repo.name
-            )));
-        }
-        if let Some(SignedBy::Keyring(name)) = repo.signed_by()?
-            && !keyrings.contains(name)
-        {
-            return Err(RsdebstrapError::Validation(format!(
-                "apt repository '{}': signed_by '{}' names no entry in keyrings",
-                repo.name, name
             )));
         }
     }
@@ -486,7 +486,7 @@ pub(crate) fn entry_names(
     )
 }
 
-/// What a repository's `signed_by` refers to.
+/// What a source's `signed_by` refers to.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SignedBy<'a> {
     /// An entry in `keyrings`, by name.
@@ -496,6 +496,73 @@ pub(crate) enum SignedBy<'a> {
 }
 
 impl AptRepository {
+    /// Where this repository's `.sources` file is written.
+    pub(crate) fn sources_path(&self) -> RelPath {
+        RelPath::parse(&format!("{}/{}.sources", SOURCES_DIR, self.name))
+            .expect("a validated repository name forms a single path component")
+    }
+
+    /// Renders the deb822 `.sources` file, one stanza per source, separated by blank lines.
+    /// `keyrings` maps a `keyrings` entry's name to where it was written.
+    pub(crate) fn render_sources(
+        &self,
+        keyrings: &HashMap<&str, RelPath>,
+    ) -> Result<String, RsdebstrapError> {
+        let mut stanzas = Vec::with_capacity(self.sources.len());
+        for (i, source) in self.sources.iter().enumerate() {
+            let signed_by = match source.signed_by().map_err(|e| self.in_source(i, e))? {
+                Some(SignedBy::Keyring(name)) => Some(
+                    keyrings
+                        .get(name)
+                        .cloned()
+                        .ok_or_else(|| self.in_source(i, no_such_keyring(name)))?,
+                ),
+                Some(SignedBy::Path(path)) => Some(path),
+                None => None,
+            };
+            stanzas.push(source.render(signed_by.as_ref()));
+        }
+        Ok(stanzas.join("\n"))
+    }
+
+    /// Validates the name and every source, and that a `signed_by` naming a keyring names
+    /// one in `keyrings`.
+    fn validate(&self, keyrings: &HashSet<&str>) -> Result<(), RsdebstrapError> {
+        validate_name("repository", &self.name)?;
+        if self.sources.is_empty() {
+            return Err(RsdebstrapError::Validation(format!(
+                "apt repository '{}': sources must not be empty",
+                self.name
+            )));
+        }
+        for (i, source) in self.sources.iter().enumerate() {
+            source.validate().map_err(|e| self.in_source(i, e))?;
+            if let Some(SignedBy::Keyring(name)) =
+                source.signed_by().map_err(|e| self.in_source(i, e))?
+                && !keyrings.contains(name)
+            {
+                return Err(self.in_source(i, no_such_keyring(name)));
+            }
+        }
+        Ok(())
+    }
+
+    fn in_source(&self, index: usize, e: RsdebstrapError) -> RsdebstrapError {
+        match e {
+            RsdebstrapError::Validation(msg) => RsdebstrapError::Validation(format!(
+                "apt repository '{}': sources[{}]: {}",
+                self.name, index, msg
+            )),
+            e => e,
+        }
+    }
+}
+
+fn no_such_keyring(name: &str) -> RsdebstrapError {
+    RsdebstrapError::Validation(format!("signed_by '{}' names no entry in keyrings", name))
+}
+
+impl AptSource {
     /// Reads `signed_by`: an absolute path is a file in the rootfs, anything else names an
     /// entry in `keyrings`. A keyring name cannot contain `/`, so the two never overlap.
     pub(crate) fn signed_by(&self) -> Result<Option<SignedBy<'_>>, RsdebstrapError> {
@@ -505,12 +572,6 @@ impl AptRepository {
         if !value.starts_with('/') {
             return Ok(Some(SignedBy::Keyring(value)));
         }
-        let invalid = |msg: String| {
-            RsdebstrapError::Validation(format!(
-                "apt repository '{}': signed_by {}",
-                self.name, msg
-            ))
-        };
         // `Signed-By` also takes fingerprints, several values separated by commas or
         // whitespace, and an inline key continued on the next line: a path holding any of
         // those would be read back as something else.
@@ -518,32 +579,29 @@ impl AptRepository {
             .chars()
             .any(|c| c == ',' || c.is_whitespace() || c.is_control())
         {
-            return Err(invalid(format!(
-                "{:?} contains a comma, whitespace or a control character",
+            return Err(RsdebstrapError::Validation(format!(
+                "signed_by {:?} contains a comma, whitespace or a control character",
                 value
             )));
         }
         RelPath::parse(value)
             .map(|path| Some(SignedBy::Path(path)))
             .map_err(|e| match e {
-                RsdebstrapError::Validation(msg) => invalid(msg),
+                RsdebstrapError::Validation(msg) => {
+                    RsdebstrapError::Validation(format!("signed_by {}", msg))
+                }
                 e => e,
             })
     }
 
-    /// Where this repository's `.sources` file is written.
-    pub(crate) fn sources_path(&self) -> RelPath {
-        RelPath::parse(&format!("{}/{}.sources", SOURCES_DIR, self.name))
-            .expect("a validated repository name forms a single path component")
-    }
-
-    /// Renders the deb822 `.sources` file, naming `signed_by` as its keyring if given.
-    pub(crate) fn render_sources(&self, signed_by: Option<&RelPath>) -> String {
-        let mut lines = vec!["# Generated by rsdebstrap".to_string()];
+    /// Renders the stanza, naming `signed_by` as its keyring if given.
+    fn render(&self, signed_by: Option<&RelPath>) -> String {
         let types: Vec<&str> = self.types.iter().map(|t| t.as_str()).collect();
-        lines.push(format!("Types: {}", types.join(" ")));
-        lines.push(format!("URIs: {}", self.uris.join(" ")));
-        lines.push(format!("Suites: {}", self.suites.join(" ")));
+        let mut lines = vec![
+            format!("Types: {}", types.join(" ")),
+            format!("URIs: {}", self.uris.join(" ")),
+            format!("Suites: {}", self.suites.join(" ")),
+        ];
         if !self.components.is_empty() {
             lines.push(format!("Components: {}", self.components.join(" ")));
         }
@@ -557,11 +615,7 @@ impl AptRepository {
     }
 
     fn validate(&self) -> Result<(), RsdebstrapError> {
-        validate_name("repository", &self.name)?;
-        let invalid = |msg: String| {
-            Err(RsdebstrapError::Validation(format!("apt repository '{}': {}", self.name, msg)))
-        };
-
+        let invalid = |msg: String| Err(RsdebstrapError::Validation(msg));
         if self.types.is_empty() {
             return invalid("types must not be empty".to_string());
         }
@@ -636,7 +690,7 @@ impl AptPreference {
                 lines.join("\n") + "\n"
             })
             .collect();
-        format!("# Generated by rsdebstrap\n{}", stanzas.join("\n"))
+        stanzas.join("\n")
     }
 
     fn validate(&self) -> Result<(), RsdebstrapError> {
@@ -808,15 +862,21 @@ mod tests {
     const ARMORED: &str =
         "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQINBF\n-----END PGP PUBLIC KEY BLOCK-----\n";
 
-    fn repo(name: &str) -> AptRepository {
-        AptRepository {
-            name: name.to_string(),
+    fn source() -> AptSource {
+        AptSource {
             types: default_types(),
             uris: vec!["https://example.com/debian".to_string()],
             suites: vec!["trixie".to_string()],
             components: vec!["main".to_string()],
             architectures: vec![],
             signed_by: None,
+        }
+    }
+
+    fn repo(name: &str) -> AptRepository {
+        AptRepository {
+            name: name.to_string(),
+            sources: vec![source()],
         }
     }
 
@@ -881,12 +941,13 @@ keyrings:
     sha256: 1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
 repositories:
   - name: docker
-    types: [deb, deb-src]
-    uris: [https://download.docker.com/linux/debian]
-    suites: [trixie]
-    components: [stable]
-    architectures: [amd64]
-    signed_by: docker
+    sources:
+      - types: [deb, deb-src]
+        uris: [https://download.docker.com/linux/debian]
+        suites: [trixie]
+        components: [stable]
+        architectures: [amd64]
+        signed_by: docker
 remove_sources_list: true
 "#;
         // editorconfig-checker-enable
@@ -894,36 +955,46 @@ remove_sources_list: true
         let keyring = &task.keyrings[0];
         assert!(matches!(&keyring.source, AptKeySource::Url(u) if u.ends_with("/gpg")));
         assert!(keyring.sha256.is_some());
-        let repo = &task.repositories[0];
-        assert_eq!(repo.types, vec![AptSourceType::Deb, AptSourceType::DebSrc]);
-        assert_eq!(repo.signed_by.as_deref(), Some("docker"));
+        let source = &task.repositories[0].sources[0];
+        assert_eq!(source.types, vec![AptSourceType::Deb, AptSourceType::DebSrc]);
+        assert_eq!(source.signed_by.as_deref(), Some("docker"));
         assert!(task.remove_sources_list);
     }
 
     #[test]
     fn deserialize_defaults() {
-        let yaml = "repositories:\n  - name: x\n    uris: [https://e.com]\n    suites: [s]\n    \
-            components: [main]\n";
+        let yaml = "repositories:\n  - name: x\n    sources:\n      \
+            - uris: [https://e.com]\n        suites: [s]\n        components: [main]\n";
         let task: AptTask = yaml_serde::from_str(yaml).unwrap();
         assert!(task.keyrings.is_empty());
-        let repo = &task.repositories[0];
-        assert_eq!(repo.types, vec![AptSourceType::Deb]);
-        assert!(repo.signed_by.is_none());
+        let source = &task.repositories[0].sources[0];
+        assert_eq!(source.types, vec![AptSourceType::Deb]);
+        assert!(source.signed_by.is_none());
         assert!(!task.remove_sources_list);
     }
 
     #[test]
     fn deserialize_rejects_missing_uris() {
-        let yaml = "repositories:\n  - name: x\n    suites: [s]\n";
+        let yaml = "repositories:\n  - name: x\n    sources:\n      - suites: [s]\n";
         assert!(yaml_serde::from_str::<AptTask>(yaml).is_err());
     }
 
     #[test]
     fn deserialize_rejects_keep() {
-        let yaml = "repositories:\n  - name: x\n    uris: [https://e.com]\n    suites: [s]\n    \
-            components: [main]\n    keep: true\n";
+        let yaml = "repositories:\n  - name: x\n    sources:\n      \
+            - uris: [https://e.com]\n        suites: [s]\n        components: [main]\n        \
+            keep: true\n";
         let err = yaml_serde::from_str::<AptTask>(yaml).unwrap_err();
         assert!(err.to_string().contains("keep"), "{}", err);
+    }
+
+    // The shape before `sources`, with the stanza's fields on the repository itself.
+    #[test]
+    fn deserialize_rejects_stanza_fields_on_the_repository() {
+        let yaml = "repositories:\n  - name: x\n    uris: [https://e.com]\n    suites: [s]\n    \
+            components: [main]\n";
+        let err = yaml_serde::from_str::<AptTask>(yaml).unwrap_err();
+        assert!(err.to_string().contains("uris"), "{}", err);
     }
 
     #[test]
@@ -942,8 +1013,8 @@ remove_sources_list: true
 
     #[test]
     fn deserialize_rejects_unknown_type() {
-        let yaml = "repositories:\n  - name: x\n    types: [rpm]\n    uris: [https://e.com]\n    \
-            suites: [s]\n";
+        let yaml = "repositories:\n  - name: x\n    sources:\n      - types: [rpm]\n        \
+            uris: [https://e.com]\n        suites: [s]\n";
         assert!(yaml_serde::from_str::<AptTask>(yaml).is_err());
     }
 
@@ -958,14 +1029,16 @@ remove_sources_list: true
     #[test]
     fn render_sources_full() {
         let mut r = repo("docker");
-        r.types = vec![AptSourceType::Deb, AptSourceType::DebSrc];
-        r.uris.push("https://mirror.example.com/debian".to_string());
-        r.architectures = vec!["amd64".to_string(), "arm64".to_string()];
+        r.sources[0].types = vec![AptSourceType::Deb, AptSourceType::DebSrc];
+        r.sources[0]
+            .uris
+            .push("https://mirror.example.com/debian".to_string());
+        r.sources[0].architectures = vec!["amd64".to_string(), "arm64".to_string()];
+        r.sources[0].signed_by = Some("docker".to_string());
         let key = inline("docker").path(KeyFormat::Armored);
         assert_eq!(
-            r.render_sources(Some(&key)),
-            "# Generated by rsdebstrap\n\
-            Types: deb deb-src\n\
+            r.render_sources(&HashMap::from([("docker", key)])).unwrap(),
+            "Types: deb deb-src\n\
             URIs: https://example.com/debian https://mirror.example.com/debian\n\
             Suites: trixie\n\
             Components: main\n\
@@ -977,12 +1050,35 @@ remove_sources_list: true
     #[test]
     fn render_sources_omits_absent_optional_fields() {
         let mut r = repo("flat");
-        r.suites = vec!["./".to_string()];
-        r.components = vec![];
-        let rendered = r.render_sources(None);
+        r.sources[0].suites = vec!["./".to_string()];
+        r.sources[0].components = vec![];
+        let rendered = r.render_sources(&HashMap::new()).unwrap();
         assert!(!rendered.contains("Components"));
         assert!(!rendered.contains("Architectures"));
         assert!(!rendered.contains("Signed-By"));
+    }
+
+    #[test]
+    fn render_sources_writes_one_stanza_per_source() {
+        let mut r = repo("debian");
+        r.sources[0].signed_by = Some("/usr/share/keyrings/debian-archive-keyring.gpg".to_string());
+        let mut security = source();
+        security.uris = vec!["https://security.debian.org/debian-security".to_string()];
+        security.suites = vec!["trixie-security".to_string()];
+        r.sources.push(security);
+        assert_eq!(
+            r.render_sources(&HashMap::new()).unwrap(),
+            "Types: deb\n\
+            URIs: https://example.com/debian\n\
+            Suites: trixie\n\
+            Components: main\n\
+            Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\
+            \n\
+            Types: deb\n\
+            URIs: https://security.debian.org/debian-security\n\
+            Suites: trixie-security\n\
+            Components: main\n"
+        );
     }
 
     #[test]
@@ -1021,13 +1117,35 @@ remove_sources_list: true
     #[test]
     fn validate_accepts_a_repository_signed_by_a_keyring_of_the_same_name() {
         let mut r = repo("docker");
-        r.signed_by = Some("docker".to_string());
+        r.sources[0].signed_by = Some("docker".to_string());
         assert!(task(vec![inline("docker")], vec![r]).validate().is_ok());
     }
 
     #[test]
     fn validate_accepts_keyrings_alone() {
         assert!(task(vec![inline("k")], vec![]).validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_repository_without_sources() {
+        let mut r = repo("x");
+        r.sources.clear();
+        let msg = validation_message(task(vec![], vec![r]).validate());
+        assert!(msg.contains("apt repository 'x': sources must not be empty"), "{}", msg);
+    }
+
+    #[test]
+    fn validate_names_the_source_at_fault() {
+        let mut r = repo("x");
+        let mut second = source();
+        second.signed_by = Some("missing".to_string());
+        r.sources.push(second);
+        let msg = validation_message(task(vec![], vec![r]).validate());
+        assert!(
+            msg.contains("apt repository 'x': sources[1]: signed_by 'missing' names no entry"),
+            "{}",
+            msg
+        );
     }
 
     #[test]
@@ -1057,7 +1175,7 @@ remove_sources_list: true
     #[test]
     fn validate_rejects_signed_by_naming_no_keyring() {
         let mut r = repo("x");
-        r.signed_by = Some("missing".to_string());
+        r.sources[0].signed_by = Some("missing".to_string());
         let msg = validation_message(task(vec![inline("other")], vec![r]).validate());
         assert!(msg.contains("names no entry in keyrings"), "{}", msg);
     }
@@ -1065,23 +1183,24 @@ remove_sources_list: true
     #[test]
     fn signed_by_distinguishes_a_rootfs_path_from_a_keyring_name() {
         let mut r = repo("x");
-        r.signed_by = Some("docker".to_string());
-        assert_eq!(r.signed_by().unwrap(), Some(SignedBy::Keyring("docker")));
-        r.signed_by = Some("/usr/share/keyrings//debian-archive-keyring.gpg".to_string());
+        r.sources[0].signed_by = Some("docker".to_string());
+        assert_eq!(r.sources[0].signed_by().unwrap(), Some(SignedBy::Keyring("docker")));
+        r.sources[0].signed_by =
+            Some("/usr/share/keyrings//debian-archive-keyring.gpg".to_string());
         assert_eq!(
-            r.signed_by().unwrap(),
+            r.sources[0].signed_by().unwrap(),
             Some(SignedBy::Path(
                 RelPath::parse("/usr/share/keyrings/debian-archive-keyring.gpg").unwrap()
             ))
         );
-        r.signed_by = None;
-        assert_eq!(r.signed_by().unwrap(), None);
+        r.sources[0].signed_by = None;
+        assert_eq!(r.sources[0].signed_by().unwrap(), None);
     }
 
     #[test]
     fn validate_accepts_signed_by_a_rootfs_path_without_keyrings() {
         let mut r = repo("x");
-        r.signed_by = Some("/usr/share/keyrings/debian-archive-keyring.gpg".to_string());
+        r.sources[0].signed_by = Some("/usr/share/keyrings/debian-archive-keyring.gpg".to_string());
         assert!(task(vec![], vec![r]).validate().is_ok());
     }
 
@@ -1089,7 +1208,7 @@ remove_sources_list: true
     fn validate_rejects_a_signed_by_path_apt_would_read_as_something_else() {
         for path in ["/a b.gpg", "/a.gpg,/b.gpg", "/a.gpg\n", "/a\t.gpg"] {
             let mut r = repo("x");
-            r.signed_by = Some(path.to_string());
+            r.sources[0].signed_by = Some(path.to_string());
             let msg = validation_message(task(vec![], vec![r]).validate());
             assert!(
                 msg.contains("comma, whitespace or a control character"),
@@ -1104,10 +1223,10 @@ remove_sources_list: true
     fn validate_rejects_a_signed_by_path_that_is_not_a_file_in_the_rootfs() {
         for path in ["/", "/usr/../etc/k.gpg", "/./k.gpg"] {
             let mut r = repo("x");
-            r.signed_by = Some(path.to_string());
+            r.sources[0].signed_by = Some(path.to_string());
             let msg = validation_message(task(vec![], vec![r]).validate());
             assert!(
-                msg.contains("apt repository 'x': signed_by rootfs path"),
+                msg.contains("apt repository 'x': sources[0]: signed_by rootfs path"),
                 "{:?}: {}",
                 path,
                 msg
@@ -1131,7 +1250,7 @@ remove_sources_list: true
     #[test]
     fn validate_rejects_whitespace_inside_a_value() {
         let mut r = repo("x");
-        r.suites = vec!["trixie main".to_string()];
+        r.sources[0].suites = vec!["trixie main".to_string()];
         let msg = validation_message(task(vec![], vec![r]).validate());
         assert!(msg.contains("whitespace"), "{}", msg);
     }
@@ -1139,14 +1258,14 @@ remove_sources_list: true
     #[test]
     fn validate_rejects_a_newline_that_would_inject_a_field() {
         let mut r = repo("x");
-        r.components = vec!["main\nTrusted: yes".to_string()];
+        r.sources[0].components = vec!["main\nTrusted: yes".to_string()];
         assert!(task(vec![], vec![r]).validate().is_err());
     }
 
     #[test]
     fn validate_rejects_an_invalid_uri() {
         let mut r = repo("x");
-        r.uris = vec!["example.com/debian".to_string()];
+        r.sources[0].uris = vec!["example.com/debian".to_string()];
         let msg = validation_message(task(vec![], vec![r]).validate());
         assert!(msg.contains("not a valid URI"), "{}", msg);
     }
@@ -1154,7 +1273,7 @@ remove_sources_list: true
     #[test]
     fn validate_requires_components_for_a_distribution_suite() {
         let mut r = repo("x");
-        r.components = vec![];
+        r.sources[0].components = vec![];
         let msg = validation_message(task(vec![], vec![r]).validate());
         assert!(msg.contains("components must not be empty"), "{}", msg);
     }
@@ -1162,7 +1281,7 @@ remove_sources_list: true
     #[test]
     fn validate_rejects_components_on_an_exact_path_suite() {
         let mut r = repo("x");
-        r.suites = vec!["./".to_string()];
+        r.sources[0].suites = vec!["./".to_string()];
         let msg = validation_message(task(vec![], vec![r]).validate());
         assert!(msg.contains("takes no components"), "{}", msg);
     }
@@ -1170,8 +1289,8 @@ remove_sources_list: true
     #[test]
     fn validate_rejects_mixed_exact_and_distribution_suites() {
         let mut r = repo("x");
-        r.suites = vec!["./".to_string(), "trixie".to_string()];
-        r.components = vec![];
+        r.sources[0].suites = vec!["./".to_string(), "trixie".to_string()];
+        r.sources[0].components = vec![];
         let msg = validation_message(task(vec![], vec![r]).validate());
         assert!(msg.contains("all exact paths"), "{}", msg);
     }
@@ -1278,8 +1397,7 @@ preferences:
         let p = preference("mixed", vec![pin("release n=trixie-backports", 500), second]);
         assert_eq!(
             p.render(),
-            "# Generated by rsdebstrap\n\
-            Package: *\n\
+            "Package: *\n\
             Pin: release n=trixie-backports\n\
             Pin-Priority: 500\n\
             \n\

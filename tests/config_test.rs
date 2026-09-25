@@ -406,10 +406,11 @@ prepare:
         path: keys/docker.asc
     repositories:
       - name: docker
-        uris: [https://download.docker.com/linux/debian]
-        suites: [trixie]
-        components: [stable]
-        signed_by: docker
+        sources:
+          - uris: [https://download.docker.com/linux/debian]
+            suites: [trixie]
+            components: [stable]
+            signed_by: docker
 "#
         ),
     )?;
