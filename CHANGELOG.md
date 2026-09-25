@@ -137,6 +137,12 @@ and this project adheres to
   The backup was previously probed with a call that follows symlinks, so a
   dangling backup was read as absent, the restore was skipped, and the original
   was lost.
+- `prepare.apt.keyrings[].path` rejects non-string YAML scalars, as the schema
+  and the other string fields already did. `path: 42` was previously read as the
+  key file `42` next to the profile.
+- A `resolv_conf` search domain containing a tab is rejected like one containing
+  a space. resolv.conf splits the `search` line on both, so the tab turned one
+  declared domain into two.
 
 ### Removed
 
