@@ -88,7 +88,16 @@ pub(crate) fn opt_string<'de, D: Deserializer<'de>>(
     Option::<StrictString>::deserialize(deserializer).map(|opt| opt.map(|s| s.0))
 }
 
-/// A `Utf8PathBuf` that deserializes strictly (used for map values).
+/// Deserializes an `Option<Utf8PathBuf>` field, rejecting non-string scalars.
+///
+/// `null` (and an empty value) still deserializes to `None`, like [`opt_string`].
+pub(crate) fn opt_path<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Utf8PathBuf>, D::Error> {
+    Option::<StrictPath>::deserialize(deserializer).map(|opt| opt.map(|p| p.0))
+}
+
+/// A `Utf8PathBuf` that deserializes strictly (used for map values and [`opt_path`]).
 struct StrictPath(Utf8PathBuf);
 
 impl<'de> Deserialize<'de> for StrictPath {

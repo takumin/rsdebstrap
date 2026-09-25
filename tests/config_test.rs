@@ -2257,6 +2257,20 @@ fn test_assemble_link_rejects_non_string_scalars() {
     assert!(deserializes(&link_ok), "genuine strings must stay accepted");
 }
 
+#[test]
+fn test_apt_keyring_path_rejects_non_string_scalars() {
+    // `prepare` is not inside an internally tagged enum, so a plain `Option<Utf8PathBuf>`
+    // here would take the raw scalar text: `path: 42` became the key file `<profiledir>/42`.
+    let base =
+        concat!("dir: /out\n", "bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}\n",);
+    for bad in ["42", "true"] {
+        let yaml = format!("{base}prepare: {{apt: {{keyrings: [{{name: k, path: {bad}}}]}}}}\n");
+        assert!(!deserializes(&yaml), "expected rejection of path: {bad}");
+    }
+    let quoted = format!("{base}prepare: {{apt: {{keyrings: [{{name: k, path: \"42\"}}]}}}}\n");
+    assert!(deserializes(&quoted), "genuine strings must stay accepted");
+}
+
 // =========================================================================
 // YAML leniency: explicit null == empty value == omitted for defaulted
 // section/list/map fields

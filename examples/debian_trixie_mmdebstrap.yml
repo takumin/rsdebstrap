@@ -5,7 +5,7 @@
 #   - defaults: isolation (chroot), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
 #   - pipeline: prepare (mount, apt, resolv_conf), provision (apt + shell + mitamae),
-#     assemble (resolv_conf, output)
+#     assemble (apt_clean, machine_id, resolv_conf, output)
 
 dir: /tmp/debian-trixie-server-amd64
 
@@ -16,8 +16,10 @@ defaults:
   isolation:
     type: chroot
 
-  # Privilege escalation for commands that require root access
-  # Required when mounts are configured. Supported methods: sudo, doas
+  # Privilege escalation for commands that require root access, and for the helper
+  # that modifies the rootfs. Required here because the bootstrap below runs privileged
+  # (so the rootfs is root-owned) and because mounts are configured; it also escalates
+  # mksquashfs for assemble.output.rootfs. Supported methods: sudo, doas
   privilege:
     method: sudo
 
@@ -59,9 +61,9 @@ bootstrap:
   - initramfs-tools
   privilege: true # Use defaults.privilege method
 
-# Prepare phase: filesystem mounts and resolv.conf for the rootfs.
+# Prepare phase: filesystem mounts, extra APT sources and resolv.conf for the rootfs.
 # Named-field form: each role is a single optional key (not a list).
-# The pipeline always runs mount before resolv_conf, regardless of key order.
+# The pipeline always runs mount, then apt, then resolv_conf, regardless of key order.
 prepare:
   mount:
     # Predefined mount set: proc, sysfs, devtmpfs, devpts, tmpfs(/tmp), tmpfs(/run)
@@ -112,7 +114,7 @@ prepare:
 
 provision:
 # apt-get update, then apt-get install --no-install-recommends. `update` defaults
-# to false; the first apt task needs it, since the bootstrap leaves no package lists.
+# to false; the first apt task needs it, since mmdebstrap removes the package lists.
 - type: apt
   update: true
   install: [vim, htop]

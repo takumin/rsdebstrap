@@ -223,7 +223,11 @@ struct RawAptKeyring {
     name: String,
     /// Path to a key file on the host (ASCII-armored or binary). Relative paths are
     /// resolved against the profile's directory.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::de::opt_path",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "Option<crate::schema::Utf8PathSchema>")]
     path: Option<Utf8PathBuf>,
     /// The key inline, ASCII-armored (`-----BEGIN PGP PUBLIC KEY BLOCK-----`).
