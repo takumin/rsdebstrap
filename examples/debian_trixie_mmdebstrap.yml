@@ -79,29 +79,47 @@ prepare:
   # (/etc/apt/preferences.d). They stay in the final rootfs; assemble.apt below writes over
   # anything the image should not keep, such as a build mirror. An apt
   # provision task with `update: true` has to refresh the lists before installing from them.
-  # apt:
-  #   keyrings:
-  #   - name: docker
-  #     # Or `path: ./keys/docker.asc`, or inline `content: |`
-  #     url: https://download.docker.com/linux/debian/gpg
-  #     # sha256: <64 hex digits>  # Pin the downloaded key
-  #   repositories:
-  #   - name: docker
-  #     uris: [https://download.docker.com/linux/debian]
-  #     suites: [trixie]
-  #     components: [stable]
-  #     signed_by: docker
-  #   # apt_preferences(5) pins, one stanza each
-  #   preferences:
-  #   - name: docker
-  #     pins:
-  #     - packages: [containerd.io]
-  #       pin: origin download.docker.com
-  #       priority: 1001
-  #       explanation: prefer Docker's build over Debian's
-  #   # Delete the bootstrap's /etc/apt/sources.list, so a `debian` repository declared
-  #   # above (e.g. a build mirror) replaces it instead of duplicating it.
-  #   remove_sources_list: true
+  apt:
+    # Debian's own repositories as deb822 files, signed by the keyring the bootstrap
+    # installed. The security archive lives under a different URI, so it is a separate file.
+    repositories:
+    - name: debian
+      uris:
+      - https://deb.debian.org/debian
+      # trixie-backports is marked NotAutomatic, so apt takes a package from it only when
+      # asked (`<package>/trixie-backports`), and then keeps upgrading it from there.
+      suites: [trixie, trixie-updates, trixie-backports]
+      components: [main, contrib, non-free-firmware]
+      signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
+    - name: debian-security
+      uris:
+      - https://security.debian.org/debian-security
+      suites: [trixie-security]
+      components: [main, contrib, non-free-firmware]
+      signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
+    # Delete the bootstrap's /etc/apt/sources.list, so the `debian` repository above
+    # replaces it instead of duplicating it.
+    remove_sources_list: true
+    # A third-party repository takes its keyring from `keyrings` and may be pinned:
+    # keyrings:
+    # - name: docker
+    #   # Or `path: ./keys/docker.asc`, or inline `content: |`
+    #   url: https://download.docker.com/linux/debian/gpg
+    #   # sha256: <64 hex digits>  # Pin the downloaded key
+    # repositories:
+    # - name: docker
+    #   uris: [https://download.docker.com/linux/debian]
+    #   suites: [trixie]
+    #   components: [stable]
+    #   signed_by: docker
+    # # apt_preferences(5) pins, one stanza each
+    # preferences:
+    # - name: docker
+    #   pins:
+    #   - packages: [containerd.io]
+    #     pin: origin download.docker.com
+    #     priority: 1001
+    #     explanation: prefer Docker's build over Debian's
 
   # Copy host's /etc/resolv.conf into the chroot for DNS resolution.
   # Needed because the 'recommends' preset mounts tmpfs on /run,
@@ -166,9 +184,9 @@ assemble:
     #   components: [main, contrib]
 
   # Resets /etc/machine-id so each machine booted from the image generates its
-  # own ID. `uninitialized` makes the next boot a first boot; `empty` suits a
-  # read-only root.
-  machine_id: uninitialized
+  # own ID. `empty` suits a read-only root; `uninitialized` instead makes the next
+  # boot a first boot.
+  machine_id: empty
 
   # Gives the final rootfs a permanent /etc/resolv.conf, replacing the temporary
   # one from the prepare phase. Recent Debian/Ubuntu default to the
