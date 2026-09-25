@@ -101,7 +101,7 @@ the one resolution produces.
 
 Each phase is flattened to a slice of trait objects before running: `PrepareConfig::items()` and
 `AssembleConfig::items()` emit their present `Option` fields in a **fixed execution order**
-(`mount → apt → resolv_conf`; `apt_clean → machine_id → resolv_conf`), and provision maps its `Vec` to trait objects. `run_phase_items` and
+(`mount → apt → resolv_conf`; `apt → machine_id → resolv_conf`), and provision maps its `Vec` to trait objects. `run_phase_items` and
 `validate_phase_items` are generic over `T: PhaseItem + ?Sized`, so the shared logging and
 error-context wrapping are written once; only the per-item action differs.
 
@@ -115,18 +115,23 @@ Key invariants:
 - - **Prepare tasks are declarative.** `MountTask`, (prepare) `AptTask` and (prepare)
   `ResolvConfTask` implement `PhaseItem` and nothing more — there is no `execute` to call at
   all, rather than one that runs and does nothing. Their real effect comes from the RAII
-  managers below, set up in `run_pipeline_phase()`. All three brackets close before assemble:
-  the temporary resolv.conf is torn down (the original restored) so an assemble `resolv_conf`
-  task's permanent file/symlink survives, the apt keyrings, sources and preferences not marked
-  `keep` are removed, and the mounts are released so assemble sees the rootfs the way the image
-  will — without `/proc`, `/sys` and `/dev` bound over it. Assemble writes the rootfs's *final*
-  state, so anything still bound over it is not part of that state.
+  managers below and from `apt_sources::configure`, set up in `run_pipeline_phase()`. The two
+  brackets close before assemble: the temporary resolv.conf is torn down (the original
+  restored) so an assemble `resolv_conf` task's permanent file/symlink survives, and the mounts
+  are released so assemble sees the rootfs the way the image will — without `/proc`, `/sys` and
+  `/dev` bound over it. Assemble writes the rootfs's *final* state, so anything still bound over
+  it is not part of that state. `prepare.apt` is not a bracket: what it writes stays, and
+  `assemble.apt` writes over it where the image should differ. A temporary variant was tried
+  and dropped — the only build-only entries in practice are mirrors, which `assemble.apt`
+  replaces by name, and the guard it needed (restore, `Drop` retry, a fourth token) cost more
+  than duplicating the entries the image keeps.
 
   That ordering is carried by token types rather than by comment and convention, and the
   chain starts before provisioning rather than after it. `RootfsMounts::mount` yields a
-  `Mounted`; `RootfsAptSources::setup` consumes one and yields an `AptConfigured`;
+  `Mounted`; `apt_sources::configure` consumes one and yields an `AptConfigured`;
   `RootfsResolvConf::setup` consumes that and yields a `Prepared`;
-  `Pipeline::run_prepare_and_provision` requires that. All three borrow the guard they came from,
+  `Pipeline::run_prepare_and_provision` requires that. All three borrow the mount guard (and
+  `Prepared` the resolv.conf guard too),
   the way `ValidatedProfile` borrows its profile: `Drop` releases the mounts whatever the
   caller does, so a token that only *stood for* them could outlive them and still be
   presented. Borrowing means no guard can be touched or dropped while the evidence is
@@ -146,13 +151,12 @@ Key invariants:
 
   From there: `Pipeline::run_prepare_and_provision` yields a `Provisioned`;
   `RootfsResolvConf::restore` consumes one and yields a `Restored`;
-  `RootfsAptSources::restore` consumes that and yields an `AptRestored`;
   `RootfsMounts::unmount_before_assembly` consumes that
   and yields an `Unmounted`; `Pipeline::run_assemble` requires an `Unmounted`. Assembling
   before any teardown is therefore a compile error, not a review finding.
 
-  Those four carry no borrow, and cannot. A borrow taken at `mount` and threaded through
-  `Provisioned`, `Restored` and `AptRestored` would still be alive at `unmount_before_assembly`,
+  Those three carry no borrow, and cannot. A borrow taken at `mount` and threaded through
+  `Provisioned` and `Restored` would still be alive at `unmount_before_assembly`,
   which takes `&mut self` — evidence that borrows a guard can never be handed back to it,
   whether the borrow is shared or exclusive. But the mounts do have to stay up across the
   restore: a `prepare.mount` over `/etc` means setup replaced the entry on the mounted
@@ -209,7 +213,7 @@ Key invariants:
   the invoking user, at `0600`, even when `mksquashfs` runs under `sudo`.
 
 `prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, apt, resolv_conf }`,
-`AssembleConfig { apt_clean, machine_id, resolv_conf, output }`,
+`AssembleConfig { apt, machine_id, resolv_conf, output }`,
 `OutputConfig { kernel, initramfs, rootfs }`), not lists. This makes the singleton invariants
 structural: "at most one mount" / "at most one resolv_conf" hold because each is an `Option` (a
 duplicate YAML key is a `yaml_serde` parse error, an unknown key a `deny_unknown_fields` error),
@@ -328,8 +332,8 @@ patterns run throughout `src/isolation/`:
   directory is made under a staging name, `fchmod`ed to its exact mode (umask would mask
   `mkdirat`'s), and moved into place with `RENAME_NOREPLACE`, so an entry that appears at the
   name meanwhile fails the rename instead of being replaced or followed. `remove_dir` removes
-  only an empty directory: what provisioning put there is not the guard's to delete.
-- - **RAII lifecycle managers.** `RootfsMounts`, `RootfsAptSources` and `RootfsResolvConf` (plus
+  only an empty directory.
+- - **RAII lifecycle managers.** `RootfsMounts` and `RootfsResolvConf` (plus
   `StagedFileGuard` in `src/phase/mod.rs`, which removes scripts and binaries staged into the
   rootfs, and `PolicyRcD` in `src/phase/provision/apt.rs`, which puts back the rootfs's own
   `policy-rc.d`) all guarantee cleanup via `Drop`, including on error paths. Mounts unmount in
@@ -537,7 +541,7 @@ This makes "assemble cannot run a program" a permanent property, deliberately: a
 writes the rootfs's final state, and anything that wants to run a program is provision's
 work. A future assemble task that genuinely needed one would also have to answer *under what
 isolation* — `AssembleConfig` has no `isolation` key — so it would be a profile-format change,
-not just a widening of this trait. `assemble.apt_clean` is the pattern for work that looks like
+not just a widening of this trait. `assemble.apt.dist_clean` is the pattern for work that looks like
 it needs a program: it does not run `apt-get distclean` but empties apt's cache directories with
 `RootfsOps::clear_dir`, which descends through `O_NOFOLLOW` descriptors like every other
 operation there.

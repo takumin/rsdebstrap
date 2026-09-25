@@ -5,7 +5,7 @@
 #   - defaults: isolation (chroot), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
 #   - pipeline: prepare (mount, apt, resolv_conf), provision (apt + shell + mitamae),
-#     assemble (apt_clean, machine_id, resolv_conf, output)
+#     assemble (apt, machine_id, resolv_conf, output)
 
 dir: /tmp/debian-trixie-server-amd64
 
@@ -76,7 +76,8 @@ prepare:
 
   # Extra APT keyrings (/etc/apt/keyrings, created if missing), repositories
   # (deb822 files in /etc/apt/sources.list.d) and preferences
-  # (/etc/apt/preferences.d). Removed again before assemble unless `keep: true`. An apt
+  # (/etc/apt/preferences.d). They stay in the final rootfs; assemble.apt below writes over
+  # anything the image should not keep, such as a build mirror. An apt
   # provision task with `update: true` has to refresh the lists before installing from them.
   # apt:
   #   keyrings:
@@ -84,14 +85,12 @@ prepare:
   #     # Or `path: ./keys/docker.asc`, or inline `content: |`
   #     url: https://download.docker.com/linux/debian/gpg
   #     # sha256: <64 hex digits>  # Pin the downloaded key
-  #     keep: true
   #   repositories:
   #   - name: docker
   #     uris: [https://download.docker.com/linux/debian]
   #     suites: [trixie]
   #     components: [stable]
   #     signed_by: docker
-  #     keep: true
   #   # apt_preferences(5) pins, one stanza each
   #   preferences:
   #   - name: docker
@@ -100,6 +99,9 @@ prepare:
   #       pin: origin download.docker.com
   #       priority: 1001
   #       explanation: prefer Docker's build over Debian's
+  #   # Delete the bootstrap's /etc/apt/sources.list, so a `debian` repository declared
+  #   # above (e.g. a build mirror) replaces it instead of duplicating it.
+  #   remove_sources_list: true
 
   # Copy host's /etc/resolv.conf into the chroot for DNS resolution.
   # Needed because the 'recommends' preset mounts tmpfs on /run,
@@ -151,8 +153,17 @@ provision:
 
 # Assemble phase: finalization after provisioning.
 assemble:
-  # Empties apt's download cache and package lists, like `apt-get distclean`.
-  apt_clean: true
+  apt:
+    # Empties apt's download cache and package lists, like `apt-get distclean`.
+    dist_clean: true
+    # Keyrings, repositories and preferences as in prepare.apt, for where the image should
+    # differ from the build: each replaces a file of the same name, so this points the
+    # image at the public mirror after building from another.
+    # repositories:
+    # - name: debian
+    #   uris: [https://deb.debian.org/debian]
+    #   suites: [trixie, trixie-updates]
+    #   components: [main, contrib]
 
   # Resets /etc/machine-id so each machine booted from the image generates its
   # own ID. `uninitialized` makes the next boot a first boot; `empty` suits a

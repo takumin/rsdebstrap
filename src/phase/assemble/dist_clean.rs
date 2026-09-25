@@ -1,28 +1,24 @@
-//! apt_clean task implementation for the assemble phase.
+//! `assemble.apt.dist_clean` implementation.
 //!
 //! Empties apt's download cache and package lists in the final rootfs, as `apt-get
 //! distclean` would. The assemble phase cannot run a program, so the removal is done
 //! through [`RootfsOps::clear_dir`](crate::rootfs::RootfsOps) rather than by running
 //! `apt-get` in the rootfs.
 
-use std::borrow::Cow;
-
 use tracing::info;
 
-use crate::error::RsdebstrapError;
 use crate::isolation::RootfsContext;
-use crate::phase::{AssembleItem, PhaseItem};
 use crate::rootfs::RelPath;
 
-/// The task `assemble.apt_clean: true` runs.
+/// What `assemble.apt.dist_clean: true` does.
 ///
 /// Empties `/var/cache/apt` (downloaded `.deb` files, `pkgcache.bin`, `srcpkgcache.bin`)
 /// and `/var/lib/apt/lists`. The `lock` files and the `archives` / `partial` directories
 /// apt ships are kept; everything else, subdirectories included, is removed.
 #[derive(Debug)]
-pub(crate) struct AptCleanTask;
+pub(crate) struct DistClean;
 
-impl AptCleanTask {
+impl DistClean {
     /// The directories emptied, each with the entries directly inside it that are kept.
     ///
     /// The `partial` directories and `lock` files are part of the `apt` package itself, so
@@ -35,7 +31,7 @@ impl AptCleanTask {
         ("/var/lib/apt/lists/partial", &[]),
     ];
 
-    /// Executes the assemble apt_clean task.
+    /// Empties the directories.
     ///
     /// A rootfs without apt's directories is not an error: there is nothing to remove.
     pub fn execute(&self, ctx: &dyn RootfsContext) -> anyhow::Result<()> {
@@ -51,22 +47,6 @@ impl AptCleanTask {
             info!("removed {} entries from {} in {}", removed, dir, rootfs);
         }
         Ok(())
-    }
-}
-
-impl PhaseItem for AptCleanTask {
-    fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("apt_clean")
-    }
-
-    fn validate(&self) -> Result<(), RsdebstrapError> {
-        Ok(())
-    }
-}
-
-impl AssembleItem for AptCleanTask {
-    fn execute(&self, ctx: &dyn RootfsContext) -> anyhow::Result<()> {
-        AptCleanTask::execute(self, ctx)
     }
 }
 
@@ -130,7 +110,7 @@ mod tests {
     fn execute_empties_the_cache_and_the_lists_and_their_subdirectories() {
         let (_temp, rootfs) = apt_rootfs();
 
-        AptCleanTask.execute(&context(&rootfs, false)).unwrap();
+        DistClean.execute(&context(&rootfs, false)).unwrap();
 
         assert_eq!(
             entries(&rootfs),
@@ -155,7 +135,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let rootfs = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
 
-        AptCleanTask.execute(&context(&rootfs, false)).unwrap();
+        DistClean.execute(&context(&rootfs, false)).unwrap();
 
         assert!(entries(&rootfs).is_empty());
     }
@@ -165,7 +145,7 @@ mod tests {
         let (_temp, rootfs) = apt_rootfs();
         let before = entries(&rootfs);
 
-        AptCleanTask.execute(&context(&rootfs, true)).unwrap();
+        DistClean.execute(&context(&rootfs, true)).unwrap();
 
         assert_eq!(entries(&rootfs), before);
     }
@@ -183,7 +163,7 @@ mod tests {
         )
         .unwrap();
 
-        AptCleanTask.execute(&context(&rootfs, false)).unwrap();
+        DistClean.execute(&context(&rootfs, false)).unwrap();
 
         assert!(rootfs.join("outside/keep-me").exists());
         assert!(
@@ -201,7 +181,7 @@ mod tests {
         std::os::unix::fs::symlink(rootfs.join("outside"), rootfs.join("var/cache/apt/archives"))
             .unwrap();
 
-        let err = AptCleanTask.execute(&context(&rootfs, false)).unwrap_err();
+        let err = DistClean.execute(&context(&rootfs, false)).unwrap_err();
 
         assert!(err.to_string().contains("symlink"), "unexpected error: {err}");
         assert!(rootfs.join("outside/keep-me").exists());

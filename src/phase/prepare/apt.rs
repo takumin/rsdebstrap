@@ -2,13 +2,13 @@
 //!
 //! This module provides the [`AptTask`] data structure declaring OpenPGP keyrings, APT
 //! repositories — deb822 `.sources` files that may name one of those keyrings in their
-//! `Signed-By` — and APT preferences (pins) that provisioning should see. Like the other
-//! prepare tasks it only declares: the files are written and, unless an entry says
-//! `keep: true`, removed again by a guard at the pipeline level (`isolation::apt_sources`),
-//! after provisioning and before assemble.
+//! `Signed-By` — and APT preferences (pins) that provisioning should see. The files are
+//! written by `isolation::apt_sources` once the mounts are up, and they stay: the final
+//! rootfs is configured the way the build was, unless `assemble.apt` writes over it. The
+//! entry types are shared with `assemble.apt`.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -20,6 +20,10 @@ use crate::rootfs::RelPath;
 
 /// Directory the generated `.sources` files are written to.
 const SOURCES_DIR: &str = "/etc/apt/sources.list.d";
+
+/// The one-line-format sources file debootstrap and mmdebstrap write the bootstrap's mirrors
+/// to.
+const SOURCES_LIST: &str = "/etc/apt/sources.list";
 
 /// Directory the generated preferences files are written to.
 const PREFERENCES_DIR: &str = "/etc/apt/preferences.d";
@@ -71,6 +75,17 @@ pub struct AptTask {
     )]
     #[schemars(with = "Option<Vec<AptPreference>>")]
     pub preferences: Vec<AptPreference>,
+    /// Remove `/etc/apt/sources.list`, where the bootstrap writes its mirrors, after the
+    /// entries above are written, so that a repository declared here (a build mirror, say)
+    /// replaces them instead of sitting next to them: apt refuses the same repository
+    /// declared twice with different `Signed-By` (default false).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove_sources_list: bool,
+}
+
+/// Where the bootstrap's one-line-format sources file lives.
+pub(crate) fn sources_list_path() -> RelPath {
+    RelPath::parse(SOURCES_LIST).expect("a constant absolute path parses")
 }
 
 /// One APT preferences file, holding one stanza per pin.
@@ -83,11 +98,6 @@ pub struct AptPreference {
     pub name: String,
     /// The pins, written as stanzas in this order.
     pub pins: Vec<AptPin>,
-    /// Keep the preferences file in the final rootfs. When `false` (the default) it is
-    /// removed after provisioning and before assemble, and whatever was at that path before
-    /// is put back.
-    #[serde(default)]
-    pub keep: bool,
 }
 
 /// One apt_preferences(5) stanza.
@@ -159,11 +169,6 @@ pub struct AptRepository {
         skip_serializing_if = "Option::is_none"
     )]
     pub signed_by: Option<String>,
-    /// Keep the repository in the final rootfs. When `false` (the default) its file is
-    /// removed after provisioning and before assemble, and whatever was at that path before
-    /// is put back. A kept repository's keyring must be kept too.
-    #[serde(default)]
-    pub keep: bool,
 }
 
 fn default_types() -> Vec<AptSourceType> {
@@ -208,7 +213,6 @@ pub struct AptKeyring {
     pub source: AptKeySource,
     /// Lowercase hex SHA-256 of the key's bytes.
     pub sha256: Option<String>,
-    pub keep: bool,
 }
 
 // Wire shape of a keyring: one type drives both deserialization and schema generation, so
@@ -237,7 +241,7 @@ struct RawAptKeyring {
         skip_serializing_if = "Option::is_none"
     )]
     content: Option<String>,
-    /// `https` URL to download the key from while the prepare phase runs.
+    /// `https` URL to download the key from when the phase that declares it runs.
     #[serde(
         default,
         deserialize_with = "crate::de::opt_string",
@@ -252,10 +256,6 @@ struct RawAptKeyring {
         skip_serializing_if = "Option::is_none"
     )]
     sha256: Option<String>,
-    /// Keep the keyring in the final rootfs. When `false` (the default) it is removed after
-    /// provisioning and before assemble, and whatever was at that path before is put back.
-    #[serde(default)]
-    keep: bool,
 }
 
 // The schema's copy of the rule `AptKeyring::deserialize` enforces. Each branch pins its
@@ -293,7 +293,6 @@ impl<'de> Deserialize<'de> for AptKeyring {
             name: raw.name,
             source,
             sha256: raw.sha256,
-            keep: raw.keep,
         })
     }
 }
@@ -311,7 +310,6 @@ impl Serialize for AptKeyring {
             content,
             url,
             sha256: self.sha256.clone(),
-            keep: self.keep,
         }
         .serialize(serializer)
     }
@@ -386,75 +384,104 @@ fn validate_name(kind: &str, name: &str) -> Result<(), RsdebstrapError> {
 impl AptTask {
     /// Resolves relative keyring paths against `base_dir` (the profile's directory).
     pub fn resolve_paths(&mut self, base_dir: &Utf8Path) {
-        for keyring in &mut self.keyrings {
-            if let AptKeySource::Path(path) = &mut keyring.source
-                && path.is_relative()
-            {
-                *path = base_dir.join(&*path);
-            }
-        }
+        resolve_keyring_paths(&mut self.keyrings, base_dir);
     }
 
     /// Validates every entry, that names are unique, and that each `signed_by` names a
-    /// keyring that lives at least as long as the repository.
+    /// keyring.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        if self.keyrings.is_empty() && self.repositories.is_empty() && self.preferences.is_empty() {
+        if self.keyrings.is_empty()
+            && self.repositories.is_empty()
+            && self.preferences.is_empty()
+            && !self.remove_sources_list
+        {
             return Err(RsdebstrapError::Validation(
-                "apt must declare at least one keyring, repository or preference".to_string(),
+                "apt must declare at least one keyring, repository or preference, or set \
+                remove_sources_list"
+                    .to_string(),
             ));
         }
-
-        let mut keyrings = HashMap::new();
-        for keyring in &self.keyrings {
-            keyring.validate()?;
-            if keyrings.insert(keyring.name.as_str(), keyring).is_some() {
-                return Err(RsdebstrapError::Validation(format!(
-                    "apt keyring name '{}' is used more than once",
-                    keyring.name
-                )));
-            }
-        }
-
-        let mut names = HashSet::new();
-        for repo in &self.repositories {
-            repo.validate()?;
-            if !names.insert(repo.name.as_str()) {
-                return Err(RsdebstrapError::Validation(format!(
-                    "apt repository name '{}' is used more than once",
-                    repo.name
-                )));
-            }
-            let Some(signed_by) = &repo.signed_by else {
-                continue;
-            };
-            let Some(keyring) = keyrings.get(signed_by.as_str()) else {
-                return Err(RsdebstrapError::Validation(format!(
-                    "apt repository '{}': signed_by '{}' names no entry in keyrings",
-                    repo.name, signed_by
-                )));
-            };
-            // The final rootfs would name a keyring in `Signed-By` that is no longer
-            // there, and `apt-get update` fails on it for everyone who uses the image.
-            if repo.keep && !keyring.keep {
-                return Err(RsdebstrapError::Validation(format!(
-                    "apt repository '{}' is kept, so its keyring '{}' must be kept too",
-                    repo.name, keyring.name
-                )));
-            }
-        }
-
-        let mut names = HashSet::new();
-        for preference in &self.preferences {
-            preference.validate()?;
-            if !names.insert(preference.name.as_str()) {
-                return Err(RsdebstrapError::Validation(format!(
-                    "apt preference name '{}' is used more than once",
-                    preference.name
-                )));
-            }
-        }
-        Ok(())
+        validate_entries(&self.keyrings, &self.repositories, &self.preferences)
     }
+}
+
+/// Resolves relative keyring paths against `base_dir` (the profile's directory).
+pub(crate) fn resolve_keyring_paths(keyrings: &mut [AptKeyring], base_dir: &Utf8Path) {
+    for keyring in keyrings {
+        if let AptKeySource::Path(path) = &mut keyring.source
+            && path.is_relative()
+        {
+            *path = base_dir.join(&*path);
+        }
+    }
+}
+
+/// Validates every entry, that names are unique within each list, and that each
+/// `signed_by` names an entry in `keyrings`.
+pub(crate) fn validate_entries(
+    keyrings: &[AptKeyring],
+    repositories: &[AptRepository],
+    preferences: &[AptPreference],
+) -> Result<(), RsdebstrapError> {
+    let mut names = HashSet::new();
+    for keyring in keyrings {
+        keyring.validate()?;
+        if !names.insert(keyring.name.as_str()) {
+            return Err(RsdebstrapError::Validation(format!(
+                "apt keyring name '{}' is used more than once",
+                keyring.name
+            )));
+        }
+    }
+    let keyrings = names;
+
+    let mut names = HashSet::new();
+    for repo in repositories {
+        repo.validate()?;
+        if !names.insert(repo.name.as_str()) {
+            return Err(RsdebstrapError::Validation(format!(
+                "apt repository name '{}' is used more than once",
+                repo.name
+            )));
+        }
+        if let Some(signed_by) = &repo.signed_by
+            && !keyrings.contains(signed_by.as_str())
+        {
+            return Err(RsdebstrapError::Validation(format!(
+                "apt repository '{}': signed_by '{}' names no entry in keyrings",
+                repo.name, signed_by
+            )));
+        }
+    }
+
+    let mut names = HashSet::new();
+    for preference in preferences {
+        preference.validate()?;
+        if !names.insert(preference.name.as_str()) {
+            return Err(RsdebstrapError::Validation(format!(
+                "apt preference name '{}' is used more than once",
+                preference.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The keyring, repository and preference names, for a phase item's name.
+pub(crate) fn entry_names(
+    keyrings: &[AptKeyring],
+    repositories: &[AptRepository],
+    preferences: &[AptPreference],
+) -> String {
+    let keyrings: Vec<&str> = keyrings.iter().map(|k| k.name.as_str()).collect();
+    let repos: Vec<&str> = repositories.iter().map(|r| r.name.as_str()).collect();
+    let prefs: Vec<&str> = preferences.iter().map(|p| p.name.as_str()).collect();
+    format!(
+        "keyrings[{}],repositories[{}],preferences[{}]",
+        keyrings.join(","),
+        repos.join(","),
+        prefs.join(",")
+    )
 }
 
 impl AptRepository {
@@ -715,15 +742,12 @@ impl AptKeyring {
 
 impl PhaseItem for AptTask {
     fn name(&self) -> Cow<'_, str> {
-        let keyrings: Vec<&str> = self.keyrings.iter().map(|k| k.name.as_str()).collect();
-        let repos: Vec<&str> = self.repositories.iter().map(|r| r.name.as_str()).collect();
-        let prefs: Vec<&str> = self.preferences.iter().map(|p| p.name.as_str()).collect();
-        Cow::Owned(format!(
-            "apt:keyrings[{}],repositories[{}],preferences[{}]",
-            keyrings.join(","),
-            repos.join(","),
-            prefs.join(",")
-        ))
+        let mut name =
+            format!("apt:{}", entry_names(&self.keyrings, &self.repositories, &self.preferences));
+        if self.remove_sources_list {
+            name.push_str(",remove_sources_list");
+        }
+        Cow::Owned(name)
     }
 
     fn validate(&self) -> Result<(), RsdebstrapError> {
@@ -747,7 +771,6 @@ mod tests {
             components: vec!["main".to_string()],
             architectures: vec![],
             signed_by: None,
-            keep: false,
         }
     }
 
@@ -756,7 +779,6 @@ mod tests {
             name: name.to_string(),
             source,
             sha256: None,
-            keep: false,
         }
     }
 
@@ -769,6 +791,7 @@ mod tests {
             keyrings,
             repositories,
             preferences: vec![],
+            remove_sources_list: false,
         }
     }
 
@@ -785,7 +808,6 @@ mod tests {
         AptPreference {
             name: name.to_string(),
             pins,
-            keep: false,
         }
     }
 
@@ -811,7 +833,6 @@ keyrings:
   - name: docker
     url: https://download.docker.com/linux/debian/gpg
     sha256: 1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
-    keep: true
 repositories:
   - name: docker
     types: [deb, deb-src]
@@ -820,18 +841,17 @@ repositories:
     components: [stable]
     architectures: [amd64]
     signed_by: docker
-    keep: true
+remove_sources_list: true
 "#;
         // editorconfig-checker-enable
         let task: AptTask = yaml_serde::from_str(yaml).unwrap();
         let keyring = &task.keyrings[0];
         assert!(matches!(&keyring.source, AptKeySource::Url(u) if u.ends_with("/gpg")));
         assert!(keyring.sha256.is_some());
-        assert!(keyring.keep);
         let repo = &task.repositories[0];
         assert_eq!(repo.types, vec![AptSourceType::Deb, AptSourceType::DebSrc]);
         assert_eq!(repo.signed_by.as_deref(), Some("docker"));
-        assert!(repo.keep);
+        assert!(task.remove_sources_list);
     }
 
     #[test]
@@ -842,14 +862,22 @@ repositories:
         assert!(task.keyrings.is_empty());
         let repo = &task.repositories[0];
         assert_eq!(repo.types, vec![AptSourceType::Deb]);
-        assert!(!repo.keep);
         assert!(repo.signed_by.is_none());
+        assert!(!task.remove_sources_list);
     }
 
     #[test]
     fn deserialize_rejects_missing_uris() {
         let yaml = "repositories:\n  - name: x\n    suites: [s]\n";
         assert!(yaml_serde::from_str::<AptTask>(yaml).is_err());
+    }
+
+    #[test]
+    fn deserialize_rejects_keep() {
+        let yaml = "repositories:\n  - name: x\n    uris: [https://e.com]\n    suites: [s]\n    \
+            components: [main]\n    keep: true\n";
+        let err = yaml_serde::from_str::<AptTask>(yaml).unwrap_err();
+        assert!(err.to_string().contains("keep"), "{}", err);
     }
 
     #[test]
@@ -876,7 +904,7 @@ repositories:
     #[test]
     fn keyring_roundtrips_through_yaml() {
         let mut k = inline("k");
-        k.keep = true;
+        k.sha256 = Some("0".repeat(64));
         let yaml = yaml_serde::to_string(&k).unwrap();
         assert_eq!(yaml_serde::from_str::<AptKeyring>(&yaml).unwrap(), k);
     }
@@ -989,21 +1017,16 @@ repositories:
     }
 
     #[test]
-    fn validate_rejects_a_kept_repository_on_a_temporary_keyring() {
-        let mut r = repo("x");
-        r.signed_by = Some("k".to_string());
-        r.keep = true;
-        let msg = validation_message(task(vec![inline("k")], vec![r]).validate());
-        assert!(msg.contains("must be kept too"), "{}", msg);
+    fn validate_accepts_remove_sources_list_alone() {
+        let t: AptTask = yaml_serde::from_str("remove_sources_list: true\n").unwrap();
+        assert!(t.validate().is_ok());
+        assert_eq!(t.name(), "apt:keyrings[],repositories[],preferences[],remove_sources_list");
     }
 
     #[test]
-    fn validate_accepts_a_temporary_repository_on_a_kept_keyring() {
-        let mut r = repo("x");
-        r.signed_by = Some("k".to_string());
-        let mut k = inline("k");
-        k.keep = true;
-        assert!(task(vec![k], vec![r]).validate().is_ok());
+    fn remove_sources_list_is_not_serialized_when_false() {
+        let yaml = yaml_serde::to_string(&task(vec![], vec![repo("x")])).unwrap();
+        assert!(!yaml.contains("remove_sources_list"), "{}", yaml);
     }
 
     #[test]
@@ -1123,7 +1146,6 @@ repositories:
         let yaml = r#"
 preferences:
   - name: backports
-    keep: true
     pins:
       - packages: ["*"]
         pin: release n=trixie-backports
@@ -1136,7 +1158,6 @@ preferences:
         // editorconfig-checker-enable
         let task: AptTask = yaml_serde::from_str(yaml).unwrap();
         let p = &task.preferences[0];
-        assert!(p.keep);
         assert_eq!(p.pins.len(), 2);
         assert_eq!(p.pins[1].packages, ["linux-image-amd64", "src:linux"]);
         assert_eq!(p.pins[1].priority, 990);

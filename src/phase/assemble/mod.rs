@@ -2,7 +2,8 @@
 //!
 //! This module provides the [`AssembleConfig`] named-field struct describing the
 //! tasks that run after the main provisioning phase:
-//! - [`apt_clean`](AssembleConfig::apt_clean) — empties apt's caches in the final rootfs
+//! - [`apt`](AssembleConfig::apt) — writes apt's keyrings, repositories and preferences
+//!   into the final rootfs, removes the bootstrap's `sources.list` and empties apt's caches
 //! - [`machine_id`](AssembleConfig::machine_id) — resets `/etc/machine-id` so each machine
 //!   generates its own
 //! - [`resolv_conf`](AssembleConfig::resolv_conf) — writes a permanent `/etc/resolv.conf`
@@ -12,7 +13,8 @@
 //! The named-field shape makes "at most one resolv_conf" structural rather than
 //! validated after the fact.
 
-pub mod apt_clean;
+pub mod apt;
+pub mod dist_clean;
 pub mod machine_id;
 pub mod output;
 pub mod resolv_conf;
@@ -20,12 +22,12 @@ pub mod resolv_conf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+pub use apt::AssembleAptTask;
 pub use machine_id::MachineId;
 pub use output::{BootFileOutput, OutputConfig, SquashfsCompression, SquashfsOutput};
 pub use resolv_conf::AssembleResolvConfTask;
 
 use crate::phase::AssembleItem;
-use apt_clean::AptCleanTask;
 
 /// Assemble phase configuration (named-field, schema-first).
 ///
@@ -34,11 +36,10 @@ use apt_clean::AptCleanTask;
 #[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssembleConfig {
-    /// Empty apt's download cache and package lists in the final rootfs, as `apt-get
-    /// distclean` would (default false). The image then needs `apt-get update` before it
-    /// can install anything.
+    /// apt task writing apt's configuration into the final rootfs and cleaning up after
+    /// provisioning.
     #[serde(default)]
-    pub apt_clean: bool,
+    pub apt: Option<AssembleAptTask>,
     /// Reset `/etc/machine-id` in the final rootfs, so every machine booted from the image
     /// generates its own ID rather than sharing the build's.
     #[serde(default)]
@@ -56,8 +57,8 @@ impl AssembleConfig {
     /// Returns the present phase items in execution order.
     pub(crate) fn items(&self) -> Vec<&dyn AssembleItem> {
         let mut items: Vec<&dyn AssembleItem> = Vec::new();
-        if self.apt_clean {
-            items.push(&AptCleanTask);
+        if let Some(apt) = &self.apt {
+            items.push(apt);
         }
         if let Some(machine_id) = &self.machine_id {
             items.push(machine_id);
@@ -75,7 +76,7 @@ impl AssembleConfig {
 
     /// Returns the number of configured assemble tasks, outputs included.
     pub fn len(&self) -> usize {
-        usize::from(self.apt_clean)
+        usize::from(self.apt.is_some())
             + usize::from(self.machine_id.is_some())
             + usize::from(self.resolv_conf.is_some())
             + self.output.len()
@@ -96,28 +97,41 @@ mod tests {
     }
 
     #[test]
-    fn items_run_apt_clean_before_resolv_conf() {
-        let yaml = "resolv_conf:\n  name_servers:\n  - 8.8.8.8\napt_clean: true\n";
+    fn items_run_apt_before_resolv_conf() {
+        let yaml = "resolv_conf:\n  name_servers:\n  - 8.8.8.8\napt:\n  dist_clean: true\n";
         let config: AssembleConfig = yaml_serde::from_str(yaml).unwrap();
         let names: Vec<_> = config
             .items()
             .iter()
             .map(|item| item.name().into_owned())
             .collect();
-        assert_eq!(names, ["apt_clean", "resolv_conf:generate"]);
+        assert_eq!(
+            names,
+            [
+                "apt:keyrings[],repositories[],preferences[],dist_clean",
+                "resolv_conf:generate"
+            ]
+        );
         assert_eq!(config.len(), 2);
     }
 
     #[test]
-    fn items_run_machine_id_between_apt_clean_and_resolv_conf() {
-        let yaml = "resolv_conf:\n  link: ../run/x\nmachine_id: empty\napt_clean: true\n";
+    fn items_run_machine_id_between_apt_and_resolv_conf() {
+        let yaml = "resolv_conf:\n  link: ../run/x\nmachine_id: empty\napt:\n  dist_clean: true\n";
         let config: AssembleConfig = yaml_serde::from_str(yaml).unwrap();
         let names: Vec<_> = config
             .items()
             .iter()
             .map(|item| item.name().into_owned())
             .collect();
-        assert_eq!(names, ["apt_clean", "machine_id:empty", "resolv_conf:link"]);
+        assert_eq!(
+            names,
+            [
+                "apt:keyrings[],repositories[],preferences[],dist_clean",
+                "machine_id:empty",
+                "resolv_conf:link"
+            ]
+        );
         assert_eq!(config.len(), 3);
     }
 
@@ -142,16 +156,16 @@ mod tests {
     }
 
     #[test]
-    fn apt_clean_false_adds_no_item() {
-        let config: AssembleConfig = yaml_serde::from_str("apt_clean: false\n").unwrap();
+    fn a_null_apt_adds_no_item() {
+        let config: AssembleConfig = yaml_serde::from_str("apt:\n").unwrap();
         assert!(config.items().is_empty());
         assert!(config.is_empty());
     }
 
     #[test]
-    fn deserialize_rejects_a_non_bool_apt_clean() {
-        let result: Result<AssembleConfig, _> = yaml_serde::from_str("apt_clean:\n  lists: true\n");
-        assert!(result.is_err(), "apt_clean takes a bool, not a mapping");
+    fn deserialize_rejects_the_former_apt_clean_key() {
+        let result: Result<AssembleConfig, _> = yaml_serde::from_str("apt_clean: true\n");
+        assert!(result.is_err(), "apt_clean is now apt.dist_clean");
     }
 
     #[test]

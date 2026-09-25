@@ -32,7 +32,7 @@ prepare:                    # Optional preparation steps (named-field struct)
       - source: /dev
         target: /dev
         options: [bind]
-  apt:                      # APT keyrings, repositories and preferences (at most one)
+  apt:                      # APT keyrings, repositories and preferences; they stay (at most one)
     keyrings:               # Optional: OpenPGP keyrings
       - name: docker        # -> /etc/apt/keyrings/docker.{asc,gpg}
         url: https://download.docker.com/linux/debian/gpg
@@ -41,7 +41,6 @@ prepare:                    # Optional preparation steps (named-field struct)
         # content: |               # Inline, ASCII-armored
         #   -----BEGIN PGP PUBLIC KEY BLOCK-----
         sha256: <64 hex digits>  # Optional: pin the key's bytes
-        keep: true          # Optional: keep in the final rootfs (default false)
     repositories:           # Optional: deb822 repositories
       - name: docker        # -> /etc/apt/sources.list.d/docker.sources
         types: [deb]        # Optional: deb | deb-src (default [deb])
@@ -50,7 +49,6 @@ prepare:                    # Optional preparation steps (named-field struct)
         components: [stable]  # Required unless every suite ends in '/'
         architectures: [amd64]  # Optional
         signed_by: docker   # Optional: a keyrings entry, written as Signed-By
-        keep: true          # Optional: keep in the final rootfs (default false)
     preferences:            # Optional: apt_preferences(5) pins
       - name: backports     # -> /etc/apt/preferences.d/backports.pref
         pins:               # One stanza per pin
@@ -58,7 +56,7 @@ prepare:                    # Optional preparation steps (named-field struct)
             pin: release n=trixie-backports  # Pin: release … | origin … | version …
             priority: 990   # Pin-Priority: non-zero integer
             explanation: newer kernel  # Optional: one-line Explanation
-        keep: false         # Optional: keep in the final rootfs (default false)
+    remove_sources_list: false  # Optional: delete /etc/apt/sources.list (default false)
   resolv_conf:              # resolv.conf setup for DNS in chroot (at most one)
     copy: true              # Copy host's /etc/resolv.conf
     # OR
@@ -87,7 +85,16 @@ provision:                  # Optional main provisioning steps (ordered list)
     isolation:               # Optional: override defaults.isolation
       type: chroot
 assemble:                   # Optional finalization steps (named-field struct)
-  apt_clean: true           # Optional: empty apt's cache and package lists (default false)
+  apt:                      # apt configuration of the final rootfs (at most one)
+    dist_clean: true        # Optional: empty apt's cache and package lists (default false)
+    remove_sources_list: true  # Optional: delete /etc/apt/sources.list (default false)
+    keyrings: []            # Optional: as prepare.apt.keyrings
+    repositories:           # Optional: as prepare.apt.repositories
+      - name: debian        # -> /etc/apt/sources.list.d/debian.sources (replaced)
+        uris: [https://deb.debian.org/debian]
+        suites: [trixie]
+        components: [main]
+    preferences: []         # Optional: as prepare.apt.preferences
   machine_id: uninitialized # Optional: reset /etc/machine-id (uninitialized | empty)
   resolv_conf:              # Permanent /etc/resolv.conf in final rootfs (at most one)
     name_servers: [8.8.8.8, 8.8.4.4]  # Generate resolv.conf with nameservers
@@ -192,7 +199,7 @@ on the host. Two consequences follow, and both are enforced rather than document
 - `apt` is configured in the `prepare` phase under the `apt` key (a singleton `Option`). The
   pipeline applies `mount`, then `apt`, then `resolv_conf`, whatever the key order
 - `keyrings`, `repositories` and `preferences` are separate lists, and at least one of them
-  must be non-empty.
+  must be non-empty unless `remove_sources_list` is set.
   A repository uses a keyring by naming it in `signed_by`, which is written as the repository's
   `Signed-By`, so the keyring is trusted for the repositories that name it only. Several
   repositories may name one keyring; `signed_by` naming no `keyrings` entry is an error
@@ -222,19 +229,23 @@ on the host. Two consequences follow, and both are enforced rather than document
   and at most 1 MiB is accepted. `sha256`, if given, is checked against the bytes from any
   source; for inline `content` that happens when the profile is validated
 - Every keyring is read, downloaded and checked before the first change, so a bad key fails
-  the run with the rootfs untouched. A failed change rolls back everything done so far
-- After `provision` and before `assemble`, keyrings and repositories without `keep: true` are
-  removed, and whatever was at those paths before is put back. Entries with `keep: true` stay
-  in the final rootfs. A kept repository must name a kept keyring, since the image would
-  otherwise carry a `Signed-By` pointing at nothing. As with `resolv_conf`, the originals are
-  held in memory, not in a backup file
-- A `/etc/apt/keyrings` created by the run is removed with its keyrings unless one of them is
-  kept. If provisioning put something else in it, it is left in place with a warning
+  the run with the rootfs untouched. A change that fails after that is not rolled back: it
+  fails the build
+- What `prepare.apt` writes stays in the final rootfs, replacing whatever was at those paths:
+  the image is configured the way the build was. Where it should differ — a build mirror the
+  image must not point at, say — `assemble.apt` writes over it (see
+  [assemble apt rules](#assemble-apt-rules))
 - Each preference is written to `/etc/apt/preferences.d/<name>.pref` (the `.pref` extension
   keeps a name containing `.` from being skipped by apt), mode `0644`, one apt_preferences(5)
-  stanza per entry of `pins`, in order. `/etc/apt/preferences.d` must exist (apt ships it).
-  Like a repository, it is removed after `provision` unless `keep: true`, and whatever it
-  replaced is put back
+  stanza per entry of `pins`, in order. `/etc/apt/preferences.d` must exist (apt ships it)
+- A repository declared here next to the same repository in the bootstrap's
+  `/etc/apt/sources.list` is configured twice, and if only one of them has `Signed-By`,
+  `apt-get update` fails with `Conflicting values set for option Signed-By`.
+  `remove_sources_list: true` deletes `/etc/apt/sources.list` after everything else is
+  written, so the repositories declared here replace the bootstrap's instead; a failed write
+  leaves it in place. An absent `/etc/apt/sources.list` is not an error; a directory there
+  is. A deb822 file the bootstrap wrote in `/etc/apt/sources.list.d` (such as Ubuntu's
+  `ubuntu.sources`) needs no such key: a repository of the same name replaces it
 - A pin needs non-empty `packages` (written as `Package`, so `*`, globs, `/regex/` and
   `src:` names work; no whitespace inside a value), `pin` starting with `release`, `origin`
   or `version` followed by its argument, and a non-zero `priority` (apt ignores a pin with
@@ -293,9 +304,44 @@ on the host. Two consequences follow, and both are enforced rather than document
 - `privilege` works as on the other provision tasks. `isolation: false` is refused: it would
   run the host's `apt-get` against the host
 
-## Assemble apt_clean rules
+## Assemble apt rules
 
-- `assemble.apt_clean: true` does the work of `apt-get distclean` without running it (the
+- `assemble.apt` writes apt's configuration into the final rootfs where it should differ from
+  what the build used. `keyrings`, `repositories` and `preferences` take the entries
+  `prepare.apt` does, with the same rules and files, and replace a file of the same name —
+  one `prepare.apt` wrote included. A repository's `signed_by` names an entry in
+  `assemble.apt.keyrings`
+- Building from one mirror and shipping another:
+
+  ```yaml
+  prepare:
+    apt:
+      remove_sources_list: true
+      repositories:
+        - name: debian              # provisioning installs from the build mirror
+          uris: [https://mirror.internal/debian]
+          suites: [trixie]
+          components: [main]
+  assemble:
+    apt:
+      repositories:
+        - name: debian              # the image points at the public mirror
+          uris: [https://deb.debian.org/debian]
+          suites: [trixie]
+          components: [main]
+  ```
+
+- `remove_sources_list: true` deletes `/etc/apt/sources.list`, as in `prepare.apt`
+- As in `prepare.apt`, every keyring is read, downloaded and checked before the first change,
+  and a later failure is not rolled back
+- At least one entry, `dist_clean` or `remove_sources_list` is required
+- The files are written first, then `/etc/apt/sources.list` is removed, then `dist_clean`
+  runs. `assemble.apt` runs before `assemble.machine_id`, the assemble `resolv_conf` and
+  `assemble.output`
+
+### dist_clean
+
+- `assemble.apt.dist_clean: true` does the work of `apt-get distclean` without running it (the
   assemble phase cannot run a program): it empties `/var/cache/apt` — the downloaded `.deb`
   files, `pkgcache.bin` and `srcpkgcache.bin` — and the package lists in `/var/lib/apt/lists`.
   The image then needs `apt-get update` before it can install anything
@@ -303,9 +349,9 @@ on the host. Two consequences follow, and both are enforced rather than document
   `archives` and `partial` directories (emptied) and the `lock` files
 - The paths are apt's defaults; a `Dir::Cache` or `Dir::State` setting inside the rootfs is not
   consulted. A rootfs without these directories is not an error
-- It runs before the assemble `resolv_conf` and before `assemble.output`, so the squashfs image
-  does not carry the removed files. Symlinks are removed as links and never followed, and a
-  symlink in place of one of the directories themselves is an error
+- The squashfs image of `assemble.output` does not carry the removed files. Symlinks are
+  removed as links and never followed, and a symlink in place of one of the directories
+  themselves is an error
 
 ## Assemble machine_id rules
 
@@ -322,7 +368,7 @@ on the host. Two consequences follow, and both are enforced rather than document
   mount the generated ID over an existing file
 - `/var/lib/dbus/machine-id` is not touched. Debian ships it as a symlink to `/etc/machine-id`,
   so it follows the reset; a rootfs where it is a regular file keeps the build's ID there
-- It runs after `assemble.apt_clean` and before the assemble `resolv_conf` and
+- It runs after `assemble.apt` and before the assemble `resolv_conf` and
   `assemble.output`
 
 ## Assemble output rules
@@ -352,7 +398,7 @@ on the host. Two consequences follow, and both are enforced rather than document
 ## How rootfs modifications are performed
 
 Several items change files inside the rootfs, which normally needs root: both `resolv_conf`
-tasks, `prepare.apt` (keyrings, sources and preferences), `assemble.apt_clean`,
+tasks, `prepare.apt` and `assemble.apt` (keyrings, sources, preferences and caches),
 `assemble.machine_id`, the `policy-rc.d` an apt provision task installs around its install,
 and the scripts and binaries staged for provision tasks. Rather than running `sudo cp` /
 `sudo mv` per operation, rsdebstrap escalates **once** per run: it spawns a helper process
