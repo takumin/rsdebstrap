@@ -95,13 +95,17 @@ and this project adheres to
   `/etc/apt/keyrings` (from a host file, inline, or downloaded over https with an
   optional `sha256` pin), and `repositories`, deb822 `.sources` files that name
   a keyring as their `Signed-By` through `signed_by`. `/etc/apt/keyrings` is
-  created if the rootfs lacks it, without following symlinks. Entries are
-  removed again before `assemble` unless marked `keep: true`, and whatever they
-  replaced is put back.
+  created if the rootfs lacks it, without following symlinks. Entries stay in
+  the final rootfs; `assemble.apt` writes over them where the image should
+  differ.
 - `prepare.apt.preferences`, apt_preferences(5) pins written to
   `/etc/apt/preferences.d/<name>.pref`, one stanza per entry of `pins`
-  (`packages`, `pin`, `priority`, optional `explanation`). Like repositories,
-  they are removed before `assemble` unless marked `keep: true`.
+  (`packages`, `pin`, `priority`, optional `explanation`).
+- `prepare.apt.remove_sources_list: true`, which deletes the bootstrap's
+  `/etc/apt/sources.list` after the entries are written, so a repository
+  declared there (a build mirror, say) replaces the bootstrap's mirrors instead
+  of duplicating them — apt fails outright when the duplicates disagree on
+  `Signed-By`.
 - `type: apt` provision task, running `apt-get update` (with `update: true`)
   and `apt-get install` for the packages in `install`, non-interactively and
   with `--no-install-recommends` unless `recommends: true`. `update` defaults to
@@ -111,7 +115,12 @@ and this project adheres to
   While `apt-get install` runs, `/usr/sbin/policy-rc.d` denies service starts
   (exit 101), so maintainer scripts do not start daemons on the build host; the
   rootfs's own policy, if any, is put back afterwards.
-- `assemble.apt_clean: true`, which empties apt's download cache
+- `assemble.apt`, apt's configuration of the final rootfs. `keyrings`,
+  `repositories` and `preferences` take the entries `prepare.apt` does and
+  replace any file of the same name, so an image can ship with different
+  sources than the build used; `remove_sources_list: true` deletes
+  `/etc/apt/sources.list`.
+- `assemble.apt.dist_clean: true`, which empties apt's download cache
   (`/var/cache/apt`) and package lists (`/var/lib/apt/lists`) in the final
   rootfs, like `apt-get distclean`. The assemble phase cannot run a program, so
   this is done through the rootfs helper without following symlinks rather than
