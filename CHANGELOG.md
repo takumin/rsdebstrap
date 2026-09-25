@@ -91,6 +91,12 @@ and this project adheres to
   and `rootfs` packs it into a squashfs image with `mksquashfs`, escalated with
   `defaults.privilege`. Each output is staged under a temporary name and
   renamed into place, so a failed build leaves no partial file.
+- `assemble.output.assets`, a list of files to place in `dir`, such as a
+  Raspberry Pi's boot firmware. Each is downloaded over https (with a required
+  `sha256`), copied from the host (`path`), given inline (`content`), or copied
+  out of the rootfs (`source`), and written under a path relative to `dir`
+  whose missing directories are created. A symlink on the way is refused, and a
+  path into the bootstrap target is rejected when the profile is validated.
 - `prepare.apt`, with two lists: `keyrings`, OpenPGP keys written to
   `/etc/apt/keyrings` (from a host file, inline, or downloaded over https with an
   optional `sha256` pin), and `repositories`, deb822 `.sources` files that name

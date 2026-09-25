@@ -4,6 +4,7 @@ pub mod config;
 pub(crate) mod de;
 pub mod error;
 pub mod executor;
+pub(crate) mod https;
 pub mod isolation;
 pub mod phase;
 pub mod pipeline;

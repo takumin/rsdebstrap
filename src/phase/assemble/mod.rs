@@ -24,7 +24,9 @@ use serde::Deserialize;
 
 pub use apt::AssembleAptTask;
 pub use machine_id::MachineId;
-pub use output::{BootFileOutput, OutputConfig, SquashfsCompression, SquashfsOutput};
+pub use output::{
+    AssetOutput, AssetSource, BootFileOutput, OutputConfig, SquashfsCompression, SquashfsOutput,
+};
 pub use resolv_conf::AssembleResolvConfTask;
 
 use crate::phase::AssembleItem;

@@ -203,18 +203,24 @@ Key invariants:
   The program is the fixed `PrivilegedProgram::Mksquashfs`, not a name from the profile, and it
   runs on the host against a tree nothing executes in any more, so the question the note below
   raises (*under what isolation*) does not arise: nothing that runs comes from the rootfs.
-  Kernel and initramfs are read with `RootfsOps::export_file` (see
-  [Filesystem safety](#filesystem-safety-toctou--raii)), not with a program. Outputs run after
-  the items so they see the permanent resolv.conf, and in `kernel → initramfs → rootfs` order.
-  Each is staged under a UUID-suffixed sibling in `dir` and renamed over its name; `dir` is the
-  invoking user's and the parent runs as that user, so this is for atomic replacement and no
-  partial leftovers rather than a defence. The squashfs staging file is created by the parent
-  and handed to `mksquashfs -noappend`, which truncates it in place: the image stays owned by
-  the invoking user, at `0600`, even when `mksquashfs` runs under `sudo`.
+  Kernel, initramfs and an asset with a rootfs `source` are read with `RootfsOps::export_file`
+  (see [Filesystem safety](#filesystem-safety-toctou--raii)), not with a program; an asset's `url`
+  is downloaded by the parent, never by a program. Outputs run after the items so they see the
+  permanent resolv.conf, and in `kernel → initramfs → assets → rootfs` order, assets before the
+  image so a failed download fails before `mksquashfs` runs. Each is staged under a UUID-suffixed
+  sibling in `dir` and renamed over its name; `dir` is the invoking user's and the parent runs as
+  that user, so this is for atomic replacement and no partial leftovers rather than a defence. The
+  one exception is the directories on the way to an asset (`boot/overlays/...`): they are walked
+  with `O_NOFOLLOW` from a descriptor for `dir`, because whether an asset lands inside the
+  bootstrap target is checked on its name at validation, and a symlink under `dir` would otherwise
+  carry it into the image anyway. The squashfs staging file is created by the parent and handed to
+  `mksquashfs -noappend`, which truncates it in place: the image stays owned by the invoking user,
+  at `0600`, even when `mksquashfs` runs under `sudo`.
 
 `prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, apt, resolv_conf }`,
 `AssembleConfig { apt, machine_id, resolv_conf, output }`,
-`OutputConfig { kernel, initramfs, rootfs }`), not lists. This makes the singleton invariants
+`OutputConfig { kernel, initramfs, assets, rootfs }`), not lists (`assets` aside, which is an
+ordered list of files). This makes the singleton invariants
 structural: "at most one mount" / "at most one resolv_conf" hold because each is an `Option` (a
 duplicate YAML key is a `yaml_serde` parse error, an unknown key a `deny_unknown_fields` error),
 and the `mount → apt → resolv_conf` order is fixed by `items()` rather than by key order. The

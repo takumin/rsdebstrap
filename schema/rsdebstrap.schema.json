@@ -398,6 +398,105 @@
 			},
 			"type": "object"
 		},
+		"AssetOutput": {
+			"additionalProperties": false,
+			"oneOf": [
+				{
+					"properties": {
+						"sha256": {
+							"type": "string"
+						},
+						"url": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"url",
+						"sha256"
+					]
+				},
+				{
+					"properties": {
+						"path": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"path"
+					]
+				},
+				{
+					"properties": {
+						"content": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"content"
+					]
+				},
+				{
+					"properties": {
+						"source": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"source"
+					]
+				}
+			],
+			"properties": {
+				"content": {
+					"default": null,
+					"description": "The file's contents inline.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"file": {
+					"description": "Path of the file to write, relative to `dir`, such as `boot/start4.elf`. Missing\ndirectories are created. It may not lead into the bootstrap target.",
+					"type": "string"
+				},
+				"path": {
+					"default": null,
+					"description": "Path to a file on the host. Relative paths are resolved against the profile's\ndirectory.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"sha256": {
+					"default": null,
+					"description": "Expected SHA-256 of the file's bytes, as 64 hex digits. Checked before the file is\nput in place. Required with `url`, where the bytes are the server's to choose.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"source": {
+					"default": null,
+					"description": "Absolute path inside the rootfs to copy from, like `kernel.source`. Symlinks are\nfollowed, confined to the rootfs, and the copy keeps the source's permission bits.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"url": {
+					"default": null,
+					"description": "`https` URL to download the file from. Requires `sha256`.",
+					"type": [
+						"string",
+						"null"
+					]
+				}
+			},
+			"required": [
+				"file"
+			],
+			"type": "object"
+		},
 		"BootFileOutput": {
 			"additionalProperties": false,
 			"description": "A file copied out of the rootfs, such as the kernel or the initramfs.",
@@ -987,8 +1086,18 @@
 		},
 		"OutputConfig": {
 			"additionalProperties": false,
-			"description": "Build artifacts to write into `dir` once the rootfs is final.\n\nEach is written under its own name directly in `dir`, next to the bootstrap target, and\nreplaces an existing file of that name atomically. They are written in the order\n`kernel`, `initramfs`, `rootfs`, after every other assemble task.",
+			"description": "Build artifacts to write into `dir` once the rootfs is final.\n\nEach is written under its own name in `dir`, next to the bootstrap target, and replaces an\nexisting file of that name atomically. They are written in the order `kernel`,\n`initramfs`, `assets`, `rootfs`, after every other assemble task.",
 			"properties": {
+				"assets": {
+					"description": "Files to place in `dir`, such as boot firmware, each downloaded, copied from the host,\ngiven inline or copied out of the rootfs. Written in list order.",
+					"items": {
+						"$ref": "#/$defs/AssetOutput"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				},
 				"initramfs": {
 					"anyOf": [
 						{

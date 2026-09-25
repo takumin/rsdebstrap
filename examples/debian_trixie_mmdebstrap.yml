@@ -180,7 +180,8 @@ assemble:
     # search: [example.com]
 
   # Build artifacts written into `dir` next to the rootfs, after the tasks above,
-  # so they carry the final rootfs. Each `file` is a plain name in `dir`.
+  # so they carry the final rootfs. Each `file` is a plain name in `dir`, except an
+  # asset's, which may be a path below it.
   output:
     # Copied out of the rootfs through Debian's /vmlinuz link (then /boot/vmlinuz).
     # Set `source: /boot/vmlinuz-<version>` to pick a specific kernel.
@@ -189,6 +190,17 @@ assemble:
     # Likewise through /initrd.img (then /boot/initrd.img); keeps its 0600 mode.
     initramfs:
       file: initrd.img
+    # Other files to place in `dir`, such as a board's boot firmware. Each takes one of
+    # `url` (https, with a required sha256), `path` (a host file), `content` (inline)
+    # or `source` (a path in the rootfs). Missing directories are created.
+    # assets:
+    # - file: boot/start4.elf
+    #   url: https://github.com/raspberrypi/firmware/raw/<commit>/boot/start4.elf
+    #   sha256: <64 hex digits>
+    # - file: boot/config.txt
+    #   path: ./boot/config.txt
+    # - file: boot/cmdline.txt
+    #   content: "console=serial0,115200 root=/dev/mmcblk0p2 rootwait\n"
     # Packed with mksquashfs (must be on PATH), escalated with defaults.privilege.
     rootfs:
       file: rootfs.squashfs
