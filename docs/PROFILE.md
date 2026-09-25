@@ -108,6 +108,14 @@ assemble:                   # Optional finalization steps (named-field struct)
     initramfs:
       file: initrd.img      # File name in `dir`
       source: /initrd.img   # Optional: default /initrd.img, then /boot/initrd.img
+    assets:                 # Optional files to place in `dir` (list, in order)
+      - file: boot/start4.elf  # Path relative to `dir`; directories are created
+        url: https://github.com/raspberrypi/firmware/raw/<commit>/boot/start4.elf
+        sha256: <64 hex digits>  # Required with url, optional otherwise
+        # OR
+        # path: ./boot/config.txt  # Host file, relative to the profile
+        # content: "console=serial0,115200 root=/dev/mmcblk0p2 rootwait\n"
+        # source: /usr/lib/linux-image-<version>/broadcom/bcm2711-rpi-4-b.dtb  # In the rootfs
     rootfs:
       file: rootfs.squashfs # File name in `dir`
       compression: zstd     # Optional: gzip | lzo | lz4 | xz | zstd (mksquashfs default: gzip)
@@ -119,11 +127,11 @@ assemble:                   # Optional finalization steps (named-field struct)
   only YAML strings. Numbers, booleans, and `null` are parse errors — quote values that look like
   scalars (`suite: "13"`). `dir` must additionally be non-empty.
 - On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`,
-  `assemble.output`, `mounts`, `options`, `name_servers`, `search`, the apt `keyrings`,
-  `repositories`, `preferences`, `components` and `architectures`, the apt provision task's
-  `install`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty
-  value (e.g. a section whose entries are all commented out), and omitting the key are
-  equivalent — all mean "use the default".
+  `assemble.output`, `assemble.output.assets`, `mounts`, `options`, `name_servers`, `search`, the
+  apt `keyrings`, `repositories`, `preferences`, `components` and `architectures`, the apt
+  provision task's `install`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty value
+  (e.g. a section whose entries are all commented out), and omitting the key are equivalent — all
+  mean "use the default".
 - That list is exhaustive: the list fields inside the internally tagged `bootstrap:` maps
   (`include`, `components`, `keyring`, hook lists, …) and the tagged `isolation:` config stay
   strict — an explicit `null` or an empty value (e.g. a list whose entries are all commented
@@ -380,11 +388,16 @@ on the host. Two consequences follow, and both are enforced rather than document
 
 ## Assemble output rules
 
-- `assemble.output` writes build artifacts into `dir`, next to the bootstrap target. Each `file`
-  is a plain file name (no `/`, not `.` or `..`); two outputs may not share one, and none may be
-  the bootstrap `target`
-- Outputs are written after every other assemble task, in the order `kernel`, `initramfs`,
-  `rootfs`, so they reflect the rootfs in its final state (the assemble `resolv_conf` included)
+- `assemble.output` writes build artifacts into `dir`, next to the bootstrap target. The `file`
+  of `kernel`, `initramfs` and `rootfs` is a plain file name (no `/`, not `.` or `..`); an asset's
+  `file` may be a relative path such as `boot/overlays/foo.dtbo`, without empty, `.` or `..`
+  components. Two outputs may not share a `file`, no output may be written where another needs a
+  directory (`boot` next to `boot/start4.elf`), and none may be the bootstrap `target` or lead into
+  it
+- Outputs are written after every other assemble task, in the order `kernel`, `initramfs`, each
+  of `assets` in list order, then `rootfs`, so they reflect the rootfs in its final state (the
+  assemble `resolv_conf` included). Assets come before the squashfs image so that a failed
+  download fails the build before its slowest step
 - Each output is staged under a temporary name in `dir` and renamed over `file`, so an existing
   file is replaced atomically and a failed build leaves no partial file behind. `dir` must be
   writable by the user running `rsdebstrap`
@@ -401,6 +414,18 @@ on the host. Two consequences follow, and both are enforced rather than document
   `defaults.privilege`, like `mount`; there is no per-output `privilege` key. The image is owned by
   the user running `rsdebstrap` with mode `0600`, because it holds every file of the rootfs.
   `-one-file-system` keeps anything still mounted under the rootfs out of the image
+- Each asset names exactly one source: `url` (https only, redirects included, and requires
+  `sha256`), `path` (a regular file on the host, not a symlink; relative paths are resolved
+  against the profile's directory), `content` (inline text), or `source` (an absolute path in
+  the rootfs, read like `kernel.source`). `sha256` is optional on the other three. The digest is
+  computed while the file is written and checked before it is renamed into place, so a mismatch
+  leaves an existing file untouched. A download over 1 GiB is refused, and a host file over
+  64 MiB
+- Directories on the way to an asset are created with mode `0755` (less the umask) and left in
+  place if the build fails. An existing entry on the way must be a directory: a symlink is
+  refused rather than followed, since it could lead into the bootstrap target
+- An asset is written with mode `0644`, except one copied from the rootfs, which keeps the
+  source's permission bits without its setuid, setgid or sticky bits
 
 ## How rootfs modifications are performed
 

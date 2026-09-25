@@ -6,6 +6,7 @@ use rsdebstrap::RsdebstrapError;
 use rsdebstrap::bootstrap::mmdebstrap::{self, Format};
 use rsdebstrap::config::load_profile;
 use rsdebstrap::phase::ProvisionTask;
+use rsdebstrap::phase::assemble::AssetSource;
 use rsdebstrap::phase::prepare::apt::AptKeySource;
 use tempfile::tempdir;
 
@@ -963,6 +964,76 @@ fn test_validate_rejects_an_output_over_the_bootstrap_target() -> Result<()> {
 
     let err = profile.validate().unwrap_err();
     assert!(err.to_string().contains("bootstrap target"), "unexpected error: {err}");
+
+    Ok(())
+}
+
+#[test]
+fn test_validate_rejects_an_asset_inside_the_bootstrap_target() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+        dir: /tmp/test
+        bootstrap:
+          type: mmdebstrap
+          suite: bookworm
+          target: rootfs
+          format: directory
+        assemble:
+          output:
+            assets:
+              - file: rootfs/boot/cmdline.txt
+                content: "console=tty1"
+        "#
+    ))?;
+    // editorconfig-checker-enable
+
+    let err = profile.validate().unwrap_err();
+    assert!(err.to_string().contains("bootstrap target"), "unexpected error: {err}");
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_resolves_asset_path_relative_to_profile_dir() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+    let boot_dir = temp_dir.path().join("boot");
+    std::fs::create_dir_all(&boot_dir)?;
+    let config_path = boot_dir.join("config.txt");
+    std::fs::write(&config_path, "arm_64bit=1\n")?;
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+assemble:
+  output:
+    assets:
+      - file: boot/config.txt
+        path: boot/config.txt
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+
+    match &profile.assemble.output.assets[0].source {
+        AssetSource::Path(resolved) => assert_eq!(
+            resolved.canonicalize_utf8()?,
+            Utf8PathBuf::from_path_buf(config_path.canonicalize()?).unwrap()
+        ),
+        other => panic!("expected a path asset, got {:?}", other),
+    }
+    profile.validate()?;
 
     Ok(())
 }

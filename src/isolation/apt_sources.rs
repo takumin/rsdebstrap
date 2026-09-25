@@ -7,7 +7,6 @@
 //! resolv.conf guard requires.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
@@ -37,33 +36,8 @@ const FILE_MODE: FileMode = FileMode::new(0o644);
 pub(crate) type KeyFetcher = fn(&str) -> Result<Vec<u8>>;
 
 /// Downloads `url` over https, refusing a body over [`MAX_KEY_SIZE`].
-///
-/// `https_only` covers redirects too, so a server cannot bounce the request to plain http.
-/// The certificate is checked against the host's trust store rather than a bundled one, so
-/// a key served behind an internal CA verifies the way the host's own tools would.
 pub(crate) fn fetch_https(url: &str) -> Result<Vec<u8>> {
-    use ureq::tls::{RootCerts, TlsConfig};
-
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .https_only(true)
-        .timeout_global(Some(Duration::from_secs(60)))
-        .tls_config(
-            TlsConfig::builder()
-                .root_certs(RootCerts::PlatformVerifier)
-                .build(),
-        )
-        .build()
-        .into();
-    let mut response = agent
-        .get(url)
-        .call()
-        .with_context(|| format!("failed to download apt keyring from {}", url))?;
-    response
-        .body_mut()
-        .with_config()
-        .limit(MAX_KEY_SIZE)
-        .read_to_vec()
-        .with_context(|| format!("failed to read apt keyring from {}", url))
+    crate::https::get_to_vec(url, MAX_KEY_SIZE, "apt keyring")
 }
 
 /// The apt configuration one phase writes: its entries, and whether it removes

@@ -610,9 +610,11 @@ impl Profile {
     fn validate_output(&self, rootfs: &Utf8Path) -> Result<(), RsdebstrapError> {
         let output = &self.assemble.output;
         for file in output.files() {
-            if self.dir.join(file) == rootfs {
+            // `starts_with` is component-wise, so it also catches an asset such as
+            // `rootfs/boot/start4.elf`, which would land in the image rather than next to it.
+            if self.dir.join(file).starts_with(rootfs) {
                 return Err(RsdebstrapError::Validation(format!(
-                    "assemble output '{}' would be written over the bootstrap target {}",
+                    "assemble output '{}' would be written over or into the bootstrap target {}",
                     file, rootfs
                 )));
             }
@@ -771,6 +773,7 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
     if let Some(apt) = &mut profile.assemble.apt {
         apt.resolve_paths(profile_dir);
     }
+    profile.assemble.output.resolve_paths(profile_dir);
 
     for task in profile.provision.iter_mut() {
         task.resolve_paths(profile_dir);

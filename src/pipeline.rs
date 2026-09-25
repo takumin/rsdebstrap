@@ -275,6 +275,7 @@ impl<'a> Pipeline<'a> {
             ops: ops.as_ref(),
             executor: executor.as_ref(),
             privilege: self.privilege,
+            fetch: crate::phase::assemble::output::fetch_asset,
         };
         let outputs = self.assemble.output.items();
         run_phase_items(PHASE_ASSEMBLE_OUTPUT, &outputs.iter().collect::<Vec<_>>(), |item| {
@@ -441,6 +442,7 @@ mod tests {
         output: crate::phase::OutputConfig {
             kernel: None,
             initramfs: None,
+            assets: Vec::new(),
             rootfs: None,
         },
     };
