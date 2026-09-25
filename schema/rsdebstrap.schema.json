@@ -159,7 +159,7 @@
 					"type": "string"
 				},
 				"signed_by": {
-					"description": "Name of an entry in `keyrings` to write as this repository's `Signed-By`. Without\nit, apt verifies against the keys it already trusts.",
+					"description": "Keyring to write as this repository's `Signed-By`: the name of an entry in\n`keyrings`, or an absolute path to a keyring file in the rootfs (e.g.\n`/usr/share/keyrings/debian-archive-keyring.gpg`). Without it, apt verifies against\nthe keys it already trusts.",
 					"type": [
 						"string",
 						"null"
@@ -264,7 +264,7 @@
 				},
 				"keyrings": {
 					"default": [],
-					"description": "OpenPGP keyrings to write, as `prepare.apt.keyrings` does. A repository here uses one\nby naming it in `signed_by`.",
+					"description": "OpenPGP keyrings to write, as `prepare.apt.keyrings` does. A repository here uses one\nby naming it in `signed_by`, or names a keyring file in the rootfs by absolute path.",
 					"items": {
 						"$ref": "#/$defs/AptKeyring"
 					},

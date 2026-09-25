@@ -130,6 +130,10 @@ and this project adheres to
   build generated. `uninitialized` makes the next boot a first boot, as
   `mmdebstrap` does; `empty` generates an ID at every boot without first-boot
   semantics, for a read-only root.
+- An apt repository's `signed_by` (in `prepare.apt` and `assemble.apt`) may be
+  an absolute path to a keyring file already in the rootfs, such as
+  `/usr/share/keyrings/debian-archive-keyring.gpg`, as well as the name of a
+  `keyrings` entry.
 - `tests/privileged_helper_test.rs`, which exercises real `sudo` escalation
   against a root-owned rootfs. `#[ignore]`d and self-skipping when passwordless
   sudo is unavailable.
