@@ -458,16 +458,11 @@ mod tests {
             None,
         );
         let mounted = mounts.mount().expect("an empty mount guard mounts nothing");
-        let mut apt = crate::isolation::apt_sources::RootfsAptSources::new(
-            &rootfs,
-            None,
-            g.ops.clone(),
-            false,
-            |url| panic!("no apt key to download from {}", url),
-        );
-        let configured = apt
-            .setup(mounted)
-            .expect("an empty apt guard writes nothing");
+        let configured =
+            crate::isolation::apt_sources::configure(mounted, None, g.ops.as_ref(), false, |url| {
+                panic!("no apt key to download from {}", url)
+            })
+            .expect("no apt task writes nothing");
         // The `Prepared` is what provisioning would consume; these tests are about the
         // guard's own effect on the rootfs, so it is dropped here.
         let _prepared = g.setup(configured)?;

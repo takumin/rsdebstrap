@@ -23,7 +23,7 @@ use tracing::{info, warn};
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
 use crate::executor::CommandExecutor;
-use crate::isolation::apt_sources::{RootfsAptSources, fetch_https};
+use crate::isolation::apt_sources::{self, fetch_https};
 use crate::isolation::mount::RootfsMounts;
 use crate::isolation::resolv_conf::RootfsResolvConf;
 
@@ -135,17 +135,16 @@ fn run_pipeline_phase_with(
         None => rootfs::open(&rootfs, privilege, dry_run)?,
     };
 
-    // A setup failure here or below is cleaned up by the guards' `Drop`, in reverse order.
-    let mut apt_sources = RootfsAptSources::new(
-        &rootfs,
-        profile.prepare.apt.clone(),
-        ops.clone(),
+    // What `prepare.apt` writes stays, so it has no guard to unwind. A setup failure from
+    // here on is cleaned up by the guards' `Drop`, in reverse order.
+    let apt_configured = apt_sources::configure(
+        mounted,
+        profile.prepare.apt.as_ref(),
+        ops.as_ref(),
         dry_run,
         fetch_https,
-    );
-    let apt_configured = apt_sources
-        .setup(mounted)
-        .context("failed to configure apt repositories in rootfs")?;
+    )
+    .context("failed to configure apt repositories in rootfs")?;
 
     let resolv_conf_config = profile.prepare.resolv_conf.as_ref().map(|rc| rc.config());
     let mut resolv_conf = RootfsResolvConf::new(
@@ -169,24 +168,12 @@ fn run_pipeline_phase_with(
             .context(
                 "failed to restore resolv.conf after provisioning; \
                 any assemble tasks were skipped",
-            )
-            .and_then(|restored| {
-                mounts
-                    .still_mounted()
-                    .and_then(|mounted| apt_sources.restore(restored, mounted))
-                    .context(
-                        "failed to remove temporary apt repositories after provisioning; \
-                        any assemble tasks were skipped",
-                    )
-            }),
+            ),
         Err(run_err) => {
             // `Drop` would restore too, but only after the unmount below; the
             // restores belong inside the mounted window.
             if let Err(restore_err) = resolv_conf.teardown() {
                 tracing::error!("resolv.conf restore also failed: {:#}", restore_err);
-            }
-            if let Err(restore_err) = apt_sources.teardown() {
-                tracing::error!("apt repository removal also failed: {:#}", restore_err);
             }
             Err(run_err)
         }
@@ -211,7 +198,6 @@ fn run_pipeline_phase_with(
             // problem. A guard whose restore already succeeded is torn down, so this costs
             // that path nothing.
             drop(resolv_conf);
-            drop(apt_sources);
             if let Err(u) = mounts.unmount() {
                 tracing::error!(
                     "unmount also failed after pipeline error: {:#}. \

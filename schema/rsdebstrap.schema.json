@@ -42,11 +42,6 @@
 						"null"
 					]
 				},
-				"keep": {
-					"default": false,
-					"description": "Keep the keyring in the final rootfs. When `false` (the default) it is removed after\nprovisioning and before assemble, and whatever was at that path before is put back.",
-					"type": "boolean"
-				},
 				"name": {
 					"description": "File name stem for the keyring, and what a repository's `signed_by` names. Letters,\ndigits, `_`, `-` and `.` only, unique within `keyrings`.",
 					"type": "string"
@@ -66,7 +61,7 @@
 					]
 				},
 				"url": {
-					"description": "`https` URL to download the key from while the prepare phase runs.",
+					"description": "`https` URL to download the key from when the phase that declares it runs.",
 					"type": [
 						"string",
 						"null"
@@ -117,11 +112,6 @@
 			"additionalProperties": false,
 			"description": "One APT preferences file, holding one stanza per pin.",
 			"properties": {
-				"keep": {
-					"default": false,
-					"description": "Keep the preferences file in the final rootfs. When `false` (the default) it is\nremoved after provisioning and before assemble, and whatever was at that path before\nis put back.",
-					"type": "boolean"
-				},
 				"name": {
 					"description": "File name stem for the preferences file. Letters, digits, `_`, `-` and `.` only (what\napt reads from `preferences.d`), unique within `preferences`.",
 					"type": "string"
@@ -163,11 +153,6 @@
 						"array",
 						"null"
 					]
-				},
-				"keep": {
-					"default": false,
-					"description": "Keep the repository in the final rootfs. When `false` (the default) its file is\nremoved after provisioning and before assemble, and whatever was at that path before\nis put back. A kept repository's keyring must be kept too.",
-					"type": "boolean"
 				},
 				"name": {
 					"description": "File name stem for the `.sources` file. Letters, digits, `_`, `-` and `.` only (what\napt reads from `sources.list.d`), unique within `repositories`.",
@@ -251,8 +236,62 @@
 						"null"
 					]
 				},
+				"remove_sources_list": {
+					"description": "Remove `/etc/apt/sources.list`, where the bootstrap writes its mirrors, after the\nentries above are written, so that a repository declared here (a build mirror, say)\nreplaces them instead of sitting next to them: apt refuses the same repository\ndeclared twice with different `Signed-By` (default false).",
+					"type": "boolean"
+				},
 				"repositories": {
 					"description": "APT repositories to configure before provisioning. Each one is written to\n`/etc/apt/sources.list.d/<name>.sources` in deb822 format.",
+					"items": {
+						"$ref": "#/$defs/AptRepository"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				}
+			},
+			"type": "object"
+		},
+		"AssembleAptTask": {
+			"additionalProperties": false,
+			"description": "apt task writing apt's configuration into the final rootfs.",
+			"properties": {
+				"dist_clean": {
+					"default": false,
+					"description": "Empty apt's download cache and package lists, as `apt-get distclean` would (default\nfalse). The image then needs `apt-get update` before it can install anything.",
+					"type": "boolean"
+				},
+				"keyrings": {
+					"default": [],
+					"description": "OpenPGP keyrings to write, as `prepare.apt.keyrings` does. A repository here uses one\nby naming it in `signed_by`.",
+					"items": {
+						"$ref": "#/$defs/AptKeyring"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				},
+				"preferences": {
+					"default": [],
+					"description": "APT preferences to write, each to `/etc/apt/preferences.d/<name>.pref` (see\napt_preferences(5)), replacing a file already there.",
+					"items": {
+						"$ref": "#/$defs/AptPreference"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				},
+				"remove_sources_list": {
+					"default": false,
+					"description": "Remove `/etc/apt/sources.list`, where the bootstrap writes its mirrors, after the\nentries below are written (default false).",
+					"type": "boolean"
+				},
+				"repositories": {
+					"default": [],
+					"description": "APT repositories to write, each to `/etc/apt/sources.list.d/<name>.sources` in deb822\nformat, replacing a file already there — one `prepare.apt` wrote included.",
 					"items": {
 						"$ref": "#/$defs/AptRepository"
 					},
@@ -268,10 +307,16 @@
 			"additionalProperties": false,
 			"description": "Assemble phase configuration (named-field, schema-first).\n\nEach field is an optional singleton; a duplicate YAML key is rejected by `yaml_serde` at\nparse time and an unknown key by `deny_unknown_fields`.",
 			"properties": {
-				"apt_clean": {
-					"default": false,
-					"description": "Empty apt's download cache and package lists in the final rootfs, as `apt-get\ndistclean` would (default false). The image then needs `apt-get update` before it\ncan install anything.",
-					"type": "boolean"
+				"apt": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/AssembleAptTask"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "apt task writing apt's configuration into the final rootfs and cleaning up after\nprovisioning."
 				},
 				"machine_id": {
 					"anyOf": [

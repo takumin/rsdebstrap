@@ -18,7 +18,6 @@ use tracing::{debug, info};
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::executor::CommandExecutor;
-use crate::isolation::apt_sources::AptRestored;
 use crate::isolation::mount::Unmounted;
 use crate::isolation::resolv_conf::{Prepared, Restored};
 use crate::isolation::{DirectProvider, IsolationProvider, PlainRootfsContext};
@@ -154,8 +153,7 @@ impl<'a> Pipeline<'a> {
         )?;
         // Not a claim that guards were run and found to have done nothing: the refusal
         // above is what makes "nothing was detached, nothing was mounted" true here.
-        let restored =
-            AptRestored::nothing_was_written(Restored::nothing_was_detached(provisioned));
+        let restored = Restored::nothing_was_detached(provisioned);
         self.run_assemble(Unmounted::nothing_was_mounted(restored), rootfs, &executor, &ops)
     }
 
@@ -437,7 +435,7 @@ mod tests {
         resolv_conf: None,
     };
     static EMPTY_ASSEMBLE: AssembleConfig = AssembleConfig {
-        apt_clean: false,
+        apt: None,
         machine_id: None,
         resolv_conf: None,
         output: crate::phase::OutputConfig {
