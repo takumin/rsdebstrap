@@ -963,8 +963,8 @@ remove_sources_list: true
 
     #[test]
     fn deserialize_defaults() {
-        let yaml = "repositories:\n  - name: x\n    sources:\n      - uris: [https://e.com]\n        \
-            suites: [s]\n        components: [main]\n";
+        let yaml = "repositories:\n  - name: x\n    sources:\n      \
+            - uris: [https://e.com]\n        suites: [s]\n        components: [main]\n";
         let task: AptTask = yaml_serde::from_str(yaml).unwrap();
         assert!(task.keyrings.is_empty());
         let source = &task.repositories[0].sources[0];
@@ -981,8 +981,9 @@ remove_sources_list: true
 
     #[test]
     fn deserialize_rejects_keep() {
-        let yaml = "repositories:\n  - name: x\n    sources:\n      - uris: [https://e.com]\n        \
-            suites: [s]\n        components: [main]\n        keep: true\n";
+        let yaml = "repositories:\n  - name: x\n    sources:\n      \
+            - uris: [https://e.com]\n        suites: [s]\n        components: [main]\n        \
+            keep: true\n";
         let err = yaml_serde::from_str::<AptTask>(yaml).unwrap_err();
         assert!(err.to_string().contains("keep"), "{}", err);
     }
