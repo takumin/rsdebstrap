@@ -33,7 +33,7 @@ pub struct AssembleAptTask {
     #[serde(default)]
     pub remove_sources_list: bool,
     /// OpenPGP keyrings to write, as `prepare.apt.keyrings` does. A repository here uses one
-    /// by naming it in `signed_by`.
+    /// by naming it in `signed_by`, or names a keyring file in the rootfs by absolute path.
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
     #[schemars(with = "Option<Vec<AptKeyring>>")]
     pub keyrings: Vec<AptKeyring>,

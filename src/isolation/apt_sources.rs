@@ -19,7 +19,7 @@ use crate::isolation::mount::Mounted;
 use crate::phase::prepare::AptTask;
 use crate::phase::prepare::apt::{
     AptKeySource, AptKeyring, AptPreference, AptRepository, KEYRINGS_DIR, KeyFormat, MAX_KEY_SIZE,
-    sources_list_path,
+    SignedBy, sources_list_path,
 };
 use crate::rootfs::{FileMode, RelPath, RootfsOps};
 
@@ -176,16 +176,19 @@ impl AptChanges<'_> {
             files.push((path, bytes));
         }
         for repo in self.repositories {
-            let signed_by = match &repo.signed_by {
-                Some(name) => Some(keyring_paths.get(name.as_str()).ok_or_else(|| {
-                    RsdebstrapError::Validation(format!(
-                        "apt repository '{}': signed_by '{}' names no entry in keyrings",
-                        repo.name, name
-                    ))
-                })?),
+            let signed_by = match repo.signed_by()? {
+                Some(SignedBy::Keyring(name)) => {
+                    Some(keyring_paths.get(name).cloned().ok_or_else(|| {
+                        RsdebstrapError::Validation(format!(
+                            "apt repository '{}': signed_by '{}' names no entry in keyrings",
+                            repo.name, name
+                        ))
+                    })?)
+                }
+                Some(SignedBy::Path(path)) => Some(path),
                 None => None,
             };
-            files.push((repo.sources_path(), repo.render_sources(signed_by).into_bytes()));
+            files.push((repo.sources_path(), repo.render_sources(signed_by.as_ref()).into_bytes()));
         }
         for preference in self.preferences {
             files.push((preference.preferences_path(), preference.render().into_bytes()));
@@ -399,6 +402,19 @@ mod tests {
                     .contains("Signed-By: /etc/apt/keyrings/k.asc")
             );
         }
+    }
+
+    // The keyring is the rootfs's own, so nothing is written for it and `/etc/apt/keyrings`
+    // is not created.
+    #[test]
+    fn a_rootfs_path_is_written_as_signed_by_verbatim() {
+        let (_temp, rootfs) = rootfs_with_apt_dirs();
+        let key = "/usr/share/keyrings/debian-archive-keyring.gpg";
+        apply(&rootfs, &task(vec![], vec![repo("x", Some(key))])).unwrap();
+
+        let content = fs::read_to_string(rootfs.join("etc/apt/sources.list.d/x.sources")).unwrap();
+        assert!(content.contains(&format!("Signed-By: {key}\n")), "{}", content);
+        assert!(!rootfs.join("etc/apt/keyrings").exists());
     }
 
     #[test]

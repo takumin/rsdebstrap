@@ -161,8 +161,10 @@ pub struct AptRepository {
     )]
     #[schemars(with = "Option<Vec<String>>")]
     pub architectures: Vec<String>,
-    /// Name of an entry in `keyrings` to write as this repository's `Signed-By`. Without
-    /// it, apt verifies against the keys it already trusts.
+    /// Keyring to write as this repository's `Signed-By`: the name of an entry in
+    /// `keyrings`, or an absolute path to a keyring file in the rootfs (e.g.
+    /// `/usr/share/keyrings/debian-archive-keyring.gpg`). Without it, apt verifies against
+    /// the keys it already trusts.
     #[serde(
         default,
         deserialize_with = "crate::de::opt_string",
@@ -387,8 +389,8 @@ impl AptTask {
         resolve_keyring_paths(&mut self.keyrings, base_dir);
     }
 
-    /// Validates every entry, that names are unique, and that each `signed_by` names a
-    /// keyring.
+    /// Validates every entry, that names are unique, and that each `signed_by` is a rootfs
+    /// path or names a keyring.
     pub fn validate(&self) -> Result<(), RsdebstrapError> {
         if self.keyrings.is_empty()
             && self.repositories.is_empty()
@@ -417,7 +419,7 @@ pub(crate) fn resolve_keyring_paths(keyrings: &mut [AptKeyring], base_dir: &Utf8
 }
 
 /// Validates every entry, that names are unique within each list, and that each
-/// `signed_by` names an entry in `keyrings`.
+/// `signed_by` is a rootfs path or names an entry in `keyrings`.
 pub(crate) fn validate_entries(
     keyrings: &[AptKeyring],
     repositories: &[AptRepository],
@@ -444,12 +446,12 @@ pub(crate) fn validate_entries(
                 repo.name
             )));
         }
-        if let Some(signed_by) = &repo.signed_by
-            && !keyrings.contains(signed_by.as_str())
+        if let Some(SignedBy::Keyring(name)) = repo.signed_by()?
+            && !keyrings.contains(name)
         {
             return Err(RsdebstrapError::Validation(format!(
                 "apt repository '{}': signed_by '{}' names no entry in keyrings",
-                repo.name, signed_by
+                repo.name, name
             )));
         }
     }
@@ -484,7 +486,51 @@ pub(crate) fn entry_names(
     )
 }
 
+/// What a repository's `signed_by` refers to.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SignedBy<'a> {
+    /// An entry in `keyrings`, by name.
+    Keyring(&'a str),
+    /// A keyring file in the rootfs.
+    Path(RelPath),
+}
+
 impl AptRepository {
+    /// Reads `signed_by`: an absolute path is a file in the rootfs, anything else names an
+    /// entry in `keyrings`. A keyring name cannot contain `/`, so the two never overlap.
+    pub(crate) fn signed_by(&self) -> Result<Option<SignedBy<'_>>, RsdebstrapError> {
+        let Some(value) = self.signed_by.as_deref() else {
+            return Ok(None);
+        };
+        if !value.starts_with('/') {
+            return Ok(Some(SignedBy::Keyring(value)));
+        }
+        let invalid = |msg: String| {
+            RsdebstrapError::Validation(format!(
+                "apt repository '{}': signed_by {}",
+                self.name, msg
+            ))
+        };
+        // `Signed-By` also takes fingerprints, several values separated by commas or
+        // whitespace, and an inline key continued on the next line: a path holding any of
+        // those would be read back as something else.
+        if value
+            .chars()
+            .any(|c| c == ',' || c.is_whitespace() || c.is_control())
+        {
+            return Err(invalid(format!(
+                "{:?} contains a comma, whitespace or a control character",
+                value
+            )));
+        }
+        RelPath::parse(value)
+            .map(|path| Some(SignedBy::Path(path)))
+            .map_err(|e| match e {
+                RsdebstrapError::Validation(msg) => invalid(msg),
+                e => e,
+            })
+    }
+
     /// Where this repository's `.sources` file is written.
     pub(crate) fn sources_path(&self) -> RelPath {
         RelPath::parse(&format!("{}/{}.sources", SOURCES_DIR, self.name))
@@ -1014,6 +1060,59 @@ remove_sources_list: true
         r.signed_by = Some("missing".to_string());
         let msg = validation_message(task(vec![inline("other")], vec![r]).validate());
         assert!(msg.contains("names no entry in keyrings"), "{}", msg);
+    }
+
+    #[test]
+    fn signed_by_distinguishes_a_rootfs_path_from_a_keyring_name() {
+        let mut r = repo("x");
+        r.signed_by = Some("docker".to_string());
+        assert_eq!(r.signed_by().unwrap(), Some(SignedBy::Keyring("docker")));
+        r.signed_by = Some("/usr/share/keyrings//debian-archive-keyring.gpg".to_string());
+        assert_eq!(
+            r.signed_by().unwrap(),
+            Some(SignedBy::Path(
+                RelPath::parse("/usr/share/keyrings/debian-archive-keyring.gpg").unwrap()
+            ))
+        );
+        r.signed_by = None;
+        assert_eq!(r.signed_by().unwrap(), None);
+    }
+
+    #[test]
+    fn validate_accepts_signed_by_a_rootfs_path_without_keyrings() {
+        let mut r = repo("x");
+        r.signed_by = Some("/usr/share/keyrings/debian-archive-keyring.gpg".to_string());
+        assert!(task(vec![], vec![r]).validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_signed_by_path_apt_would_read_as_something_else() {
+        for path in ["/a b.gpg", "/a.gpg,/b.gpg", "/a.gpg\n", "/a\t.gpg"] {
+            let mut r = repo("x");
+            r.signed_by = Some(path.to_string());
+            let msg = validation_message(task(vec![], vec![r]).validate());
+            assert!(
+                msg.contains("comma, whitespace or a control character"),
+                "{:?}: {}",
+                path,
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_a_signed_by_path_that_is_not_a_file_in_the_rootfs() {
+        for path in ["/", "/usr/../etc/k.gpg", "/./k.gpg"] {
+            let mut r = repo("x");
+            r.signed_by = Some(path.to_string());
+            let msg = validation_message(task(vec![], vec![r]).validate());
+            assert!(
+                msg.contains("apt repository 'x': signed_by rootfs path"),
+                "{:?}: {}",
+                path,
+                msg
+            );
+        }
     }
 
     #[test]

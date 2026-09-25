@@ -48,7 +48,7 @@ prepare:                    # Optional preparation steps (named-field struct)
         suites: [trixie]
         components: [stable]  # Required unless every suite ends in '/'
         architectures: [amd64]  # Optional
-        signed_by: docker   # Optional: a keyrings entry, written as Signed-By
+        signed_by: docker   # Optional: keyrings entry or absolute rootfs path -> Signed-By
     preferences:            # Optional: apt_preferences(5) pins
       - name: backports     # -> /etc/apt/preferences.d/backports.pref
         pins:               # One stanza per pin
@@ -203,6 +203,13 @@ on the host. Two consequences follow, and both are enforced rather than document
   A repository uses a keyring by naming it in `signed_by`, which is written as the repository's
   `Signed-By`, so the keyring is trusted for the repositories that name it only. Several
   repositories may name one keyring; `signed_by` naming no `keyrings` entry is an error
+- `signed_by` may instead be an absolute path to a keyring file in the rootfs, such as
+  `/usr/share/keyrings/debian-archive-keyring.gpg`, written as `Signed-By` verbatim. A value
+  starting with `/` is a path; anything else is a `keyrings` name (names cannot contain `/`).
+  The path may not contain `.` or `..` components, commas, whitespace or control characters
+  (apt would read those as more than one value). Whether the file exists is not checked: apt
+  reports a missing keyring at `apt-get update`, and in `assemble.apt` the file may come from a
+  package installed in `provision`
 - Each repository is written to `/etc/apt/sources.list.d/<name>.sources` in deb822 format. It
   only declares the repository: run `apt-get update` in a `provision` task (an apt task with
   `update: true`, see [apt provision task rules](#apt-provision-task-rules)) before installing
@@ -310,7 +317,7 @@ on the host. Two consequences follow, and both are enforced rather than document
   what the build used. `keyrings`, `repositories` and `preferences` take the entries
   `prepare.apt` does, with the same rules and files, and replace a file of the same name —
   one `prepare.apt` wrote included. A repository's `signed_by` names an entry in
-  `assemble.apt.keyrings`
+  `assemble.apt.keyrings` or is an absolute path to a keyring file in the rootfs
 - Building from one mirror and shipping another:
 
   ```yaml
