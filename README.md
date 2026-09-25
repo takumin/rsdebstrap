@@ -45,6 +45,8 @@ must be on your `PATH`:
   once per run to serve rootfs modifications, in addition to wrapping the
   commands that need root.
 - A **`mitamae`** binary — only when a profile uses the `mitamae` provisioner.
+- **`mksquashfs`** (from squashfs-tools) — only when a profile sets
+  `assemble.output.rootfs`, as the bundled example does.
 
 Building from source additionally requires **Rust 1.98+** (edition 2024). This
 minimum supported version is declared as `rust-version` in `Cargo.toml`, so
@@ -78,7 +80,7 @@ i686, aarch64, armv7) are attached to GitHub Releases once a version is tagged.
 From a checkout, try it against the bundled example profile:
 
 ```sh
-# Validate a profile (syntax + schema, no bootstrap)
+# Validate a profile (syntax, semantic checks and required tools on PATH; no bootstrap)
 cargo run -- validate -f examples/debian_trixie_mmdebstrap.yml
 
 # Preview the bootstrap command without executing it

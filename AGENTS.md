@@ -10,7 +10,7 @@ This file provides guidance to AI coding agents when working with code in this r
 # via aqua as an informational (non-gating) job (.github/workflows/wc-coverage.yml).
 # Run the command directly rather than `task coverage` in environments where aqua
 # cannot fetch GitHub Releases (e.g. Claude Code on the web) — install from crates.io:
-cargo install cargo-llvm-cov --version 0.8.7 --locked  # once; matches the aqua pin
+cargo install cargo-llvm-cov --version 0.9.1 --locked  # once; matches the aqua pin
 cargo llvm-cov --workspace
 
 # Check for errors without building
@@ -59,8 +59,9 @@ A phase task cannot run a spec either: `IsolationContext` does not hand out a
 `CommandExecutor`, so a `CommandSpec` built inside a phase is inert. What a task can do
 is bounded by the context trait it is handed, and that differs per phase:
 
-- `PrepareItem` has no `execute` — mounts and the temporary resolv.conf are driven by the
-  pipeline's RAII guards, not by the task.
+- Prepare items implement only `PhaseItem` (`name`/`validate`) and have no `execute` —
+  mounts, the apt sources and the temporary resolv.conf are driven by the pipeline's RAII
+  guards, not by the task.
 - `AssembleItem::execute` takes a `RootfsContext` (`rootfs`/`dry_run`/`rootfs_ops`), which
   has no `execute` method. Assemble writes the rootfs's final state and **cannot run a
   program at all**; that is permanent by design, not an oversight to fix. `assemble.output`

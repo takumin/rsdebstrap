@@ -228,10 +228,10 @@ impl IsolationContext for DirectContext {
 
         // The translation above is a string join, and the kernel resolves the program —
         // the one argument it resolves on our behalf — when it execs. So the program is
-        // walked component by component with `O_NOFOLLOW` and handed to the executor as
-        // the descriptor that walk ended on, which the spec then owns for as long as the
-        // execution takes. A relative program is left to `PATH` resolution, as before:
-        // it names nothing inside the rootfs to check.
+        // resolved with `openat2(RESOLVE_IN_ROOT)` against the rootfs and handed to the
+        // executor as the descriptor that resolution ended on, which the spec then owns
+        // for as long as the execution takes. A relative program is left to `PATH`
+        // resolution, as before: it names nothing inside the rootfs to check.
         let token = super::TaskCommandToken::new();
         let spec = if self.executor.dry_run() || !Utf8Path::new(&command[0]).is_absolute() {
             CommandSpec::for_task_command(&token, &translated, privilege)?

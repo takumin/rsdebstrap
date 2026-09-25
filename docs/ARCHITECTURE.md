@@ -82,10 +82,12 @@ backend (bwrap, nspawn, …) means adding a variant with its own payload struct.
 
 ## Phases & the pipeline
 
-`Pipeline` (`src/pipeline.rs`) borrows `prepare: &PrepareConfig`, `provision: &[ProvisionTask]`,
-and `assemble: &AssembleConfig`. `PhaseItem` (`src/phase/mod.rs`, `pub(crate)`) carries only
-what all three share — `name` and `validate`. What an item can *do* differs per phase, and
-the sub-traits say so:
+`Pipeline` (`src/pipeline.rs`) borrows `prepare: &PrepareConfig` and
+`assemble: &AssembleConfig`, and holds `provision` as `Vec<ResolvedProvisionTask>`, resolved in
+`Pipeline::new` from the profile's `&[ProvisionTask]` (it also carries the output `dir` and
+`defaults.privilege` for `assemble.output`). `PhaseItem` (`src/phase/mod.rs`, `pub(crate)`)
+carries only what all three share — `name` and `validate`. What an item can *do* differs per
+phase, and the sub-traits say so:
 
 | trait           | adds                                            |
 | --------------- | ----------------------------------------------- |
@@ -110,53 +112,53 @@ Key invariants:
   errors. Failure-injection for teardown paths is currently impractical (see
   [Known test gaps](#known-test-gaps)). Provision is the only phase that does this;
   the other two have no isolation to set up.
-- **Prepare tasks are declarative.** `MountTask` and (prepare) `ResolvConfTask` implement
-  `PhaseItem` and nothing more — there is no `execute` to call at all, rather than one that
-  runs and does nothing. Their real effect comes from the RAII managers below,
-  set up in `run_pipeline_phase()`. Both brackets close before assemble: the temporary
-  resolv.conf is torn down (the original restored) so an assemble `resolv_conf` task's
-  permanent file/symlink survives, and the mounts are released so assemble sees the rootfs
-  the way the image will — without `/proc`, `/sys` and `/dev` bound over it. Assemble writes
-  the rootfs's *final* state, so anything still bound over it is not part of that state.
+- - **Prepare tasks are declarative.** `MountTask`, (prepare) `AptTask` and (prepare)
+  `ResolvConfTask` implement `PhaseItem` and nothing more — there is no `execute` to call at
+  all, rather than one that runs and does nothing. Their real effect comes from the RAII
+  managers below, set up in `run_pipeline_phase()`. All three brackets close before assemble:
+  the temporary resolv.conf is torn down (the original restored) so an assemble `resolv_conf`
+  task's permanent file/symlink survives, the apt keyrings, sources and preferences not marked
+  `keep` are removed, and the mounts are released so assemble sees the rootfs the way the image
+  will — without `/proc`, `/sys` and `/dev` bound over it. Assemble writes the rootfs's *final*
+  state, so anything still bound over it is not part of that state.
 
   That ordering is carried by token types rather than by comment and convention, and the
   chain starts before provisioning rather than after it. `RootfsMounts::mount` yields a
   `Mounted`; `RootfsAptSources::setup` consumes one and yields an `AptConfigured`;
   `RootfsResolvConf::setup` consumes that and yields a `Prepared`;
-  `Pipeline::run_prepare_and_provision` requires that. Both borrow the guard they came from,
+  `Pipeline::run_prepare_and_provision` requires that. All three borrow the guard they came from,
   the way `ValidatedProfile` borrows its profile: `Drop` releases the mounts whatever the
   caller does, so a token that only *stood for* them could outlive them and still be
-  presented. Borrowing means neither guard can be touched or dropped while the evidence is
+  presented. Borrowing means no guard can be touched or dropped while the evidence is
   alive. Without any of this, entering provisioning was
   a public entry point that armed no guards: a prepare item has nothing to *run* — the
   guards are what carry a mount or a temporary resolv.conf — so iterating the phase reported
   those tasks as done for a run that had skipped them, and provisioning proceeded without
   the mounts or the DNS the profile asked for.
 
-  Both tokens also name what they are evidence *about* — the rootfs, the mount entries and
-  the resolver config the guards were built for — and `run_prepare_and_provision` compares
-  those against what it is about to provision. Without that they are interchangeable, and an
-  empty pair (which is what a profile with no prepare phase produces) would carry a pipeline
-  that declares mounts and DNS straight through, its prepare items reported as done and
-  neither applied. The comparison is by value rather than by identity: a caller may
-  reasonably have cloned the profile, and guards built from an equal declaration establish
-  the same thing.
+  These tokens also name what they are evidence *about* — the rootfs, the mount entries, the apt
+  config and the resolver config the guards were built for — and `run_prepare_and_provision`
+  compares those against what it is about to provision. Without that they are interchangeable,
+  and an empty set (which is what a profile with no prepare phase produces) would carry a
+  pipeline that declares mounts and DNS straight through, its prepare items reported as done and
+  neither applied. The comparison is by value rather than by identity: a caller may reasonably
+  have cloned the profile, and guards built from an equal declaration establish the same thing.
 
   From there: `Pipeline::run_prepare_and_provision` yields a `Provisioned`;
   `RootfsResolvConf::restore` consumes one and yields a `Restored`;
   `RootfsAptSources::restore` consumes that and yields an `AptRestored`;
   `RootfsMounts::unmount_before_assembly` consumes that
   and yields an `Unmounted`; `Pipeline::run_assemble` requires an `Unmounted`. Assembling
-  before either teardown is therefore a compile error, not a review finding.
+  before any teardown is therefore a compile error, not a review finding.
 
-  Those three carry no borrow, and cannot. A borrow taken at `mount` and threaded through
-  `Provisioned` and `Restored` would still be alive at `unmount_before_assembly`, which
-  takes `&mut self` — evidence that borrows a guard can never be handed back to it, whether
-  the borrow is shared or exclusive. But the mounts do have to stay up across the restore:
-  a `prepare.mount` over `/etc` means setup replaced the entry on the mounted filesystem,
-  and restoring after the unmount would put the original on the directory underneath while
-  leaving the temporary on the mounted one. So `restore` asks for a `Mounted` *again*, from
-  `RootfsMounts::still_mounted`, which a released guard refuses and a dropped one cannot be
+  Those four carry no borrow, and cannot. A borrow taken at `mount` and threaded through
+  `Provisioned`, `Restored` and `AptRestored` would still be alive at `unmount_before_assembly`,
+  which takes `&mut self` — evidence that borrows a guard can never be handed back to it,
+  whether the borrow is shared or exclusive. But the mounts do have to stay up across the
+  restore: a `prepare.mount` over `/etc` means setup replaced the entry on the mounted
+  filesystem, and restoring after the unmount would put the original on the directory underneath
+  while leaving the temporary on the mounted one. So `restore` asks for a `Mounted` *again*,
+  from `RootfsMounts::still_mounted`, which a released guard refuses and a dropped one cannot be
   asked at all.
 
   None of this leaves the crate. The guards and the staged entry points
@@ -207,19 +209,22 @@ Key invariants:
   the invoking user, at `0600`, even when `mksquashfs` runs under `sudo`.
 
 `prepare`/`assemble` are **named-field structs** (`PrepareConfig { mount, apt, resolv_conf }`,
-`AssembleConfig { apt_clean, machine_id, resolv_conf, output }`, `OutputConfig { kernel, initramfs, rootfs }`), not lists. This makes the singleton invariants structural:
-"at most one mount" / "at most one resolv_conf" hold because each is an `Option` (a duplicate
-YAML key is a `yaml_serde` parse error, an unknown key a `deny_unknown_fields` error), and the
-`mount → apt → resolv_conf` order is fixed by `items()` rather than by key order. The former
-count/order validators (`validate_prepare_order`, and the count checks in
+`AssembleConfig { apt_clean, machine_id, resolv_conf, output }`,
+`OutputConfig { kernel, initramfs, rootfs }`), not lists. This makes the singleton invariants
+structural: "at most one mount" / "at most one resolv_conf" hold because each is an `Option` (a
+duplicate YAML key is a `yaml_serde` parse error, an unknown key a `deny_unknown_fields` error),
+and the `mount → apt → resolv_conf` order is fixed by `items()` rather than by key order. The
+former count/order validators (`validate_prepare_order`, and the count checks in
 `validate_mounts`/`validate_resolv_conf`/`validate_assemble_resolv_conf`) were therefore
 removed; only cross-field checks remain in `Profile::validate_*` (mounts → privilege;
-`mount`/`umount` in `PATH`; prepare `resolv_conf` → `ResolvConfConfig::validate`). The former
-"mounts/`resolv_conf` require chroot isolation" guards were removed as well: `IsolationConfig`
-has a single `Chroot` variant, so `defaults.isolation` is always chroot and those guards were
-unreachable dead code — reintroduce one next to a second isolation backend if ever added, where
-it would be reachable and testable. Prepare and assemble may each carry a `resolv_conf` task —
-they play different roles (temporary DNS during provisioning vs. the permanent installed file).
+`mount`/`umount` in `PATH`; privileged bootstrap → `defaults.privilege`; `assemble.output` → not
+over the bootstrap target, `mksquashfs` in `PATH`; prepare `resolv_conf` →
+`ResolvConfConfig::validate`). The former "mounts/`resolv_conf` require chroot isolation" guards
+were removed as well: `IsolationConfig` has a single `Chroot` variant, so `defaults.isolation`
+is always chroot and those guards were unreachable dead code — reintroduce one next to a second
+isolation backend if ever added, where it would be reachable and testable. Prepare and assemble
+may each carry a `resolv_conf` task — they play different roles (temporary DNS during
+provisioning vs. the permanent installed file).
 
 ## Filesystem safety: TOCTOU & RAII
 
@@ -255,18 +260,19 @@ patterns run throughout `src/isolation/`:
   separator as another level of path and apply `O_NOFOLLOW` only to the last one. A
   `with_suffix` helper that appended to the final component could put `/..` inside a single
   component and so escape; it was unused and has been removed.
-- **Provision staging is inside the boundary too.** A task's script, and the mitamae binary
-  and recipe, are written with `RootfsOps::write_file` and removed with `RootfsOps::remove`.
-  They used to be host-path `fs::write`/`fs::copy`/`chmod`/`remove_file` guarded by a
-  `symlink_metadata` on `<rootfs>/tmp` that ran once at validation and once more just before
-  the write — check-then-use, twice over, in the one place the rest of the crate had stopped
-  doing it. The anchored write also lands its mode exactly — `openat`'s mode argument is
+- - **Provision staging is inside the boundary too.** A task's script, the mitamae binary and
+  recipe, and the deny-all `/usr/sbin/policy-rc.d` an apt task installs around
+  `apt-get install`, are written with `RootfsOps::write_file` and removed with
+  `RootfsOps::remove`. They used to be host-path `fs::write`/`fs::copy`/`chmod`/`remove_file`
+  guarded by a `symlink_metadata` on `<rootfs>/tmp` that ran once at validation and once more
+  just before the write — check-then-use, twice over, in the one place the rest of the crate had
+  stopped doing it. The anchored write also lands its mode exactly — `openat`'s mode argument is
   masked by the process umask, so `write_file` stages the entry owner-only and `fchmod`s the
-  descriptor once the content is final — and it is the final `renameat` that publishes the
-  name, so a staged binary never exists in the rootfs with permissions other than the ones
-  asked for. The mode travels as a `FileMode` rather than a `u32`, which masks the file-type
-  bits off at construction: `take` reads a full `st_mode`, and the value it records is fed
-  straight back to `write_file` by `put_back`.
+  descriptor once the content is final — and it is the final `renameat` that publishes the name,
+  so a staged binary never exists in the rootfs with permissions other than the ones asked for.
+  The mode travels as a `FileMode` rather than a `u32`, which masks the file-type bits off at
+  construction: `take` reads a full `st_mode`, and the value it records is fed straight back to
+  `write_file` by `put_back`.
 
   **Direct execution names an inode too.** With `isolation: false` the program a task
   declares would otherwise be resolved by the kernel on the host, so it is resolved against
@@ -323,13 +329,14 @@ patterns run throughout `src/isolation/`:
   `mkdirat`'s), and moved into place with `RENAME_NOREPLACE`, so an entry that appears at the
   name meanwhile fails the rename instead of being replaced or followed. `remove_dir` removes
   only an empty directory: what provisioning put there is not the guard's to delete.
-- **RAII lifecycle managers.** `RootfsMounts`, `RootfsAptSources` and `RootfsResolvConf` (plus
-  `StagedFileGuard` in `src/phase/mod.rs`, which removes scripts and binaries staged
-  into the rootfs) all guarantee cleanup via `Drop`, including on error paths. Mounts
-  unmount in reverse order and `unmount()` is idempotent, collecting errors across entries.
-  `RootfsResolvConf` detaches the rootfs's own resolv.conf with `RootfsOps::take`, which
-  returns it as a value (file content, mode and owner, or symlink target and owner) rather
-  than moving it to a backup path, and puts it back on teardown or `Drop`.
+- - **RAII lifecycle managers.** `RootfsMounts`, `RootfsAptSources` and `RootfsResolvConf` (plus
+  `StagedFileGuard` in `src/phase/mod.rs`, which removes scripts and binaries staged into the
+  rootfs, and `PolicyRcD` in `src/phase/provision/apt.rs`, which puts back the rootfs's own
+  `policy-rc.d`) all guarantee cleanup via `Drop`, including on error paths. Mounts unmount in
+  reverse order and `unmount()` is idempotent, collecting errors across entries.
+  `RootfsResolvConf` detaches the rootfs's own resolv.conf with `RootfsOps::take`, which returns
+  it as a value (file content, mode and owner, or symlink target and owner) rather than moving
+  it to a backup path, and puts it back on teardown or `Drop`.
 
   Holding it in memory removes two failure modes a backup file had. A crash left the backup
   as an orphan the operator had to move back by hand, and an attacker who could pre-create the
@@ -438,10 +445,10 @@ patterns run throughout `src/isolation/`:
 
   That translation is a string join, and the kernel resolves the result when it execs — so a
   rootfs whose `/bin/sh` is a symlink pointing outward used to run a host binary. The program
-  (only the program: it is the one argument the kernel resolves on our behalf) is now walked
-  component by component with `O_NOFOLLOW` first, with the final component checked by
-  `statat` rather than an open, because `O_NOFOLLOW | O_PATH` opens the *link itself* and
-  succeeds. See also the escalation ban in
+  (only the program: it is the one argument the kernel resolves on our behalf) is now
+  resolved with `openat2(RESOLVE_IN_ROOT)` against a descriptor for the rootfs, and the
+  executor execs the descriptor that lands on (see *Direct execution names an inode too*
+  above). See also the escalation ban in
   [Configuration & resolution model](#configuration--resolution-model).
 - `IsolationContext` is split so that the two capabilities can be handed out separately.
   `RootfsContext` is the rootfs view — `rootfs()`, `dry_run()`, `rootfs_ops()` — and
@@ -614,29 +621,32 @@ The non-obvious parts are all about keeping the schema faithful to the *deserial
   wraps deserialization in `serde_path_to_error`, so errors carry the field path
   (`provision[2].privilege`) instead. `ShellTask` / `MitamaeTask` never had the split: they
   forward to their hoisted `Raw*` DTOs, which *are* the deserialize path.
-- **`script` xor `content`** is enforced at runtime by `resolve_script_source`; the schema mirrors
-  it as a `oneOf` on the `Raw*` DTO, shared by both provisioners via
+- - **`script` xor `content`** is enforced at runtime by `resolve_script_source`; the schema
+  mirrors it as a `oneOf` on the `Raw*` DTO, shared by both provisioners via
   `schema::script_or_content()`. Each branch constrains the source to a *string*, not mere key
   presence, because `serde` treats an explicit `null` on an `Option` field as absent — so
   `{ script: null, content: hi }` is accepted and `{ script: null }` rejected, matching serde.
-  This is the *only* mutual exclusion mirrored in the schema, because it is the only one enforced
-  at deserialize time. The `resolv_conf` exclusions (`copy` vs `name_servers`/`search` in prepare,
+  The apt keyring's `path` / `content` / `url` choice is the same shape: enforced by
+  `AptKeyring`'s `Deserialize` and mirrored as a `oneOf` on `RawAptKeyring`. These two are the
+  only mutual exclusions mirrored in the schema, because they are the only ones enforced at
+  deserialize time. The `resolv_conf` exclusions (`copy` vs `name_servers`/`search` in prepare,
   `link` vs `name_servers`/`search` in assemble) are *semantic* — checked in `validate()`, not
   `Deserialize` — so encoding them as a schema `oneOf`/`not` would reject documents the
   deserializer accepts, violating the never-false-reject invariant. They stay out of the schema
   deliberately.
-- **`deny_unknown_fields` ⇒ `additionalProperties: false`.** Applied to `Profile`, `Defaults`,
-  `MitamaeDefaults`, `MountEntry`, `PrivilegeDefaults`, both bootstrap configs, and
-  `ChrootIsolation` so typo'd keys are rejected. It is honored even on the internally tagged
-  `Bootstrap` / `IsolationConfig` variants because serde's internally-tagged newtype-variant
-  deserialization consumes the `type` tag when selecting the variant and hands only the remaining
-  fields to the variant struct (so the tag is not seen as an unknown field) — serde-core behavior
-  that holds under `serde_json` and `yaml_serde` alike, not a parser quirk. The well-known serde
-  limitation is narrower: `deny_unknown_fields` is a no-op when placed on the internally-tagged
-  *enum* itself, which is why both `Bootstrap` and `IsolationConfig` put it on their variant
-  payload structs instead. On the schema side, `schemars` inlines the `type` const into each
-  `oneOf` branch's `properties`, so `additionalProperties: false` does not falsely reject the
-  discriminator.
+- - **`deny_unknown_fields` ⇒ `additionalProperties: false`.** Applied to every struct a profile
+  key lands in — `Profile`, `Defaults` and its members, the `prepare`/`assemble` sections and
+  their tasks, the bootstrap configs, `ChrootIsolation`, and the provision tasks and apt
+  keyrings (directly, or on their `Raw*` DTOs) — so typo'd keys are rejected. It is honored even
+  on the internally tagged `Bootstrap` / `IsolationConfig` variants because serde's
+  internally-tagged newtype-variant deserialization consumes the `type` tag when selecting the
+  variant and hands only the remaining fields to the variant struct (so the tag is not seen as
+  an unknown field) — serde-core behavior that holds under `serde_json` and `yaml_serde` alike,
+  not a parser quirk. The well-known serde limitation is narrower: `deny_unknown_fields` is a
+  no-op when placed on the internally-tagged *enum* itself, which is why both `Bootstrap` and
+  `IsolationConfig` put it on their variant payload structs instead. On the schema side,
+  `schemars` inlines the `type` const into each `oneOf` branch's `properties`, so
+  `additionalProperties: false` does not falsely reject the discriminator.
 - **IP address fields use `format`, not a hard `pattern`.** `name_servers` renders via the
   `IpAddrSchema` proxy as `{ type: string, anyOf: [ { format: ipv4 }, { format: ipv6 } ] }`.
   `format` is annotational (non-asserting by default), so the schema never *rejects* a string the
@@ -674,7 +684,7 @@ Drift guards (all in `cargo test`, so CI fails on drift):
   allowing only those classes. A schema that accepts what the parser rejects is not a safety
   violation, but an unlisted one means the schema drifted looser than the parser with nothing
   saying so. Typing `mount.target` as a `RelPath` produced exactly such a divergence, and this
-  assertion is what surfaced it. Semantic checks that JSON Schema cannot express (mount
+  assertion is what surfaced it. Semantic checks that JSON Schema cannot express (`resolv_conf`
   `name_servers` exclusivity, mitamae binary resolution) stay in `Profile::validate_*` and are out
   of scope here.
 

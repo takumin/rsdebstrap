@@ -1242,7 +1242,7 @@
 						},
 						"update": {
 							"default": false,
-							"description": "Run `apt-get update` before installing. Defaults to `false`, so that splitting\ninstalls over several apt tasks does not refresh the package lists each time; set\nit on the first apt task, since a freshly bootstrapped rootfs has no package lists.",
+							"description": "Run `apt-get update` before installing. Defaults to `false`, so that splitting\ninstalls over several apt tasks does not refresh the package lists each time; set\nit on the first apt task, since a freshly bootstrapped rootfs has no package lists\n(mmdebstrap) or only the ones for its bootstrap mirror (debootstrap).",
 							"type": "boolean"
 						}
 					},

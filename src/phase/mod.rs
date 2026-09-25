@@ -178,6 +178,10 @@ pub(crate) fn validate_no_parent_dirs(path: &Utf8Path, label: &str) -> Result<()
 /// `RsdebstrapError::Io` if the file cannot be accessed, or
 /// `RsdebstrapError::Validation` if the path is a symlink or not a regular file.
 /// The `label` parameter is used in error messages (e.g., "shell script", "mitamae binary").
+///
+/// This is a pre-flight check that gives a readable error, not the control: it resolves a
+/// path string, so the name can be repointed before the file is used. [`read_host_file`]
+/// checks the descriptor it actually reads from.
 pub(crate) fn validate_host_file_exists(
     path: &Utf8Path,
     label: &str,

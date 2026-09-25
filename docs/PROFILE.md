@@ -113,8 +113,8 @@ assemble:                   # Optional finalization steps (named-field struct)
   scalars (`suite: "13"`). `dir` must additionally be non-empty.
 - On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`,
   `assemble.output`, `mounts`, `options`, `name_servers`, `search`, the apt `keyrings`,
-  `repositories`, `preferences`, `components` and `architectures`, `mitamae`,
-  `mitamae.binary`), an explicit `null`, an empty
+  `repositories`, `preferences`, `components` and `architectures`, the apt provision task's
+  `install`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty
   value (e.g. a section whose entries are all commented out), and omitting the key are
   equivalent — all mean "use the default".
 - That list is exhaustive: the list fields inside the internally tagged `bootstrap:` maps
@@ -267,8 +267,9 @@ on the host. Two consequences follow, and both are enforced rather than document
 - `type: apt` runs `apt-get update` when `update: true`, then `apt-get install -y` for the
   `install` list, inside the task's isolation. A task with neither is a validation error
 - `update` defaults to `false`, so that installs split over several apt tasks do not refresh
-  the package lists each time. Neither bootstrap backend leaves package lists behind by default
-  (mmdebstrap removes them unless told `--skip=cleanup/apt/lists`), so set
+  the package lists each time. A freshly bootstrapped rootfs has no up-to-date lists for the
+  sources a profile adds: mmdebstrap removes the lists unless told `--skip=cleanup/apt/lists`,
+  and debootstrap keeps only the indices it downloaded from its bootstrap mirror. So set
   `update: true` on the first apt task (and on the first one after a task that changes the
   apt sources). An install that fails in a task without it says so in the error
 - `recommends` defaults to `false`, which passes `--no-install-recommends`. Packages the
@@ -350,10 +351,13 @@ on the host. Two consequences follow, and both are enforced rather than document
 
 ## How rootfs modifications are performed
 
-Both `resolv_conf` tasks change files inside the rootfs, which normally needs root. Rather than
-running `sudo cp` / `sudo mv` per operation, rsdebstrap escalates **once** per run: it spawns a
-helper process under `defaults.privilege.method` that holds a descriptor to the rootfs and
-performs the changes as syscalls anchored to it.
+Several items change files inside the rootfs, which normally needs root: both `resolv_conf`
+tasks, `prepare.apt` (keyrings, sources and preferences), `assemble.apt_clean`,
+`assemble.machine_id`, the `policy-rc.d` an apt provision task installs around its install,
+and the scripts and binaries staged for provision tasks. Rather than running `sudo cp` /
+`sudo mv` per operation, rsdebstrap escalates **once** per run: it spawns a helper process
+under `defaults.privilege.method` that holds a descriptor to the rootfs and performs the
+changes as syscalls anchored to it.
 
 Two consequences are visible from a profile:
 

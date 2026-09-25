@@ -32,7 +32,8 @@ const POLICY_RC_D_DENY: &[u8] = b"#!/bin/sh\nexit 101\n";
 pub struct AptGetTask {
     /// Run `apt-get update` before installing. Defaults to `false`, so that splitting
     /// installs over several apt tasks does not refresh the package lists each time; set
-    /// it on the first apt task, since a freshly bootstrapped rootfs has no package lists.
+    /// it on the first apt task, since a freshly bootstrapped rootfs has no package lists
+    /// (mmdebstrap) or only the ones for its bootstrap mirror (debootstrap).
     #[serde(default)]
     update: bool,
 
