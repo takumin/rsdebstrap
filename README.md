@@ -48,7 +48,7 @@ must be on your `PATH`:
 - **`mksquashfs`** (from squashfs-tools) — only when a profile sets
   `assemble.output.rootfs`, as the bundled example does.
 
-Building from source additionally requires **Rust 1.98+** (edition 2024). This
+Building from source additionally requires **Rust 1.99+** (edition 2024). This
 minimum supported version is declared as `rust-version` in `Cargo.toml`, so
 `cargo` and downstream packagers can read it directly.
 
