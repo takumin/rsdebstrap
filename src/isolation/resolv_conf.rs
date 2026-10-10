@@ -516,14 +516,14 @@ mod tests {
     // the rollback both failed". Failing every write would collapse the two.
     struct FailFirstWrites {
         inner: LocalRootfsOps,
-        remaining: std::sync::atomic::AtomicUsize,
+        remaining: std::sync::Mutex<usize>,
     }
 
     impl FailFirstWrites {
         fn new(inner: LocalRootfsOps, n: usize) -> Self {
             Self {
                 inner,
-                remaining: std::sync::atomic::AtomicUsize::new(n),
+                remaining: std::sync::Mutex::new(n),
             }
         }
     }
@@ -544,16 +544,12 @@ mod tests {
             content: &[u8],
             mode: FileMode,
         ) -> std::result::Result<(), crate::error::RsdebstrapError> {
-            if self
-                .remaining
-                .fetch_update(
-                    std::sync::atomic::Ordering::SeqCst,
-                    std::sync::atomic::Ordering::SeqCst,
-                    |n| n.checked_sub(1),
-                )
-                .is_ok()
             {
-                return Err(crate::error::RsdebstrapError::Isolation("write refused".into()));
+                let mut remaining = self.remaining.lock().unwrap();
+                if let Some(n) = remaining.checked_sub(1) {
+                    *remaining = n;
+                    return Err(crate::error::RsdebstrapError::Isolation("write refused".into()));
+                }
             }
             self.inner.write_file(path, content, mode)
         }
