@@ -862,6 +862,48 @@
 			},
 			"type": "object"
 		},
+		"EnvVar": {
+			"anyOf": [
+				{
+					"type": "string"
+				},
+				{
+					"$ref": "#/$defs/EnvVarConfig"
+				},
+				{
+					"type": "null"
+				}
+			]
+		},
+		"EnvVarConfig": {
+			"additionalProperties": false,
+			"description": "An environment variable with options.",
+			"properties": {
+				"sensitive": {
+					"default": false,
+					"description": "Keep the value out of rsdebstrap's logs.",
+					"type": "boolean"
+				},
+				"value": {
+					"default": null,
+					"description": "The value to set. Omit it to pass the variable through from the environment\nrsdebstrap runs in.",
+					"type": [
+						"string",
+						"null"
+					]
+				}
+			},
+			"type": "object"
+		},
+		"Envs": {
+			"additionalProperties": {
+				"$ref": "#/$defs/EnvVar"
+			},
+			"propertyNames": {
+				"pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+			},
+			"type": "object"
+		},
 		"Format": {
 			"description": "Format for the target output",
 			"oneOf": [
@@ -1735,6 +1777,17 @@
 		"dir": {
 			"description": "Target directory path for the bootstrap operation",
 			"type": "string"
+		},
+		"envs": {
+			"anyOf": [
+				{
+					"$ref": "#/$defs/Envs"
+				},
+				{
+					"type": "null"
+				}
+			],
+			"description": "Environment variables for the bootstrap backend and every provision task, by name.\nAn empty value passes the variable through from the environment rsdebstrap runs in\n(left out when unset there); a string sets it; a map sets `value` and `sensitive`.\nThey reach escalated programs too, whose environment `sudo`/`doas` would otherwise\nreset."
 		},
 		"prepare": {
 			"anyOf": [

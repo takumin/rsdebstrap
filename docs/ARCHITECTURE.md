@@ -577,6 +577,22 @@ patterns run throughout `src/isolation/`:
 - Privilege is threaded through *command* execution as `Option<PrivilegeMethod>`, so
   escalation is uniform across the commands that genuinely are external programs
   (`mount`, `umount`, `chroot`, `mksquashfs`, the bootstrap backend, provision scripts).
+- A spec's `env` is set on the process the executor spawns, which for a privileged spec is
+  `sudo`/`doas`, and both reset the environment of what they start. For `sudo`,
+  `RealCommandExecutor` adds `--preserve-env=<names>`, and `sudo` refuses the command if
+  its policy does not allow it. `doas` has no such option and drops what `doas.conf` does
+  not pass without a word, so `run_apply` checks first (`check_doas_env`): one
+  `doas chroot / /bin/sh` that reports which variables are unset. `chroot /` because
+  `Chroot` is the `PrivilegedProgram` that runs a program, and `/` makes it a no-op; the
+  shell only tests variables and never prints a value. Two alternatives were tried and dropped: `sudo env K=V …`
+  needs no policy, but puts every value — `sensitive` ones included — in an argv any user
+  can read from the process list; a hidden subcommand of this binary that read the
+  variables on stdin and exec'd the program kept them out of the argv under any policy, at
+  the cost of a second internal entry point that runs an arbitrary program as root. The
+  profile's `envs:` reaches the bootstrap backend and, through the `WithEnv` executor the
+  pipeline wraps around the provision phase only, every provision task — not
+  `mount`/`umount`/`mksquashfs`, which are this crate's own invocations rather than
+  programs the profile asked for.
 
 ### Privilege boundary
 

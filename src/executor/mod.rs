@@ -126,6 +126,9 @@ impl CommandSpec {
     }
 
     /// Environment variables set in addition to the inherited environment.
+    ///
+    /// For a privileged spec they are set on the escalation command, and `sudo` is asked to
+    /// keep them with `--preserve-env=<names>`; `doas` keeps them only as `doas.conf` allows.
     pub fn env(&self) -> &[(String, String)] {
         &self.env
     }
@@ -261,6 +264,36 @@ impl CommandSpec {
         self.env
             .extend(envs.into_iter().map(|(k, v)| (k.into(), v.into())));
         self
+    }
+}
+
+/// Executor that adds a fixed set of environment variables to every command it runs.
+///
+/// How a provision task's commands receive the profile's `envs` without each task, or each
+/// isolation backend, having to carry them: the task builds its command as before, and the
+/// variables are attached on the way to `inner`.
+pub(crate) struct WithEnv {
+    inner: Arc<dyn CommandExecutor>,
+    env: Vec<(String, String)>,
+}
+
+impl WithEnv {
+    pub(crate) fn new(inner: Arc<dyn CommandExecutor>, env: Vec<(String, String)>) -> Self {
+        Self { inner, env }
+    }
+}
+
+impl CommandExecutor for WithEnv {
+    fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
+        if self.env.is_empty() {
+            return self.inner.execute(spec);
+        }
+        self.inner
+            .execute(&spec.clone().with_envs(self.env.iter().cloned()))
+    }
+
+    fn dry_run(&self) -> bool {
+        self.inner.dry_run()
     }
 }
 

@@ -3,6 +3,7 @@
 #
 # This profile demonstrates all available features:
 #   - vars: suite and architecture, overridable from the environment or the command line
+#   - envs: environment variables (e.g. a proxy) for the bootstrap and provision tasks
 #   - defaults: isolation (chroot), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
 #   - pipeline: prepare (mount, apt, resolv_conf), provision (apt + shell + mitamae),
@@ -16,6 +17,17 @@ vars:
   arch: amd64
 
 dir: /tmp/debian-${{ vars.suite }}-server-${{ vars.arch }}
+
+# Environment variables for the bootstrap and every provision task. `sudo` resets the
+# environment, so a proxy set on the host only reaches mmdebstrap and apt-get when listed
+# here. An empty value passes the host's value through (left out if unset); a string sets
+# it; `sensitive: true` keeps the value out of rsdebstrap's logs.
+# envs:
+#   HTTP_PROXY:
+#   HTTPS_PROXY:
+#   NO_PROXY: 127.0.0.1,localhost
+#   REGISTRY_TOKEN:
+#     sensitive: true
 
 # Default settings applied to all tasks unless overridden per-task
 defaults:
