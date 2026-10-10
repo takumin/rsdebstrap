@@ -25,7 +25,7 @@ defaults:                   # Optional default settings
       - url: https://github.com/<owner>/mitamae-plugin-resource-foo.git
         commit: <40 hex digits>  # Git repository at a full commit ID (host's git)
       - url: https://github.com/<owner>/mitamae-plugin-resource-bar/archive/<commit>.tar.gz
-        sha256: <64 hex digits>  # Archive (.tar.gz / .tar) over https
+        checksum: sha256:<64 hex digits>  # Archive (.tar.gz / .tar) over https
         # name: mitamae-plugin-resource-bar  # Optional: override the derived name
 bootstrap:
   type: mmdebstrap          # Backend type: mmdebstrap | debootstrap
@@ -50,7 +50,7 @@ prepare:                    # Optional preparation steps (named-field struct)
         # path: ./keys/docker.asc  # Host file, relative to the profile
         # content: |               # Inline, ASCII-armored
         #   -----BEGIN PGP PUBLIC KEY BLOCK-----
-        sha256: <64 hex digits>  # Optional: pin the key's bytes
+        checksum: sha256:<64 hex digits>  # Optional: pin the key's bytes
     repositories:           # Optional: deb822 repositories
       - name: docker        # -> /etc/apt/sources.list.d/docker.sources
         # when: vars.distrib == 'debian'  # Optional: CEL condition; written only when true
@@ -127,7 +127,7 @@ assemble:                   # Optional finalization steps (named-field struct)
     assets:                 # Optional files to place in `dir` (list, in order)
       - file: boot/start4.elf  # Path relative to `dir`; directories are created
         url: https://github.com/raspberrypi/firmware/raw/<commit>/boot/start4.elf
-        sha256: <64 hex digits>  # Required with url, optional otherwise
+        checksum: sha256:<64 hex digits>  # Required with url, optional otherwise
         # OR
         # path: ./boot/config.txt  # Host file, relative to the profile
         # content: "console=serial0,115200 root=/dev/mmcblk0p2 rootwait\n"
@@ -273,6 +273,23 @@ variables — naming one that was skipped is the same error as naming one that d
 exist. An `apt` section whose every entry is skipped is left out of the run rather than
 refused as empty.
 
+## Checksums
+
+A `checksum` field (on an apt keyring, an output asset, and an archive mitamae plugin) is
+written `<algorithm>:<hex digest>`:
+
+```yaml
+checksum: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+- `algorithm` is one of `md5` (32 hex digits), `sha1` (40), `sha256` (64) or `sha512` (128), in
+  lowercase. The digest may be in either case
+- It is parsed with the profile, so an unknown algorithm or a digest of the wrong length is a
+  parse error that names the field and line, before anything is downloaded
+- A mismatch reports both digests, as `checksum mismatch: expected sha256:…, got sha256:…`
+- `md5` and `sha1` are accepted for matching a digest an upstream publishes, not as protection
+  against a deliberately altered file; prefer `sha256` or `sha512` where both are available
+
 ## YAML scalar and null rules
 
 - String-typed fields (paths, suite/target names, mount sources/options, search domains) accept
@@ -396,7 +413,7 @@ on the host. Two consequences follow, and both are enforced rather than document
   so it never exists at its own name with another mode. `/etc/apt` itself must exist
 - `url` must be `https`, redirects included, and is verified against the host's trust store.
   The key is downloaded when the prepare phase runs (not in a dry run, and not by `validate`),
-  and at most 1 MiB is accepted. `sha256`, if given, is checked against the bytes from any
+  and at most 1 MiB is accepted. `checksum`, if given, is checked against the bytes from any
   source; for inline `content` that happens when the profile is validated
 - Every keyring is read, downloaded and checked before the first change, so a bad key fails
   the run with the rootfs untouched. A change that fails after that is not rolled back: it
@@ -485,8 +502,8 @@ on the host. Two consequences follow, and both are enforced rather than document
     commit ID (40 or 64 hex digits), fetched with the host's `git`. Abbreviated IDs, branches
     and tags are refused, so the content cannot change under the profile. Credentials come
     from git's own configuration (ssh agent, credential helper); git never prompts
-  - `url` + `sha256` — an `https` archive (`.tar.gz` or plain `.tar`, told apart by content)
-    pinned to the SHA-256 of the downloaded bytes, such as a forge's
+  - `url` + `checksum` — an `https` archive (`.tar.gz` or plain `.tar`, told apart by content)
+    pinned to the digest of the downloaded bytes, such as a forge's
     `.../archive/<commit>.tar.gz`. `mrblib` is looked for at the top of the archive and, failing
     that, inside its single top-level directory
 - Each plugin is staged under a name, which is what mitamae knows it by (`include_recipe
@@ -613,9 +630,9 @@ on the host. Two consequences follow, and both are enforced rather than document
   the user running `rsdebstrap` with mode `0600`, because it holds every file of the rootfs.
   `-one-file-system` keeps anything still mounted under the rootfs out of the image
 - Each asset names exactly one source: `url` (https only, redirects included, and requires
-  `sha256`), `path` (a regular file on the host, not a symlink; relative paths are resolved
+  `checksum`), `path` (a regular file on the host, not a symlink; relative paths are resolved
   against the profile's directory), `content` (inline text), or `source` (an absolute path in
-  the rootfs, read like `kernel.source`). `sha256` is optional on the other three. The digest is
+  the rootfs, read like `kernel.source`). `checksum` is optional on the other three. The digest is
   computed while the file is written and checked before it is renamed into place, so a mismatch
   leaves an existing file untouched. A download over 1 GiB is refused, and a host file over
   64 MiB

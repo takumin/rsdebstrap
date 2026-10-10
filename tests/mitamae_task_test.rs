@@ -3,6 +3,7 @@
 mod helpers;
 
 use rsdebstrap::RsdebstrapError;
+use rsdebstrap::checksum::{Algorithm, Checksum};
 use rsdebstrap::phase::provision::MitamaePlugin;
 use rsdebstrap::phase::{MitamaeTask, ScriptSource};
 use tempfile::tempdir;
@@ -677,24 +678,19 @@ fn test_validate_rejects_unpinned_or_local_git_sources() {
 }
 
 #[test]
-fn test_validate_rejects_non_https_or_malformed_archive_sources() {
+fn test_validate_rejects_non_https_archive_sources() {
     let temp_dir = tempdir().expect("failed to create temp dir");
-    let sha256 = "0".repeat(64);
-    let cases = [
-        ("http://example.com/mitamae-plugin-resource-x.tar.gz", sha256.as_str(), "https"),
-        ("https://example.com/mitamae-plugin-resource-x.tar.gz", "abc", "64 hex digits"),
-    ];
-    for (url, sha256, expected) in cases {
-        let message =
-            validation_message(&task_with(&temp_dir, vec![MitamaePlugin::archive(url, sha256)]));
-        assert!(message.contains(expected), "{}: got: {}", url, message);
-    }
+    let checksum = Checksum::of(Algorithm::Sha256, b"");
+    let plugin =
+        MitamaePlugin::archive("http://example.com/mitamae-plugin-resource-x.tar.gz", checksum);
+    let message = validation_message(&task_with(&temp_dir, vec![plugin]));
+    assert!(message.contains("https"), "got: {}", message);
 }
 
 #[test]
 fn test_plugin_names_are_derived_from_their_source() {
     let commit = "0123456789abcdef0123456789abcdef01234567";
-    let sha256 = "0".repeat(64);
+    let checksum = Checksum::of(Algorithm::Sha256, b"");
     let cases = [
         (
             MitamaePlugin::path("./plugins/mitamae-plugin-recipe-docker"),
@@ -717,7 +713,7 @@ fn test_plugin_names_are_derived_from_their_source() {
                     "https://github.com/takumin/mitamae-plugin-resource-apt_keyring",
                     "/archive/5217372e85df6c94f0a1dec05c7739114b35d570.tar.gz",
                 ),
-                &sha256,
+                checksum.clone(),
             ),
             "mitamae-plugin-resource-apt_keyring",
         ),
@@ -727,12 +723,15 @@ fn test_plugin_names_are_derived_from_their_source() {
                     "https://gitlab.com/group/mitamae-plugin-recipe-y",
                     "/-/archive/v1/mitamae-plugin-recipe-y-v1.tar.gz",
                 ),
-                &sha256,
+                checksum.clone(),
             ),
             "mitamae-plugin-recipe-y",
         ),
         (
-            MitamaePlugin::archive("https://example.com/dl/mitamae-plugin-resource-z.tgz", &sha256),
+            MitamaePlugin::archive(
+                "https://example.com/dl/mitamae-plugin-resource-z.tgz",
+                checksum,
+            ),
             "mitamae-plugin-resource-z",
         ),
     ];

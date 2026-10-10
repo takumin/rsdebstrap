@@ -1,4 +1,5 @@
 pub mod bootstrap;
+pub mod checksum;
 pub mod cli;
 pub mod condition;
 pub mod config;

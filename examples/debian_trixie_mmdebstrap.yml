@@ -41,7 +41,7 @@ defaults:
       #   - url: https://github.com/<owner>/mitamae-plugin-resource-foo.git
       #     commit: <full commit ID>
       #   - url: https://github.com/<owner>/mitamae-plugin-resource-bar/archive/<commit>.tar.gz
-      #     sha256: <64 hex digits>
+      #     checksum: sha256:<64 hex digits>
 
 # Supported types: mmdebstrap, debootstrap
 #
@@ -124,7 +124,7 @@ prepare:
     # - name: docker
     #   # Or `path: ./keys/docker.asc`, or inline `content: |`
     #   url: https://download.docker.com/linux/debian/gpg
-    #   # sha256: <64 hex digits>  # Pin the downloaded key
+    #   # checksum: sha256:<64 hex digits>  # Pin the downloaded key (md5/sha1/sha256/sha512)
     # repositories:
     # - name: docker
     #   sources:
@@ -237,12 +237,12 @@ assemble:
     initramfs:
       file: initrd.img
     # Other files to place in `dir`, such as a board's boot firmware. Each takes one of
-    # `url` (https, with a required sha256), `path` (a host file), `content` (inline)
+    # `url` (https, with a required checksum), `path` (a host file), `content` (inline)
     # or `source` (a path in the rootfs). Missing directories are created.
     # assets:
     # - file: boot/start4.elf
     #   url: https://github.com/raspberrypi/firmware/raw/<commit>/boot/start4.elf
-    #   sha256: <64 hex digits>
+    #   checksum: sha256:<64 hex digits>
     # - file: boot/config.txt
     #   path: ./boot/config.txt
     # - file: boot/cmdline.txt

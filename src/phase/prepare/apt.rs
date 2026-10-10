@@ -14,6 +14,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
+use crate::checksum::Checksum;
 use crate::condition::Condition;
 use crate::error::RsdebstrapError;
 use crate::phase::PhaseItem;
@@ -230,8 +231,8 @@ pub enum AptKeySource {
 pub struct AptKeyring {
     pub name: String,
     pub source: AptKeySource,
-    /// Lowercase hex SHA-256 of the key's bytes.
-    pub sha256: Option<String>,
+    /// Expected digest of the key's bytes.
+    pub checksum: Option<Checksum>,
     /// Condition under which the keyring is written, as declared in the profile.
     pub when: Option<Condition>,
 }
@@ -269,14 +270,11 @@ struct RawAptKeyring {
         skip_serializing_if = "Option::is_none"
     )]
     url: Option<String>,
-    /// Expected SHA-256 of the key's bytes, as 64 hex digits. Checked before anything is
+    /// Expected digest of the key's bytes, as `<algorithm>:<hex digest>` with algorithm
+    /// `md5`, `sha1`, `sha256` or `sha512`, e.g. `sha256:9f86d0…`. Checked before anything is
     /// written; recommended with `url`, where the bytes are the server's to choose.
-    #[serde(
-        default,
-        deserialize_with = "crate::de::opt_string",
-        skip_serializing_if = "Option::is_none"
-    )]
-    sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    checksum: Option<Checksum>,
     /// CEL expression over the profile's variables (`vars.<name>`); the keyring is written
     /// only when it evaluates to `true`, e.g. `vars.distrib == 'ubuntu'`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -317,7 +315,7 @@ impl<'de> Deserialize<'de> for AptKeyring {
         Ok(Self {
             name: raw.name,
             source,
-            sha256: raw.sha256,
+            checksum: raw.checksum,
             when: raw.when,
         })
     }
@@ -335,7 +333,7 @@ impl Serialize for AptKeyring {
             path,
             content,
             url,
-            sha256: self.sha256.clone(),
+            checksum: self.checksum.clone(),
             when: self.when.clone(),
         }
         .serialize(serializer)
@@ -875,14 +873,6 @@ impl AptKeyring {
     }
 
     fn validate_source(&self) -> Result<(), RsdebstrapError> {
-        if let Some(sha256) = &self.sha256
-            && !(sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()))
-        {
-            return Err(RsdebstrapError::Validation(format!(
-                "sha256 '{}' is not 64 hex digits",
-                sha256
-            )));
-        }
         match &self.source {
             AptKeySource::Path(path) => {
                 crate::phase::validate_no_parent_dirs(path, "apt keyring")?;
@@ -899,7 +889,7 @@ impl AptKeyring {
                 // Inline content is text, and a binary keyring does not survive YAML, so
                 // only the armored form is accepted here.
                 match KeyFormat::detect(content.as_bytes())? {
-                    KeyFormat::Armored => self.check_sha256(content.as_bytes()),
+                    KeyFormat::Armored => self.check_checksum(content.as_bytes()),
                     KeyFormat::Binary => Err(RsdebstrapError::Validation(
                         "inline content must be ASCII-armored".to_string(),
                     )),
@@ -922,24 +912,12 @@ impl AptKeyring {
         }
     }
 
-    /// Checks `bytes` against `sha256`, if one was given.
-    pub(crate) fn check_sha256(&self, bytes: &[u8]) -> Result<(), RsdebstrapError> {
-        use sha2::{Digest, Sha256};
-
-        let Some(expected) = &self.sha256 else {
-            return Ok(());
-        };
-        let actual: String = Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect();
-        if !actual.eq_ignore_ascii_case(expected) {
-            return Err(RsdebstrapError::Validation(format!(
-                "sha256 mismatch: expected {}, got {}",
-                expected, actual
-            )));
+    /// Checks `bytes` against `checksum`, if one was given.
+    pub(crate) fn check_checksum(&self, bytes: &[u8]) -> Result<(), RsdebstrapError> {
+        match &self.checksum {
+            Some(checksum) => checksum.verify(bytes).map_err(RsdebstrapError::Validation),
+            None => Ok(()),
         }
-        Ok(())
     }
 }
 
@@ -988,7 +966,7 @@ mod tests {
         AptKeyring {
             name: name.to_string(),
             source,
-            sha256: None,
+            checksum: None,
             when: None,
         }
     }
@@ -1044,7 +1022,7 @@ mod tests {
 keyrings:
   - name: docker
     url: https://download.docker.com/linux/debian/gpg
-    sha256: 1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
+    checksum: sha256:1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
 repositories:
   - name: docker
     sources:
@@ -1060,7 +1038,7 @@ remove_sources_list: true
         let task: AptTask = yaml_serde::from_str(yaml).unwrap();
         let keyring = &task.keyrings[0];
         assert!(matches!(&keyring.source, AptKeySource::Url(u) if u.ends_with("/gpg")));
-        assert!(keyring.sha256.is_some());
+        assert!(keyring.checksum.is_some());
         let source = &task.repositories[0].sources[0];
         assert_eq!(source.types, vec![AptSourceType::Deb, AptSourceType::DebSrc]);
         assert_eq!(source.signed_by.as_deref(), Some("docker"));
@@ -1112,7 +1090,7 @@ remove_sources_list: true
 
     #[test]
     fn deserialize_keyring_rejects_no_source() {
-        let yaml = "name: k\nsha256: abc\n";
+        let yaml = "name: k\nchecksum: md5:d41d8cd98f00b204e9800998ecf8427e\n";
         let err = yaml_serde::from_str::<AptKeyring>(yaml).unwrap_err();
         assert!(err.to_string().contains("must be specified"), "{}", err);
     }
@@ -1127,7 +1105,7 @@ remove_sources_list: true
     #[test]
     fn keyring_roundtrips_through_yaml() {
         let mut k = inline("k");
-        k.sha256 = Some("0".repeat(64));
+        k.checksum = Some(Checksum::new(&format!("sha512:{}", "0".repeat(128))).unwrap());
         let yaml = yaml_serde::to_string(&k).unwrap();
         assert_eq!(yaml_serde::from_str::<AptKeyring>(&yaml).unwrap(), k);
     }
@@ -1419,28 +1397,18 @@ remove_sources_list: true
     }
 
     #[test]
-    fn validate_checks_the_sha256_of_inline_content() {
+    fn validate_checks_the_checksum_of_inline_content() {
         let mut k = inline("k");
-        k.sha256 = Some("0".repeat(64));
+        k.checksum = Some(Checksum::new(&format!("sha256:{}", "0".repeat(64))).unwrap());
         let msg = validation_message(task(vec![k], vec![]).validate());
-        assert!(msg.contains("sha256 mismatch"), "{}", msg);
+        assert!(msg.contains("checksum mismatch"), "{}", msg);
     }
 
     #[test]
-    fn validate_rejects_a_malformed_sha256() {
-        let mut k = keyring("k", AptKeySource::Url("https://example.com/key".to_string()));
-        k.sha256 = Some("abc".to_string());
-        let msg = validation_message(task(vec![k], vec![]).validate());
-        assert!(msg.contains("64 hex digits"), "{}", msg);
-    }
-
-    #[test]
-    fn check_sha256_accepts_the_matching_digest_in_either_case() {
-        // SHA-256 of the empty input.
-        let mut k = keyring("k", AptKeySource::Url("https://example.com/key".to_string()));
-        k.sha256 =
-            Some("E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855".to_string());
-        assert!(k.check_sha256(b"").is_ok());
+    fn deserialize_keyring_rejects_a_malformed_checksum() {
+        let yaml = "name: k\nurl: https://example.com/key\nchecksum: sha256:abc\n";
+        let err = yaml_serde::from_str::<AptKeyring>(yaml).unwrap_err();
+        assert!(err.to_string().contains("64 hex digits"), "{}", err);
     }
 
     #[test]
