@@ -439,7 +439,8 @@ pub struct Profile {
     #[schemars(with = "crate::schema::Utf8PathSchema")]
     pub dir: Utf8PathBuf,
     /// Variables and their default values. Any string elsewhere in the profile may
-    /// reference one as `${{ vars.<name> }}`, except a provision task's inline `content`.
+    /// reference one as `${{ vars.<name> }}`, except a provision task's inline `content`
+    /// and `when:` (which reads them as `vars.<name>`).
     /// A value is overridden by the environment variable `RSDEBSTRAP_VAR_<NAME>` (the
     /// name in uppercase), and that by `--var <name>=<value>`; only declared variables
     /// can be overridden.
@@ -511,6 +512,7 @@ impl Profile {
             &self.dir,
             self.defaults.privilege.as_ref(),
             &self.defaults.isolation,
+            &self.vars,
         )
     }
 
@@ -773,6 +775,16 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
             && let Some(binary) = default_binary
         {
             mitamae_task.set_binary_if_absent(binary);
+        }
+        // A skipped task is not resolved either: its settings may only make sense for the
+        // variables it is written for, and the pipeline leaves it out the same way.
+        if !task.is_enabled(&profile.vars)? {
+            tracing::info!(
+                "provision task '{}' is skipped: `when: {}` is false",
+                task.name(),
+                task.when().map_or("", |c| c.source())
+            );
+            continue;
         }
         task.resolve(privilege_defaults, &isolation_defaults)?;
     }

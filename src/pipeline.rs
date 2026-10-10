@@ -12,6 +12,7 @@
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -53,7 +54,8 @@ pub struct Pipeline<'a> {
 
 impl<'a> Pipeline<'a> {
     /// Creates a new pipeline with the given task phases, resolving each provision
-    /// task's privilege and isolation settings against the profile defaults.
+    /// task's privilege and isolation settings against the profile defaults. A provision
+    /// task whose `when:` condition evaluates to `false` under `vars` is left out.
     ///
     /// This is the unvalidated constructor: it resolves settings but performs none of the
     /// semantic checks in [`Profile::validate`](crate::config::Profile::validate), so a
@@ -70,8 +72,9 @@ impl<'a> Pipeline<'a> {
     /// # Errors
     ///
     /// Returns `RsdebstrapError::Validation` if a task declares `privilege: true` but
-    /// the profile configures no `defaults.privilege.method`, or if it resolves to
-    /// escalated execution without isolation.
+    /// the profile configures no `defaults.privilege.method`, if it resolves to
+    /// escalated execution without isolation, or if its `when:` condition cannot be
+    /// evaluated.
     pub(crate) fn new(
         prepare: &'a PrepareConfig,
         provision: &'a [ProvisionTask],
@@ -79,11 +82,15 @@ impl<'a> Pipeline<'a> {
         output_dir: &'a Utf8Path,
         privilege_defaults: Option<&PrivilegeDefaults>,
         isolation_defaults: &IsolationConfig,
+        vars: &BTreeMap<String, String>,
     ) -> Result<Self, RsdebstrapError> {
-        let provision = provision
-            .iter()
-            .map(|task| task.resolve(privilege_defaults, isolation_defaults))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut resolved = Vec::with_capacity(provision.len());
+        for task in provision {
+            if task.is_enabled(vars)? {
+                resolved.push(task.resolve(privilege_defaults, isolation_defaults)?);
+            }
+        }
+        let provision = resolved;
         Ok(Self {
             prepare,
             provision,
@@ -409,6 +416,7 @@ mod tests {
     // Inside the crate rather than under `tests/` because `Pipeline::new` is the unvalidated
     // constructor and is `pub(crate)`: a pipeline that skipped `Profile::validate` must not be
     // reachable from outside, and these tests exist precisely to drive one that did.
+    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
     use anyhow::Result;
@@ -455,6 +463,7 @@ mod tests {
             Utf8Path::new("/tmp"),
             None,
             &IsolationConfig::default(),
+            &BTreeMap::new(),
         )
         .expect("no task declares `privilege: true`, so resolution cannot fail")
     }
@@ -723,6 +732,7 @@ mod tests {
             Utf8Path::new("/tmp"),
             None,
             &IsolationConfig::default(),
+            &BTreeMap::new(),
         )
         .expect("no task declares `privilege: true`, so resolution cannot fail");
         let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
@@ -769,6 +779,7 @@ mod tests {
             Utf8Path::new("/tmp"),
             None,
             &IsolationConfig::default(),
+            &BTreeMap::new(),
         )
         .expect("no task declares `privilege: true`, so resolution cannot fail");
         let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
@@ -801,6 +812,7 @@ mod tests {
             Utf8Path::new("/tmp"),
             None,
             &IsolationConfig::default(),
+            &BTreeMap::new(),
         )
         .expect("no task declares `privilege: true`, so resolution cannot fail");
         let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());
@@ -840,6 +852,7 @@ mod tests {
             Utf8Path::new("/tmp"),
             None,
             &IsolationConfig::default(),
+            &BTreeMap::new(),
         )
         .expect("no task declares `privilege: true`, so resolution cannot fail");
         let executor: Arc<dyn CommandExecutor> = Arc::new(MockExecutor::new());

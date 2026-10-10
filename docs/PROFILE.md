@@ -67,6 +67,7 @@ prepare:                    # Optional preparation steps (named-field struct)
     # search: [example.com]    # Optional search domains
 provision:                  # Optional main provisioning steps (ordered list)
   - type: shell
+    when: vars.suite == 'trixie'  # Optional: CEL condition; the task runs only when true
     content: "..."          # Inline script
     # OR
     script: ./script.sh     # External script path
@@ -158,7 +159,8 @@ bootstrap:
   against another variable), and a provision task's inline `content`. That is a script run
   in the rootfs, so substituting into it would make an environment variable's value part
   of the program — and `${{ … }}` there is left for the script's own syntax. A script that
-  needs a value should take it from a `script:` file selected by a variable.
+  needs a value should take it from a `script:` file selected by a variable, or from one of
+  several tasks chosen by [`when:`](#conditions). A task's `when:` is not substituted either.
 - A string is a reference only in the form `${{ vars.<name> }}` (spaces inside the braces
   are optional). Any other `${{ … }}`, an unterminated `${{`, or a reference to an
   undeclared variable is a parse error that names the field and line.
@@ -179,6 +181,39 @@ steps:
       RSDEBSTRAP_VAR_SUITE: ${{ matrix.suite }}
       RSDEBSTRAP_VAR_ARCH: ${{ matrix.arch }}
 ```
+
+## Conditions
+
+A provision task (`shell`, `apt`, `mitamae`) may declare `when:`, a
+[CEL](https://cel.dev) expression that decides whether the task runs:
+
+```yaml
+vars:
+  distrib: debian
+  suite: trixie
+provision:
+  - type: apt
+    when: vars.distrib == 'debian'
+    install: [firmware-linux-free]
+  - type: shell
+    when: vars.suite in ['bookworm', 'trixie'] && vars.distrib != 'ubuntu'
+    script: ./roles/${{ vars.distrib }}.sh
+```
+
+- The expression sees one variable, `vars`: a map from each declared name to its value
+  after overrides. **Values are strings**, so compare with strings (`vars.debug == 'true'`)
+  or convert (`int(vars.version) >= 13`).
+- It is evaluated once, when the profile is loaded. A task whose condition is `false` is
+  left out of the run as if it were not declared: its settings are not resolved and it is
+  not validated, so a `script:` it names need not exist. Skipped tasks are logged at `info`.
+- `when:` is not a `${{ … }}` string: it is never substituted, and writing
+  `${{ vars.suite }} == 'trixie'` is an error. Other fields of the same task are
+  substituted as usual.
+- A syntax error, a reference that does not resolve (`vars.sutie`, or any name other than
+  `vars`), or a result that is not a bool fails the load — a misspelled name never reads as
+  `false`. A key that may be absent can be tested with `'name' in vars`, but since only
+  declared variables exist, that is always known when the profile is written.
+- Numbering in run logs (`provision 2/3`) counts the tasks that run.
 
 ## YAML scalar and null rules
 

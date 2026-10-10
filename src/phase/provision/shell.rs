@@ -14,6 +14,7 @@ use std::borrow::Cow;
 use std::fs;
 use tracing::{debug, info};
 
+use crate::condition::Condition;
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::phase::{ScriptSource, StagedFileGuard};
@@ -49,6 +50,9 @@ pub struct ShellTask {
 
     /// Isolation setting as declared in the profile
     isolation: TaskIsolation,
+
+    /// Condition under which the task runs, as declared in the profile
+    when: Option<Condition>,
 }
 
 fn default_shell() -> String {
@@ -72,6 +76,9 @@ struct RawShellTask {
     privilege: Privilege,
     #[serde(default)]
     isolation: TaskIsolation,
+    /// CEL expression over the profile's variables (`vars.<name>`); the task runs only
+    /// when it evaluates to `true`, e.g. `vars.suite == 'trixie'`.
+    when: Option<Condition>,
 }
 
 impl<'de> Deserialize<'de> for ShellTask {
@@ -86,6 +93,7 @@ impl<'de> Deserialize<'de> for ShellTask {
             shell: raw.shell,
             privilege: raw.privilege,
             isolation: raw.isolation,
+            when: raw.when,
         })
     }
 }
@@ -111,6 +119,7 @@ impl ShellTask {
             shell: default_shell(),
             privilege: Privilege::default(),
             isolation: TaskIsolation::default(),
+            when: None,
         }
     }
 
@@ -124,6 +133,7 @@ impl ShellTask {
             shell: shell.into(),
             privilege: Privilege::default(),
             isolation: TaskIsolation::default(),
+            when: None,
         }
     }
 
@@ -160,6 +170,11 @@ impl ShellTask {
     /// Returns the isolation setting as written in the profile.
     pub fn task_isolation(&self) -> &TaskIsolation {
         &self.isolation
+    }
+
+    /// Returns the `when:` condition as written in the profile.
+    pub fn when(&self) -> Option<&Condition> {
+        self.when.as_ref()
     }
 
     /// Validates the task configuration.

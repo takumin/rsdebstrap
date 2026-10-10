@@ -9,7 +9,7 @@
 //! 2. Creating a corresponding data struct (e.g., `MitamaeTask`)
 //! 3. Implementing the match arms in all methods on `ProvisionTask`
 //!    (`name`, `validate`, `execute`, `script_path`, `resolve_paths`, `binary_path`,
-//!    `privilege`, `task_isolation`)
+//!    `privilege`, `task_isolation`, `when`)
 //!
 //! The compiler enforces exhaustiveness, ensuring all task types are handled.
 
@@ -18,6 +18,7 @@ pub mod mitamae;
 pub mod shell;
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 use camino::Utf8Path;
 use schemars::JsonSchema;
@@ -27,6 +28,7 @@ pub use apt::AptGetTask;
 pub use mitamae::MitamaeTask;
 pub use shell::ShellTask;
 
+use crate::condition::Condition;
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
 use crate::isolation::TaskIsolation;
@@ -201,5 +203,30 @@ impl ProvisionTask {
             Self::Mitamae(task) => task.task_isolation(),
             Self::Apt(task) => task.task_isolation(),
         }
+    }
+
+    /// Returns the `when:` condition as written in the profile.
+    pub fn when(&self) -> Option<&Condition> {
+        match self {
+            Self::Shell(task) => task.when(),
+            Self::Mitamae(task) => task.when(),
+            Self::Apt(task) => task.when(),
+        }
+    }
+
+    /// Returns whether this task runs under the profile's variables: `true` without a
+    /// `when:` condition, otherwise what the condition evaluates to.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RsdebstrapError::Validation` if the condition fails to evaluate or does not
+    /// evaluate to a `bool`.
+    pub fn is_enabled(&self, vars: &BTreeMap<String, String>) -> Result<bool, RsdebstrapError> {
+        let Some(condition) = self.when() else {
+            return Ok(true);
+        };
+        condition
+            .evaluate(vars)
+            .map_err(|e| RsdebstrapError::Validation(format!("task '{}': {e}", self.name())))
     }
 }

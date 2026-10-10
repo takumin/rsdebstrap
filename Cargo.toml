@@ -23,6 +23,9 @@ anyhow = "1.0.98"
 # renders a `Vec<u8>` as a decimal array — 4.6 bytes of text per byte of file.
 base64 = "0.23.0"
 camino = { version = "1.1.9", features = ["serde1"] }
+# Evaluates a provision task's `when:` condition. The default features (regex, chrono,
+# base64 encoders) back CEL functions a condition over string variables does not need.
+cel = { version = "0.15.0", default-features = false }
 clap = { version = "4.5.37", features = ["derive"] }
 clap_complete = "4.5.65"
 rustix = { version = "1.1.3", features = ["fs"] }

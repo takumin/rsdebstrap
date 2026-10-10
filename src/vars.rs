@@ -202,8 +202,9 @@ enum Scope {
     Provision,
     ProvisionTask,
     Substitute,
-    // `vars:` itself (values are literal, not expressions over each other) and a provision
-    // task's inline `content` (a script; see `docs/ARCHITECTURE.md`).
+    // `vars:` itself (values are literal, not expressions over each other), a provision
+    // task's inline `content` (a script; see `docs/ARCHITECTURE.md`) and its `when:` (a CEL
+    // expression that reads the variables itself).
     Verbatim,
 }
 
@@ -213,7 +214,7 @@ impl Scope {
             (Self::Verbatim, _) => Self::Verbatim,
             (Self::Root, Some("vars")) => Self::Verbatim,
             (Self::Root, Some("provision")) => Self::Provision,
-            (Self::ProvisionTask, Some("content")) => Self::Verbatim,
+            (Self::ProvisionTask, Some("content" | "when")) => Self::Verbatim,
             _ => Self::Substitute,
         }
     }

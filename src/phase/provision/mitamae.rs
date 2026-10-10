@@ -14,6 +14,7 @@ use serde::Deserialize;
 use std::borrow::Cow;
 use tracing::{debug, info};
 
+use crate::condition::Condition;
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::phase::{ScriptSource, StagedFileGuard};
@@ -43,6 +44,8 @@ pub struct MitamaeTask {
     privilege: Privilege,
     /// Isolation setting as declared in the profile
     isolation: TaskIsolation,
+    /// Condition under which the task runs, as declared in the profile
+    when: Option<Condition>,
 }
 
 // Wire shape of a mitamae task: one type drives both deserialization and schema
@@ -62,6 +65,9 @@ struct RawMitamaeTask {
     privilege: Privilege,
     #[serde(default)]
     isolation: TaskIsolation,
+    /// CEL expression over the profile's variables (`vars.<name>`); the task runs only
+    /// when it evaluates to `true`, e.g. `vars.suite == 'trixie'`.
+    when: Option<Condition>,
 }
 
 impl<'de> Deserialize<'de> for MitamaeTask {
@@ -76,6 +82,7 @@ impl<'de> Deserialize<'de> for MitamaeTask {
             binary: raw.binary,
             privilege: raw.privilege,
             isolation: raw.isolation,
+            when: raw.when,
         })
     }
 }
@@ -98,6 +105,7 @@ impl MitamaeTask {
             binary: Some(binary),
             privilege: Privilege::default(),
             isolation: TaskIsolation::default(),
+            when: None,
         }
     }
 
@@ -108,6 +116,7 @@ impl MitamaeTask {
             binary: None,
             privilege: Privilege::default(),
             isolation: TaskIsolation::default(),
+            when: None,
         }
     }
 
@@ -157,6 +166,11 @@ impl MitamaeTask {
     /// Returns the isolation setting as written in the profile.
     pub fn task_isolation(&self) -> &TaskIsolation {
         &self.isolation
+    }
+
+    /// Returns the `when:` condition as written in the profile.
+    pub fn when(&self) -> Option<&Condition> {
+        self.when.as_ref()
     }
 
     /// Validates the task configuration.

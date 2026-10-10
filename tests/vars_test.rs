@@ -298,3 +298,69 @@ fn an_empty_vars_section_is_allowed() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn a_provision_tasks_condition_is_not_substituted() -> Result<()> {
+    // `when:` is CEL that reads `vars` itself; substituting into it first would splice a
+    // value into the expression's source.
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml_with_vars(
+        crate::yaml!(
+            r#"---
+vars:
+  suite: trixie
+dir: /tmp/rootfs
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+provision:
+- type: apt
+  when: vars.suite == 'trixie'
+  install: [curl]
+"#
+        ),
+        &VarOverrides::default(),
+    )?;
+    // editorconfig-checker-enable
+
+    let condition = profile.provision[0].when().expect("a condition");
+    assert_eq!(condition.source(), "vars.suite == 'trixie'");
+    Ok(())
+}
+
+fn apt_task_with_condition(when: &str) -> String {
+    format!(
+        "vars:\n  suite: trixie\n{MINIMAL_BODY}\
+        provision:\n- type: apt\n  when: {when}\n  install: [curl]\n"
+    )
+}
+
+#[test]
+fn a_malformed_condition_reports_the_task_and_line() {
+    // serde buffers an internally tagged enum, so the error is located at the task rather
+    // than at its `when:` key.
+    for (when, needle) in [
+        ("vars.suite ==", "not a valid CEL expression"),
+        ("${{ vars.suite }} == 'trixie'", "without the braces"),
+    ] {
+        let yaml = apt_task_with_condition(&format!("\"{when}\""));
+        let msg = config_error(
+            helpers::load_profile_from_yaml_with_vars(yaml, &VarOverrides::default()).unwrap_err(),
+        );
+        assert!(msg.contains(needle), "{when}: {msg}");
+        assert!(msg.contains("`provision[0]`"), "{when}: {msg}");
+        assert!(msg.contains("line 9"), "{when}: {msg}");
+    }
+}
+
+#[test]
+fn a_condition_on_an_undeclared_variable_fails_the_load() {
+    // A misspelled name must not read as `false` and quietly skip the task.
+    let yaml = apt_task_with_condition("vars.sutie == 'trixie'");
+    let err =
+        helpers::load_profile_from_yaml_with_vars(yaml, &VarOverrides::default()).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("apt:install"), "{msg}");
+    assert!(msg.contains("failed to evaluate"), "{msg}");
+}

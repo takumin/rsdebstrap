@@ -129,6 +129,34 @@ the feature exists to prevent. It also means the environment cannot introduce a 
 profile did not ask for. Names are lowercase so that `RSDEBSTRAP_VAR_<NAME>` maps back to
 exactly one variable.
 
+### Conditions (`when:`)
+
+A provision task's `when:` (`src/condition.rs`) is a CEL expression over `vars`. Notes on
+the shape:
+
+- **Why an expression language and not `${{ }}`.** Substituting a value into the condition
+  text and then evaluating it would make an environment variable part of the expression's
+  source — the same reason inline `content` is verbatim. CEL receives the variables as
+  data, so a value cannot change what the condition says. `vars::Scope` keeps `when`
+  verbatim for that reason. CEL in particular because it is non-Turing-complete, side-effect
+  free, and has a maintained pure-Rust implementation (`cel`); the default features are off.
+- **Evaluated at load, not at run time.** The variables are final once overrides are
+  applied, and nothing a run produces is visible to a condition, so there is no reason to
+  defer. `ProvisionTask::is_enabled` is checked before `resolve` in both places that
+  resolve tasks (`apply_defaults_to_tasks` and `Pipeline::new`), so a skipped task is never
+  resolved and never reaches `Pipeline::validate`: a role-specific `script:` need only
+  exist for the variables it serves. The task stays in `Profile::provision` — that is what
+  the profile declared — and only the pipeline, the resolved value, leaves it out.
+- **Errors are never `false`.** An evaluation error (a misspelled `vars.<name>` is a
+  missing key) or a non-bool result fails the load; reading it as `false` would silently
+  skip a task on a typo, the failure `vars:` refuses overrides for undeclared names to
+  prevent. The parse is checked during deserialization, so a syntax error carries the
+  profile location. Serde buffers the internally tagged `ProvisionTask`, so that location
+  is the task, not the `when:` key.
+- **Only provision.** Prepare and assemble are named-field structs of at-most-one items
+  whose meaning does not depend on a matrix entry in the cases seen so far; add `when:`
+  there only with a concrete need.
+
 ## Phases & the pipeline
 
 `Pipeline` (`src/pipeline.rs`) borrows `prepare: &PrepareConfig` and
