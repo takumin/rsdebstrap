@@ -14,6 +14,7 @@ use which::which;
 
 use super::pipe::{StreamType, panic_message, read_pipe_to_log};
 use super::{CommandExecutor, CommandSpec, ExecutionResult};
+use crate::privilege::PrivilegeMethod;
 
 /// Cleans up a child process and its associated reader threads.
 ///
@@ -130,6 +131,12 @@ impl CommandExecutor for RealCommandExecutor {
             if let Some(cwd) = spec.cwd() {
                 tracing::info!("dry run cwd: {}", cwd);
             }
+            // Names only: `run_apply` has already logged the values, with sensitive ones
+            // redacted, and this layer no longer knows which those are.
+            if !spec.env().is_empty() {
+                let names: Vec<&str> = spec.env().iter().map(|(k, _)| k.as_str()).collect();
+                tracing::info!("dry run env: {}", names.join(", "));
+            }
             return Ok(ExecutionResult { status: None });
         }
 
@@ -161,6 +168,15 @@ impl CommandExecutor for RealCommandExecutor {
             );
 
             let mut args: Vec<String> = Vec::with_capacity(spec.args().len() + 1);
+            // `sudo` resets the environment, so the variables set on it below are named here
+            // to be kept. Names only: a value in this argv would be readable by every user in
+            // the process list. Names are `[A-Za-z_][A-Za-z0-9_]*` (`envs::env_map`), so none
+            // contains the comma that separates them. `doas` has no such option; it keeps them
+            // only as `doas.conf` says (`setenv { NAME … }` or `keepenv`).
+            if *method == PrivilegeMethod::Sudo && !spec.env().is_empty() {
+                let names: Vec<&str> = spec.env().iter().map(|(k, _)| k.as_str()).collect();
+                args.push(format!("--preserve-env={}", names.join(",")));
+            }
             args.push(actual_cmd.display().to_string());
             args.extend(spec.args().iter().cloned());
 

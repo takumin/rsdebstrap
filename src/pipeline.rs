@@ -18,7 +18,7 @@ use tracing::{debug, info};
 
 use crate::config::IsolationConfig;
 use crate::error::RsdebstrapError;
-use crate::executor::CommandExecutor;
+use crate::executor::{CommandExecutor, WithEnv};
 use crate::isolation::mount::Unmounted;
 use crate::isolation::resolv_conf::{Prepared, Restored};
 use crate::isolation::{DirectProvider, IsolationProvider, PlainRootfsContext};
@@ -50,6 +50,8 @@ pub struct Pipeline<'a> {
     output_dir: &'a Utf8Path,
     /// The run's `defaults.privilege`, which escalates `mksquashfs`.
     privilege: Option<PrivilegeMethod>,
+    /// The profile's `envs`, resolved, for every provision task.
+    env: Vec<(String, String)>,
 }
 
 impl<'a> Pipeline<'a> {
@@ -97,7 +99,21 @@ impl<'a> Pipeline<'a> {
             assemble,
             output_dir,
             privilege: privilege_defaults.map(|d| d.method),
+            env: Vec::new(),
         })
+    }
+
+    /// Sets the environment variables every provision task's commands receive: the
+    /// profile's `envs`, resolved.
+    #[must_use]
+    pub(crate) fn with_env(mut self, env: Vec<(String, String)>) -> Self {
+        self.env = env;
+        self
+    }
+
+    /// The privilege escalation each provision task that will run resolved to.
+    pub(crate) fn provision_privileges(&self) -> impl Iterator<Item = Option<PrivilegeMethod>> {
+        self.provision.iter().map(ResolvedProvisionTask::privilege)
     }
 
     /// Returns true if the pipeline has no tasks to execute.
@@ -195,8 +211,12 @@ impl<'a> Pipeline<'a> {
         // are driven by RAII guards that bracket the whole pipeline. Iterating is
         // still what reports them as the tasks they are.
         run_phase_items(PHASE_PREPARE, &self.prepare.items(), |_| Ok(()))?;
+        // Only provision gets `envs`, not the whole run: mount, umount and mksquashfs are
+        // this crate's own invocations rather than programs the profile asked for.
+        let executor: Arc<dyn CommandExecutor> =
+            Arc::new(WithEnv::new(executor.clone(), self.env.clone()));
         run_phase_items(PHASE_PROVISION, &provision_items(&self.provision), |task| {
-            run_provision_item(task, rootfs, executor, ops)
+            run_provision_item(task, rootfs, &executor, ops)
         })?;
         Ok(Provisioned::new())
     }

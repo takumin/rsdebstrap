@@ -79,6 +79,13 @@ pub struct ResolvedProvisionTask<'a> {
     isolation: Option<IsolationConfig>,
 }
 
+impl ResolvedProvisionTask<'_> {
+    /// The privilege escalation this task's commands run under.
+    pub fn privilege(&self) -> Option<PrivilegeMethod> {
+        self.privilege
+    }
+}
+
 impl PhaseItem for ResolvedProvisionTask<'_> {
     fn name(&self) -> Cow<'_, str> {
         self.task.name()

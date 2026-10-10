@@ -11,6 +11,12 @@ to pull requests (see [`ARCHITECTURE.md`](ARCHITECTURE.md#json-schema-generation
 vars:                       # Optional variables, referenced as ${{ vars.<name> }}
   suite: trixie
 dir: /output/path           # Base output directory
+envs:                       # Optional environment for the bootstrap and provision tasks
+  HTTP_PROXY:               # Empty: passed through from rsdebstrap's environment (if set)
+  NO_PROXY: 127.0.0.1,localhost  # Set explicitly
+  API_TOKEN:
+    sensitive: true         # Optional: keep the value out of the logs
+    # value: ...            # Optional: set it rather than pass it through
 defaults:                   # Optional default settings
   isolation:
     type: chroot            # Isolation backend: chroot (default)
@@ -193,6 +199,52 @@ steps:
       RSDEBSTRAP_VAR_ARCH: ${{ matrix.arch }}
 ```
 
+## Environment variables
+
+`envs:` sets environment variables for the bootstrap backend (`mmdebstrap` /
+`debootstrap`) and for every provision task (`shell`, `apt`, `mitamae`). The usual case is a
+proxy, which `sudo`/`doas` would otherwise strip:
+
+```yaml
+envs:
+  HTTP_PROXY:
+  HTTPS_PROXY:
+  NO_PROXY: 127.0.0.1,localhost
+  REGISTRY_TOKEN:
+    sensitive: true
+  MIRROR_PASSWORD:
+    value: ${{ vars.mirror_password }}
+    sensitive: true
+```
+
+- **Value forms.** An empty value (or `null`) passes the variable through from the
+  environment rsdebstrap runs in; if it is not set there, it is left out rather than set
+  empty. A string sets it. A map takes `value` (omit it to pass through) and `sensitive`.
+  Values are strings: quote one that looks like another scalar (`DEBUG: "1"`).
+- **Names** match `[A-Za-z_][A-Za-z0-9_]*` and are case-sensitive (`http_proxy` and
+  `HTTP_PROXY` are different variables; list both if the programs involved read both).
+- **Logging.** `apply` logs the variables it passes at `info`, as `NAME=value`;
+  `sensitive: true` shows `NAME=<redacted>` there and in the profile dumps (`validate`, and
+  `debug` on load). `--dry-run` lists the names of each command's variables, never values.
+- **Under privilege** `sudo`/`doas` reset the environment, and a value in the escalated
+  argv would be readable by every user in the process list. rsdebstrap sets the variables
+  on the escalation command and, for `sudo`, names them in
+  `sudo --preserve-env=NAME,… <program> …` — names only, never values. The sudoers policy
+  has to allow that: a rule for `ALL` commands does; a rule restricted to specific commands
+  needs the `SETENV` tag (or the names in `env_keep`), and otherwise `sudo` refuses the
+  command rather than dropping the variables. `doas` has no such option; `doas.conf` has to
+  pass them, with `setenv { NAME … }` on the rule (or `keepenv`), and would otherwise drop
+  them silently. So when the bootstrap or a provision task that will run escalates with
+  `doas`, `apply` first runs `doas chroot / /bin/sh` with the variables to check that each
+  one arrives, and stops — naming the missing ones and the `setenv` rule to add — if any
+  does not. Values are not printed. That is one more `doas` invocation (and password
+  prompt, without `nopass`/`persist`); it checks that a variable is set, not its value, so a
+  `setenv { NAME=value }` override in `doas.conf` still wins. Once set, a value is readable
+  through `/proc/<pid>/environ` by root and the program's own user only.
+- They are not passed to `mount`, `umount`, `mksquashfs`, or the rootfs helper, which are
+  rsdebstrap's own invocations, and they do not change the environment of rsdebstrap
+  itself, so its own downloads (keyrings, assets, plugins) are unaffected.
+
 ## Conditions
 
 A provision task (`shell`, `apt`, `mitamae`) may declare `when:`, a
@@ -295,7 +347,7 @@ checksum: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85
 - String-typed fields (paths, suite/target names, mount sources/options, search domains) accept
   only YAML strings. Numbers, booleans, and `null` are parse errors — quote values that look like
   scalars (`suite: "13"`). `dir` must additionally be non-empty.
-- On defaulted section/list/map fields (`vars`, `defaults`, `prepare`, `provision`, `assemble`,
+- On defaulted section/list/map fields (`vars`, `envs`, `defaults`, `prepare`, `provision`, `assemble`,
   `assemble.output`, `assemble.output.assets`, `mounts`, `options`, `name_servers`, `search`, the
   apt `keyrings`, `repositories`, `preferences`, `components` and `architectures`, the apt
   provision task's `install`, `mitamae`, `mitamae.binary`, `mitamae.plugins`), an explicit

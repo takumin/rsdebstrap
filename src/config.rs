@@ -454,6 +454,14 @@ pub struct Profile {
     #[serde(default, deserialize_with = "crate::de::var_map")]
     #[schemars(with = "Option<crate::schema::VarsSchema>")]
     pub vars: BTreeMap<String, String>,
+    /// Environment variables for the bootstrap backend and every provision task, by name.
+    /// An empty value passes the variable through from the environment rsdebstrap runs in
+    /// (left out when unset there); a string sets it; a map sets `value` and `sensitive`.
+    /// They reach escalated programs too, whose environment `sudo`/`doas` would otherwise
+    /// reset.
+    #[serde(default, deserialize_with = "crate::envs::env_map")]
+    #[schemars(with = "Option<crate::envs::EnvsSchema>")]
+    pub envs: BTreeMap<String, crate::envs::EnvVar>,
     /// Default settings (isolation backend, etc.)
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
     #[schemars(with = "Option<Defaults>")]
@@ -512,7 +520,7 @@ impl<'a> ValidatedProfile<'a> {
 
 impl Profile {
     fn build_pipeline(&self) -> Result<Pipeline<'_>, RsdebstrapError> {
-        Pipeline::new(
+        let pipeline = Pipeline::new(
             &self.prepare,
             &self.provision,
             &self.assemble,
@@ -520,7 +528,9 @@ impl Profile {
             self.defaults.privilege.as_ref(),
             &self.defaults.isolation,
             &self.vars,
-        )
+        )?;
+        let env = crate::envs::resolve(&self.envs)?;
+        Ok(pipeline.with_env(env.iter().map(crate::envs::ResolvedEnv::pair).collect()))
     }
 
     /// Validate configuration semantics beyond basic deserialization.

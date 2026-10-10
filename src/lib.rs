@@ -4,6 +4,7 @@ pub mod cli;
 pub mod condition;
 pub mod config;
 pub(crate) mod de;
+pub mod envs;
 pub mod error;
 pub mod executor;
 pub(crate) mod https;
@@ -30,6 +31,7 @@ use crate::executor::CommandExecutor;
 use crate::isolation::apt_sources::{self, fetch_https};
 use crate::isolation::mount::RootfsMounts;
 use crate::isolation::resolv_conf::RootfsResolvConf;
+use crate::privilege::PrivilegeMethod;
 
 pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
     let filter = match log_level {
@@ -50,6 +52,7 @@ pub fn init_logging(log_level: cli::LogLevel) -> Result<()> {
 fn run_bootstrap_phase(
     profile: &config::Profile,
     executor: &Arc<dyn CommandExecutor>,
+    env: &[envs::ResolvedEnv],
 ) -> Result<()> {
     let backend = profile.bootstrap.as_backend();
     let program = backend.program();
@@ -66,12 +69,78 @@ fn run_bootstrap_phase(
         executor::PrivilegedProgram::Bootstrap(program),
         args,
         privilege,
-    );
+    )
+    .with_envs(env.iter().map(envs::ResolvedEnv::pair));
     executor
         .execute_checked(&spec)
         .with_context(|| format!("failed to execute {}", command_name))?;
 
     Ok(())
+}
+
+/// Whether the bootstrap or a provision task that will run escalates with `doas` — the
+/// commands `envs` reaches.
+fn uses_doas(validated: &config::ValidatedProfile<'_>) -> Result<bool> {
+    let profile = validated.profile();
+    let bootstrap = profile
+        .bootstrap
+        .resolve_privilege(profile.defaults.privilege.as_ref())?;
+    Ok(std::iter::once(bootstrap)
+        .chain(validated.pipeline()?.provision_privileges())
+        .any(|privilege| privilege == Some(PrivilegeMethod::Doas)))
+}
+
+// Prints the names among its arguments that are unset, and fails if there are any. Only
+// whether a variable is set is checked: `printenv`'s value goes to /dev/null, never into
+// the output, which the executor logs.
+const DOAS_ENV_CHECK: &str = r#"missing=
+for name do
+    printenv "$name" > /dev/null || missing="$missing $name"
+done
+[ -z "$missing" ] && exit 0
+echo "not passed by doas:$missing" >&2
+exit 1"#;
+
+/// Checks, before anything is built, that `doas` passes `env` to what it runs.
+///
+/// `sudo` is asked to keep the variables with `--preserve-env`, and refuses the command if
+/// its policy does not allow that. `doas` has no such option: it keeps a variable only if
+/// `doas.conf` says so (`setenv { NAME }` or `keepenv`), and otherwise drops it without a
+/// word, so a proxy or a token would go missing from a build that then fails, or succeeds,
+/// for reasons nobody can see. This runs one `doas` command with the variables and has it
+/// report the ones that did not arrive.
+///
+/// The command is the host's `/bin/sh` under `chroot /`, because `chroot` is the
+/// [`PrivilegedProgram`](executor::PrivilegedProgram) that runs a program; `/` makes it a
+/// no-op, and the shell only tests variables.
+fn check_doas_env(executor: &Arc<dyn CommandExecutor>, env: &[envs::ResolvedEnv]) -> Result<()> {
+    let names: Vec<&str> = env.iter().map(envs::ResolvedEnv::name).collect();
+    let args = ["/", "/bin/sh", "-c", DOAS_ENV_CHECK, "sh"]
+        .into_iter()
+        .chain(names.iter().copied())
+        .map(str::to_string)
+        .collect();
+    let spec = executor::CommandSpec::privileged(
+        executor::PrivilegedProgram::Chroot,
+        args,
+        Some(PrivilegeMethod::Doas),
+    )
+    .with_envs(env.iter().map(envs::ResolvedEnv::pair));
+    let result = executor
+        .execute(&spec)
+        .context("failed to check the environment doas passes")?;
+    if result.success() {
+        return Ok(());
+    }
+    Err(RsdebstrapError::Validation(format!(
+        "doas did not pass every `envs` variable (the missing ones are logged above, unless \
+        doas itself refused the command). doas keeps only what doas.conf allows: add \
+        `setenv {{ {} }}` to the rule this user runs as root with, for example \
+        `permit setenv {{ {} }} <user> as root`",
+        names.join(" "),
+        names.join(" "),
+    ))
+    .into())
 }
 
 /// Executes the pipeline phase (prepare, provision, assemble).
@@ -234,7 +303,17 @@ pub fn run_apply(common: &cli::CommonArgs, executor: Arc<dyn CommandExecutor>) -
             .with_context(|| format!("failed to create directory: {}", profile.dir))?;
     }
 
-    run_bootstrap_phase(&profile, &executor)?;
+    let env = envs::resolve(&profile.envs)?;
+    if !env.is_empty() {
+        let shown: Vec<String> = env.iter().map(ToString::to_string).collect();
+        info!("environment for bootstrap and provision: {}", shown.join(" "));
+    }
+
+    if !env.is_empty() && uses_doas(&validated)? {
+        check_doas_env(&executor, &env)?;
+    }
+
+    run_bootstrap_phase(&profile, &executor, &env)?;
     run_pipeline_phase(&validated, executor)?;
 
     Ok(())
@@ -356,6 +435,7 @@ mod tests {
 
             let status = std::process::Command::new(spec.command())
                 .args(spec.args())
+                .envs(spec.env().iter().cloned())
                 .status()?;
             Ok(ExecutionResult {
                 status: Some(status),
@@ -788,6 +868,153 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_link(&resolv).unwrap(), std::path::Path::new(LINK_TARGET));
+    }
+
+    // Runs the check script itself, as `doas` would leave it: some variables passed, some not.
+    #[test]
+    fn doas_env_check_names_the_unset_variables_without_their_values() {
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-c", DOAS_ENV_CHECK, "sh", "SET", "EMPTY", "GONE"])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("SET", "s3cret")
+            .env("EMPTY", "")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(stdout, "");
+        assert_eq!(stderr, "not passed by doas: GONE\n");
+
+        let passed = std::process::Command::new("/bin/sh")
+            .args(["-c", DOAS_ENV_CHECK, "sh", "SET"])
+            .env("SET", "x")
+            .output()
+            .unwrap();
+        assert!(passed.status.success(), "{passed:?}");
+        assert!(passed.stdout.is_empty() && passed.stderr.is_empty(), "{passed:?}");
+    }
+
+    // Answers every command with a fixed exit status and keeps the spec, so the check can be
+    // driven without a real `doas`.
+    struct FixedStatusExecutor {
+        code: i32,
+        specs: Mutex<Vec<CommandSpec>>,
+    }
+
+    impl CommandExecutor for FixedStatusExecutor {
+        fn dry_run(&self) -> bool {
+            false
+        }
+
+        fn execute(&self, spec: &CommandSpec) -> Result<ExecutionResult> {
+            use std::os::unix::process::ExitStatusExt;
+
+            self.specs.lock().unwrap().push(spec.clone());
+            Ok(ExecutionResult {
+                status: Some(std::process::ExitStatus::from_raw(self.code << 8)),
+            })
+        }
+    }
+
+    fn resolved_env(yaml: &str) -> Vec<envs::ResolvedEnv> {
+        let profile = load_profile_from(&format!(
+            "dir: /tmp/unused\n{yaml}bootstrap:\n  type: mmdebstrap\n  suite: trixie\n  \
+            target: rootfs\n"
+        ));
+        envs::resolve(&profile.envs).unwrap()
+    }
+
+    #[test]
+    fn doas_env_check_runs_the_script_under_doas_with_the_variables() {
+        let env = resolved_env("envs:\n  A: one\n  B:\n    value: two\n    sensitive: true\n");
+        let executor = Arc::new(FixedStatusExecutor {
+            code: 0,
+            specs: Mutex::new(Vec::new()),
+        });
+        check_doas_env(&(executor.clone() as Arc<dyn CommandExecutor>), &env).unwrap();
+
+        let specs = executor.specs.lock().unwrap();
+        let [spec] = specs.as_slice() else {
+            panic!("expected one command, got {}", specs.len());
+        };
+        assert_eq!(spec.command(), "chroot");
+        assert_eq!(spec.privilege(), Some(PrivilegeMethod::Doas));
+        assert_eq!(&spec.args()[..5], ["/", "/bin/sh", "-c", DOAS_ENV_CHECK, "sh"]);
+        assert_eq!(&spec.args()[5..], ["A", "B"]);
+        assert_eq!(
+            spec.env(),
+            [
+                ("A".to_owned(), "one".to_owned()),
+                ("B".to_owned(), "two".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn doas_env_check_failure_names_the_doas_conf_rule() {
+        let env = resolved_env("envs:\n  HTTP_PROXY: http://proxy:3128\n  TOKEN: x\n");
+        let executor: Arc<dyn CommandExecutor> = Arc::new(FixedStatusExecutor {
+            code: 1,
+            specs: Mutex::new(Vec::new()),
+        });
+        let err = check_doas_env(&executor, &env).unwrap_err().to_string();
+        assert!(err.contains("permit setenv { HTTP_PROXY TOKEN } <user> as root"), "{err}");
+    }
+
+    // The check is for `doas` wherever `envs` reaches: the bootstrap, or a provision task
+    // that overrides a `sudo` default. A task `when:` leaves out does not count.
+    #[test]
+    fn uses_doas_looks_at_the_bootstrap_and_the_provision_tasks_that_run() {
+        let profile = |defaults: &str, bootstrap: &str, task: &str| {
+            load_profile_from(&format!(
+                "dir: /tmp/unused\nvars:\n  on: 'no'\ndefaults:\n  privilege:\n    \
+                method: {defaults}\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  \
+                target: rootfs\n  privilege: {bootstrap}\nprovision:\n  - type: shell\n    \
+                content: 'true'\n{task}"
+            ))
+        };
+        for (defaults, bootstrap, task, expected) in [
+            ("sudo", "true", "", false),
+            ("doas", "true", "", true),
+            ("doas", "false", "    privilege: false\n", false),
+            ("sudo", "true", "    privilege: { method: doas }\n", true),
+            (
+                "sudo",
+                "true",
+                "    privilege: { method: doas }\n    when: vars.on == 'yes'\n",
+                false,
+            ),
+        ] {
+            let profile = profile(defaults, bootstrap, task);
+            let got = uses_doas(&profile.validate().unwrap()).unwrap();
+            assert_eq!(got, expected, "defaults {defaults}, bootstrap {bootstrap}, task {task:?}");
+        }
+    }
+
+    // A pass-through name that is unset is left out, so the shell sees it unset rather
+    // than empty; `${VAR-unset}` tells the two apart.
+    #[test]
+    fn provision_tasks_receive_the_profile_envs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = Utf8Path::from_path(tmp.path()).unwrap();
+        seed_rootfs(dir);
+        let out = dir.join("env.out");
+        let yaml = format!(
+            "dir: {dir}\n\
+            envs:\n  RSDEBSTRAP_TEST_SET: from profile\n  RSDEBSTRAP_TEST_UNSET_VAR:\n\
+            bootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: rootfs\n\
+            provision:\n  - type: shell\n    isolation: false\n    content: \
+            'printf \"%s|%s\" \"$RSDEBSTRAP_TEST_SET\" \
+            \"${{RSDEBSTRAP_TEST_UNSET_VAR-unset}}\" > {out}'\n"
+        );
+        let profile = load_profile_from(&yaml);
+        let executor = RecordingExecutor::new();
+
+        run_pipeline_phase(&profile.validate().unwrap(), executor.clone()).unwrap();
+
+        assert_eq!(fs::read_to_string(&out).unwrap(), "from profile|unset");
     }
 
     #[test]
