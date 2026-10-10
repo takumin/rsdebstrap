@@ -495,6 +495,53 @@ pub struct MockContext {
     return_no_status: bool,
     probe: Option<Utf8PathBuf>,
     probed: RefCell<Vec<Option<Vec<u8>>>>,
+    tree_probe: Option<Utf8PathBuf>,
+    tree_probed: RefCell<Vec<Vec<TreeEntry>>>,
+}
+
+// One entry of a directory tree as `with_tree_probe` saw it: the path below the probed
+// directory, the permission bits, and the content for a regular file (`None` for a
+// directory).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeEntry {
+    pub path: String,
+    pub mode: u32,
+    pub content: Option<Vec<u8>>,
+}
+
+fn snapshot_tree(root: &Utf8Path) -> Vec<TreeEntry> {
+    fn walk(root: &Utf8Path, dir: &Utf8Path, out: &mut Vec<TreeEntry>) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let Ok(entries) = dir.read_dir_utf8() else {
+            return;
+        };
+        for entry in entries {
+            let entry = entry.expect("tree probe: failed to read directory entry");
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(path).expect("tree probe: failed to stat");
+            let rel = path.strip_prefix(root).unwrap().to_string();
+            let mode = metadata.permissions().mode() & 0o7777;
+            if metadata.is_dir() {
+                out.push(TreeEntry {
+                    path: rel,
+                    mode,
+                    content: None,
+                });
+                walk(root, path, out);
+            } else {
+                out.push(TreeEntry {
+                    path: rel,
+                    mode,
+                    content: Some(std::fs::read(path).expect("tree probe: failed to read")),
+                });
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
 }
 
 impl MockContext {
@@ -512,6 +559,8 @@ impl MockContext {
             return_no_status: false,
             probe: None,
             probed: RefCell::new(Vec::new()),
+            tree_probe: None,
+            tree_probed: RefCell::new(Vec::new()),
         }
     }
 
@@ -526,6 +575,19 @@ impl MockContext {
 
     pub fn probed(&self) -> Vec<Option<Vec<u8>>> {
         self.probed.borrow().clone()
+    }
+
+    // Records every entry under `path` inside the rootfs as each command runs, for asserting
+    // on a tree a task staged around the command.
+    pub fn with_tree_probe(self, path: &str) -> Self {
+        Self {
+            tree_probe: Some(self.rootfs.join(path.trim_start_matches('/'))),
+            ..self
+        }
+    }
+
+    pub fn tree_probed(&self) -> Vec<Vec<TreeEntry>> {
+        self.tree_probed.borrow().clone()
     }
 
     pub fn new_dry_run(rootfs: &Utf8Path) -> Self {
@@ -595,6 +657,11 @@ impl IsolationContext for MockContext {
         self.executed_privileges.borrow_mut().push(privilege);
         if let Some(probe) = &self.probe {
             self.probed.borrow_mut().push(std::fs::read(probe).ok());
+        }
+        if let Some(tree_probe) = &self.tree_probe {
+            self.tree_probed
+                .borrow_mut()
+                .push(snapshot_tree(tree_probe));
         }
 
         if self.should_error {

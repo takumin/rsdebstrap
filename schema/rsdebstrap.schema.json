@@ -946,7 +946,7 @@
 		},
 		"MitamaeDefaults": {
 			"additionalProperties": false,
-			"description": "Default settings for mitamae tasks.\n\nAllows specifying architecture-specific binary paths that apply to all\nmitamae tasks unless overridden at the task level.",
+			"description": "Default settings for mitamae tasks.\n\nAllows specifying architecture-specific binary paths and a plugins directory that\napply to all mitamae tasks unless overridden at the task level.",
 			"properties": {
 				"binary": {
 					"additionalProperties": {
@@ -956,6 +956,123 @@
 					"description": "Architecture-specific binary paths (key: \"x86_64\", \"aarch64\", etc.)",
 					"type": [
 						"object",
+						"null"
+					]
+				},
+				"plugins": {
+					"description": "mitamae plugins staged for every mitamae task that does not declare its own\n`plugins`. Each is a host directory (`path`), a git repository at a commit (`url` +\n`commit`) or an https archive (`url` + `sha256`). Requires mitamae v1.10.1 or later.",
+					"items": {
+						"$ref": "#/$defs/MitamaePlugin"
+					},
+					"type": [
+						"array",
+						"null"
+					]
+				}
+			},
+			"type": "object"
+		},
+		"MitamaePlugin": {
+			"additionalProperties": false,
+			"oneOf": [
+				{
+					"properties": {
+						"commit": {
+							"type": "null"
+						},
+						"path": {
+							"type": "string"
+						},
+						"sha256": {
+							"type": "null"
+						},
+						"url": {
+							"type": "null"
+						}
+					},
+					"required": [
+						"path"
+					]
+				},
+				{
+					"properties": {
+						"commit": {
+							"type": "string"
+						},
+						"path": {
+							"type": "null"
+						},
+						"sha256": {
+							"type": "null"
+						},
+						"url": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"url",
+						"commit"
+					]
+				},
+				{
+					"properties": {
+						"commit": {
+							"type": "null"
+						},
+						"path": {
+							"type": "null"
+						},
+						"sha256": {
+							"type": "string"
+						},
+						"url": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"url",
+						"sha256"
+					]
+				}
+			],
+			"properties": {
+				"commit": {
+					"default": null,
+					"description": "Full commit ID (40 or 64 hex digits) to take from the git repository `url`. Fetched\nwith the host's `git`.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"name": {
+					"default": null,
+					"description": "Directory name the plugin is staged under, which is the name mitamae knows it by\n(`include_recipe 'docker'` finds `mitamae-plugin-recipe-docker`). Must start with\n`mitamae-plugin-resource-`, `mitamae-plugin-recipe-` or their `itamae-` forms.\nDefaults to the last component of `path`, the repository name of a git `url`, or\nthe repository name before `/archive/` in an archive `url`.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"path": {
+					"default": null,
+					"description": "Plugin directory on the host (the checkout itself, holding `mrblib`). Relative paths\nare resolved against the profile's directory.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"sha256": {
+					"default": null,
+					"description": "Expected SHA-256 of the archive at `url`, as 64 hex digits.",
+					"type": [
+						"string",
+						"null"
+					]
+				},
+				"url": {
+					"default": null,
+					"description": "Git repository (`https://`, `ssh://` or `user@host:path`) with `commit`, or an\n`https` URL of a `.tar.gz` / `.tar` archive with `sha256`.",
+					"type": [
+						"string",
 						"null"
 					]
 				}
@@ -1389,6 +1506,16 @@
 						"isolation": {
 							"$ref": "#/$defs/TaskIsolation",
 							"default": null
+						},
+						"plugins": {
+							"description": "mitamae plugins for this task, replacing `defaults.mitamae.plugins`; `[]` runs the\ntask with none.",
+							"items": {
+								"$ref": "#/$defs/MitamaePlugin"
+							},
+							"type": [
+								"array",
+								"null"
+							]
 						},
 						"privilege": {
 							"$ref": "#/$defs/Privilege",

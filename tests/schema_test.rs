@@ -351,6 +351,16 @@ fn schema_matches_structural_deserializer() {
             .to_string(),
             true,
         ),
+        (
+            "null mitamae plugins list",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: {plugins: null}}\n",
+            )
+            .to_string(),
+            true,
+        ),
         // Map *keys* are outside the strict-scalar rule on purpose: yaml_serde stringifies
         // scalar keys ({64: /x} -> "64") and the YAML->JSON conversion editors rely on does
         // the same, so both sides agree. Making keys strict would only create a new
@@ -414,6 +424,53 @@ fn schema_matches_structural_deserializer() {
                 "defaults: {mitamae: {binary: {x86_64: 42}}}\n",
             )
             .to_string(),
+            false,
+        ),
+        (
+            "integer mitamae plugins path",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: {plugins: [{path: 42}]}}\n",
+            )
+            .to_string(),
+            false,
+        ),
+        (
+            "integer mitamae task plugins path",
+            with_provision("{type: mitamae, content: x, plugins: [{path: 42}]}"),
+            false,
+        ),
+        (
+            "mitamae plugin git source",
+            with_provision("{type: mitamae, content: x, plugins: [{url: u, commit: c}]}"),
+            true,
+        ),
+        (
+            "mitamae plugin archive source",
+            with_provision("{type: mitamae, content: x, plugins: [{url: u, sha256: s}]}"),
+            true,
+        ),
+        (
+            "mitamae plugin path with null url",
+            with_provision("{type: mitamae, content: x, plugins: [{path: p, url: null}]}"),
+            true,
+        ),
+        (
+            "mitamae plugin url without pin",
+            with_provision("{type: mitamae, content: x, plugins: [{url: u}]}"),
+            false,
+        ),
+        (
+            "mitamae plugin commit and sha256",
+            with_provision(
+                "{type: mitamae, content: x, plugins: [{url: u, commit: c, sha256: s}]}",
+            ),
+            false,
+        ),
+        (
+            "mitamae plugin path and url",
+            with_provision("{type: mitamae, content: x, plugins: [{path: p, url: u, commit: c}]}"),
             false,
         ),
         // A custom-tagged scalar cannot be represented as a JSON value (schema_accepts counts

@@ -201,6 +201,29 @@ pub(crate) fn validate_host_file_exists(
     Ok(())
 }
 
+/// Validates that a host-side directory exists and is a directory (not a symlink).
+///
+/// The directory counterpart of [`validate_host_file_exists`], and likewise a pre-flight
+/// check for a readable error rather than the control.
+pub(crate) fn validate_host_dir_exists(
+    path: &Utf8Path,
+    label: &str,
+) -> Result<(), RsdebstrapError> {
+    let metadata = fs::symlink_metadata(path).map_err(|e| {
+        RsdebstrapError::io(format!("failed to read {} metadata: {}", label, path), e)
+    })?;
+    if metadata.is_symlink() {
+        return Err(RsdebstrapError::Validation(format!(
+            "{} path '{}' is a symlink, which is not allowed for security reasons",
+            label, path
+        )));
+    }
+    if !metadata.is_dir() {
+        return Err(RsdebstrapError::Validation(format!("{} is not a directory: {}", label, path)));
+    }
+    Ok(())
+}
+
 /// Refuses to stage more than this many bytes, whether they come from a host file or from
 /// a profile's inline `content`.
 ///
@@ -209,7 +232,7 @@ pub(crate) fn validate_host_file_exists(
 /// a profile legitimately names here is a mitamae binary, tens of megabytes; this leaves
 /// room for that and turns "the profile named something enormous" into an error rather than
 /// two processes growing until one of them is killed.
-const MAX_STAGED_CONTENT_SIZE: u64 = 64 << 20;
+pub(crate) const MAX_STAGED_CONTENT_SIZE: u64 = 64 << 20;
 
 /// Reads a host file, refusing a symlink or a non-regular file at the same descriptor.
 ///
@@ -223,11 +246,25 @@ const MAX_STAGED_CONTENT_SIZE: u64 = 64 << 20;
 /// with no output. It is the `fstat` below, not this open, that refuses one; the flag only
 /// keeps the refusal reachable, and it means nothing for a regular file.
 pub(crate) fn read_host_file(path: &Utf8Path, label: &str) -> Result<Vec<u8>> {
-    use rustix::fs::{self as rfs, CWD, FileType, Mode, OFlags};
+    read_host_file_at(rustix::fs::CWD, path.as_str(), path, label)
+}
+
+/// [`read_host_file`] for the entry `name` inside the already opened directory `dir`.
+///
+/// `path` is only what error messages call the file. Reading through `dir` is what lets a
+/// tree walk keep each file on the descriptor of the directory it was listed in, rather than
+/// resolving a joined path string again from the top.
+pub(crate) fn read_host_file_at(
+    dir: impl rustix::fd::AsFd,
+    name: &str,
+    path: &Utf8Path,
+    label: &str,
+) -> Result<Vec<u8>> {
+    use rustix::fs::{self as rfs, FileType, Mode, OFlags};
 
     let fd = rfs::openat(
-        CWD,
-        path.as_str(),
+        dir,
+        name,
         OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
         Mode::empty(),
     )
@@ -317,6 +354,45 @@ impl Drop for StagedFileGuard<'_> {
         match self.ops.remove(&self.path) {
             Ok(()) => tracing::debug!("cleaned up staged file: {}", self.path),
             Err(e) => tracing::error!(path = %self.path, "failed to clean up staged file: {}", e),
+        }
+    }
+}
+
+/// RAII guard removing a staged directory tree from the rootfs, on every path out.
+///
+/// The directory counterpart of [`StagedFileGuard`]: the tree is emptied through
+/// [`RootfsOps::clear_dir`], which descends by descriptor and never follows a symlink, and
+/// only then is the directory itself removed.
+pub(crate) struct StagedDirGuard<'a> {
+    ops: &'a dyn RootfsOps,
+    path: RelPath,
+    dry_run: bool,
+}
+
+impl<'a> StagedDirGuard<'a> {
+    pub(crate) fn new(ops: &'a dyn RootfsOps, path: RelPath, dry_run: bool) -> Self {
+        Self { ops, path, dry_run }
+    }
+}
+
+impl Drop for StagedDirGuard<'_> {
+    fn drop(&mut self) {
+        if self.dry_run {
+            return;
+        }
+        let removed = self
+            .ops
+            .clear_dir(&self.path, &[])
+            .and_then(|_| self.ops.remove_dir(&self.path));
+        match removed {
+            Ok(true) => tracing::debug!("cleaned up staged directory: {}", self.path),
+            Ok(false) => tracing::error!(
+                path = %self.path,
+                "failed to clean up staged directory: it was not empty after clearing it"
+            ),
+            Err(e) => {
+                tracing::error!(path = %self.path, "failed to clean up staged directory: {}", e)
+            }
         }
     }
 }

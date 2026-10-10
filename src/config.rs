@@ -398,8 +398,8 @@ impl IsolationConfig {
 
 /// Default settings for mitamae tasks.
 ///
-/// Allows specifying architecture-specific binary paths that apply to all
-/// mitamae tasks unless overridden at the task level.
+/// Allows specifying architecture-specific binary paths and a plugins directory that
+/// apply to all mitamae tasks unless overridden at the task level.
 #[derive(Debug, Deserialize, Clone, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MitamaeDefaults {
@@ -407,6 +407,12 @@ pub struct MitamaeDefaults {
     #[serde(default, deserialize_with = "crate::de::path_map")]
     #[schemars(with = "Option<std::collections::HashMap<String, crate::schema::Utf8PathSchema>>")]
     pub binary: HashMap<String, Utf8PathBuf>,
+    /// mitamae plugins staged for every mitamae task that does not declare its own
+    /// `plugins`. Each is a host directory (`path`), a git repository at a commit (`url` +
+    /// `commit`) or an https archive (`url` + `sha256`). Requires mitamae v1.10.1 or later.
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[schemars(with = "Option<Vec<crate::phase::provision::MitamaePlugin>>")]
+    pub plugins: Vec<crate::phase::provision::MitamaePlugin>,
 }
 
 /// Default settings that apply across the profile.
@@ -788,6 +794,7 @@ fn drop_disabled_apt_entries(profile: &mut Profile) -> Result<(), RsdebstrapErro
 fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError> {
     let arch = std::env::consts::ARCH;
     let default_binary = profile.defaults.mitamae.binary.get(arch);
+    let default_plugins = profile.defaults.mitamae.plugins.clone();
     let privilege_defaults = profile.defaults.privilege.as_ref();
     let isolation_defaults = profile.defaults.isolation.clone();
 
@@ -807,10 +814,13 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
     profile.bootstrap.resolve_privilege(privilege_defaults)?;
 
     for task in profile.provision.iter_mut() {
-        if let ProvisionTask::Mitamae(mitamae_task) = task
-            && let Some(binary) = default_binary
-        {
-            mitamae_task.set_binary_if_absent(binary);
+        if let ProvisionTask::Mitamae(mitamae_task) = task {
+            if let Some(binary) = default_binary {
+                mitamae_task.set_binary_if_absent(binary);
+            }
+            if !default_plugins.is_empty() {
+                mitamae_task.set_plugins_if_absent(&default_plugins);
+            }
         }
         // A skipped task is not resolved either: its settings may only make sense for the
         // variables it is written for, and the pipeline leaves it out the same way.
@@ -837,6 +847,9 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
         if binary.is_relative() {
             *binary = profile_dir.join(&*binary);
         }
+    }
+    for plugin in profile.defaults.mitamae.plugins.iter_mut() {
+        plugin.resolve_paths(profile_dir);
     }
 
     if let Some(apt) = &mut profile.prepare.apt {

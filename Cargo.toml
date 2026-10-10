@@ -28,6 +28,8 @@ camino = { version = "1.1.9", features = ["serde1"] }
 cel = { version = "0.15.0", default-features = false }
 clap = { version = "4.5.37", features = ["derive"] }
 clap_complete = "4.5.65"
+# Decompresses a mitamae plugin given as a `.tar.gz` archive by `url`.
+flate2 = "1.1.10"
 rustix = { version = "1.1.3", features = ["fs"] }
 schemars = "1.2"
 serde = { version = "1.0.219", features = ["derive"] }
@@ -36,6 +38,9 @@ serde_path_to_error = "0.1.20"
 # Checks a `prepare.apt` key against the `sha256` the profile pins it to.
 sha2 = "0.11.0"
 strum = { version = "0.28.0", features = ["derive"] }
+# Reads a mitamae plugin archive, and the `git archive` stream a git-sourced plugin is read
+# from. Only parsed, never unpacked onto disk, so the `xattr` default feature is not needed.
+tar = { version = "0.4.46", default-features = false }
 tempfile = "3.25.0"
 thiserror = "2.0.18"
 tracing = "0.1.41"

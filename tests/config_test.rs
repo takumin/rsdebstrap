@@ -1398,6 +1398,146 @@ provision:
 }
 
 #[test]
+fn test_load_profile_mitamae_defaults_plugins_apply_unless_task_overrides() -> Result<()> {
+    use rsdebstrap::phase::provision::{MitamaePlugin, MitamaePluginSource};
+
+    let temp_dir = tempdir()?;
+    let profile_path = temp_dir.path().join("profile.yml");
+
+    // editorconfig-checker-disable
+    std::fs::write(
+        &profile_path,
+        crate::yaml!(
+            r#"---
+dir: /tmp/test
+defaults:
+  mitamae:
+    plugins:
+      - path: ./plugins/mitamae-plugin-recipe-docker
+      - url: https://github.com/takumin/mitamae-plugin-resource-apt_repository.git
+        commit: a91eaf1446778c13b9afc64177af17a2b2748636
+      - url: https://github.com/takumin/mitamae-plugin-resource-apt_keyring/archive/5217372e85df6c94f0a1dec05c7739114b35d570.tar.gz
+        sha256: 0000000000000000000000000000000000000000000000000000000000000000
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+  format: directory
+provision:
+  - type: mitamae
+    content: "package 'vim'"
+  - type: mitamae
+    plugins:
+      - path: other/mitamae-plugin-resource-other
+        name: mitamae-plugin-resource-renamed
+    content: "package 'vim'"
+  - type: mitamae
+    plugins: []
+    content: "package 'vim'"
+"#
+        ),
+    )?;
+    // editorconfig-checker-enable
+
+    let path = Utf8Path::from_path(&profile_path).unwrap();
+    let profile = load_profile(path)?;
+    let dir = Utf8Path::from_path(temp_dir.path()).unwrap();
+
+    match profile.provision.as_slice() {
+        [
+            ProvisionTask::Mitamae(inherits),
+            ProvisionTask::Mitamae(overrides),
+            ProvisionTask::Mitamae(none),
+        ] => {
+            let sources: Vec<&MitamaePluginSource> = inherits
+                .plugins()
+                .unwrap()
+                .iter()
+                .map(MitamaePlugin::source)
+                .collect();
+            assert_eq!(
+                sources,
+                vec![
+                    &MitamaePluginSource::Path(dir.join("./plugins/mitamae-plugin-recipe-docker")),
+                    &MitamaePluginSource::Git {
+                        url:
+                            "https://github.com/takumin/mitamae-plugin-resource-apt_repository.git"
+                                .to_string(),
+                        commit: "a91eaf1446778c13b9afc64177af17a2b2748636".to_string(),
+                    },
+                    &MitamaePluginSource::Archive {
+                        url: concat!(
+                            "https://github.com/takumin/mitamae-plugin-resource-apt_keyring",
+                            "/archive/5217372e85df6c94f0a1dec05c7739114b35d570.tar.gz",
+                        )
+                        .to_string(),
+                        sha256: "0".repeat(64),
+                    },
+                ],
+                "defaults.mitamae.plugins should apply, paths resolved against the profile"
+            );
+            assert_eq!(
+                overrides.plugins().unwrap(),
+                &[
+                    MitamaePlugin::path(dir.join("other/mitamae-plugin-resource-other"))
+                        .with_name("mitamae-plugin-resource-renamed")
+                ],
+                "task-level plugins should replace defaults"
+            );
+            assert_eq!(none.plugins(), Some(&[][..]), "`plugins: []` should clear defaults");
+        }
+        _ => panic!("expected three mitamae tasks"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_mitamae_plugin_source_must_be_unambiguous() {
+    let cases = [
+        ("{url: https://x/r.git}", "requires 'commit'"),
+        ("{url: https://x/r.git, commit: a, sha256: b}", "mutually exclusive"),
+        ("{path: ./p, url: https://x/r.git, commit: a}", "cannot be combined"),
+        ("{commit: a}", "one of 'path' or 'url'"),
+        ("{path: ./p, tag: v1}", "unknown field"),
+    ];
+    for (plugin, expected) in cases {
+        let yaml = format!(
+            "dir: /tmp/test\nbootstrap: {{type: mmdebstrap, suite: s, target: r}}\n\
+            defaults: {{mitamae: {{plugins: [{}]}}}}\n",
+            plugin
+        );
+        let err = format!("{:#}", helpers::load_profile_from_yaml(&yaml).unwrap_err());
+        assert!(err.contains(expected), "{}: got: {}", plugin, err);
+    }
+}
+
+#[test]
+fn test_load_profile_mitamae_without_plugins_leaves_them_unset() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+provision:
+  - type: mitamae
+    content: "package 'vim'"
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    match profile.provision.as_slice() {
+        [ProvisionTask::Mitamae(mitamae)] => assert_eq!(mitamae.plugins(), None),
+        _ => panic!("expected one mitamae task"),
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_load_profile_mitamae_defaults_no_matching_arch() -> Result<()> {
     let temp_dir = tempdir()?;
     let profile_path = temp_dir.path().join("profile.yml");
