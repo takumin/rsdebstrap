@@ -11,10 +11,11 @@ use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::bootstrap::debootstrap::{self, DebootstrapConfig};
 use rsdebstrap::bootstrap::mmdebstrap::{self, MmdebstrapConfig};
-use rsdebstrap::config::{Bootstrap, Profile, load_profile};
+use rsdebstrap::config::{Bootstrap, Profile, load_profile, load_profile_with_vars};
 use rsdebstrap::executor::ExecutionResult;
 use rsdebstrap::isolation::IsolationContext;
 use rsdebstrap::privilege::Privilege;
+use rsdebstrap::vars::VarOverrides;
 use tempfile::NamedTempFile;
 use tracing::warn;
 
@@ -417,6 +418,13 @@ pub fn load_profile_from_yaml(yaml: impl AsRef<str>) -> Result<Profile> {
 pub fn load_profile_from_yaml_typed(
     yaml: impl AsRef<str>,
 ) -> std::result::Result<Profile, RsdebstrapError> {
+    load_profile_from_yaml_with_vars(yaml, &VarOverrides::default())
+}
+
+pub fn load_profile_from_yaml_with_vars(
+    yaml: impl AsRef<str>,
+    overrides: &VarOverrides,
+) -> std::result::Result<Profile, RsdebstrapError> {
     let yaml = yaml.as_ref();
     let mut file = NamedTempFile::new().expect("failed to create temp file");
     file.write_all(yaml.as_bytes())
@@ -425,7 +433,7 @@ pub fn load_profile_from_yaml_typed(
         writeln!(file).expect("failed to write trailing newline");
     }
     let path = Utf8Path::from_path(file.path()).expect("temp file path should be valid");
-    load_profile(path)
+    load_profile_with_vars(path, overrides)
 }
 
 pub struct CwdGuard {

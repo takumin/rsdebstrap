@@ -2,12 +2,20 @@
 # Comprehensive example profile for Debian Trixie
 #
 # This profile demonstrates all available features:
+#   - vars: suite and architecture, overridable from the environment or the command line
 #   - defaults: isolation (chroot), privilege, mitamae
 #   - bootstrap: mmdebstrap (debootstrap also available)
 #   - pipeline: prepare (mount, apt, resolv_conf), provision (apt + shell + mitamae),
 #     assemble (apt, machine_id, resolv_conf, output)
 
-dir: /tmp/debian-trixie-server-amd64
+# Variables referenced below as ${{ vars.<name> }}. Override one with
+# RSDEBSTRAP_VAR_SUITE=forky (e.g. from a CI matrix) or `--var suite=forky`.
+# Inside a provision task's inline `content` they are not substituted.
+vars:
+  suite: trixie
+  arch: amd64
+
+dir: /tmp/debian-${{ vars.suite }}-server-${{ vars.arch }}
 
 # Default settings applied to all tasks unless overridden per-task
 defaults:
@@ -43,7 +51,7 @@ defaults:
 #     merged_usr: true
 bootstrap:
   type: mmdebstrap
-  suite: trixie
+  suite: ${{ vars.suite }}
   target: rootfs # Directory output (required for pipeline tasks)
   mirrors:
   - https://deb.debian.org/debian
@@ -52,12 +60,12 @@ bootstrap:
   - main
   - contrib
   architectures:
-  - amd64
+  - ${{ vars.arch }}
   include:
   - curl
   - ca-certificates
   # A kernel and initramfs-tools for assemble.output.kernel/initramfs below
-  - linux-image-amd64
+  - linux-image-${{ vars.arch }}
   - initramfs-tools
   privilege: true # Use defaults.privilege method
 
@@ -90,12 +98,15 @@ prepare:
         - https://deb.debian.org/debian
         # trixie-backports is marked NotAutomatic, so apt takes a package from it only when
         # asked (`<package>/trixie-backports`), and then keeps upgrading it from there.
-        suites: [trixie, trixie-updates, trixie-backports]
+        suites:
+        - ${{ vars.suite }}
+        - ${{ vars.suite }}-updates
+        - ${{ vars.suite }}-backports
         components: [main, contrib, non-free-firmware]
         signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
       - uris:
         - https://security.debian.org/debian-security
-        suites: [trixie-security]
+        suites: ['${{ vars.suite }}-security']
         components: [main, contrib, non-free-firmware]
         signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
     # Delete the bootstrap's /etc/apt/sources.list, so the `debian` repository above

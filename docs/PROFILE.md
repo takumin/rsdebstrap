@@ -8,6 +8,8 @@ config-type change; the autofix.ci workflow also regenerates it and auto-commits
 to pull requests (see [`ARCHITECTURE.md`](ARCHITECTURE.md#json-schema-generation)).
 
 ```yaml
+vars:                       # Optional variables, referenced as ${{ vars.<name> }}
+  suite: trixie
 dir: /output/path           # Base output directory
 defaults:                   # Optional default settings
   isolation:
@@ -123,12 +125,67 @@ assemble:                   # Optional finalization steps (named-field struct)
       compression: zstd     # Optional: gzip | lzo | lz4 | xz | zstd (mksquashfs default: gzip)
 ```
 
+## Variables
+
+`vars:` declares variables with their default values. Any string elsewhere in the profile
+can reference one as `${{ vars.<name> }}`, alone or inside a longer string:
+
+```yaml
+vars:
+  suite: trixie
+  arch: amd64
+dir: /tmp/debian-${{ vars.suite }}-${{ vars.arch }}
+bootstrap:
+  type: mmdebstrap
+  suite: ${{ vars.suite }}
+  target: rootfs
+  architectures: ['${{ vars.arch }}']   # quote inside [...]: `{` `}` are flow indicators there
+  include: ['linux-image-${{ vars.arch }}']
+```
+
+- **Names** match `[a-z][a-z0-9_]*`. **Values** are strings; quote one that looks like
+  another scalar (`version: "13"`).
+- **Overrides.** A value is replaced by the environment variable `RSDEBSTRAP_VAR_<NAME>`
+  (the name in uppercase), and that by `--var <name>=<value>` on `apply`/`validate`
+  (repeatable). Only declared variables can be overridden: an override for any other name
+  is an error, so a misspelled CI matrix key fails instead of quietly building the default.
+  The values a run uses are logged at `info`.
+- **Where references are substituted:** every string in the profile, including keys'
+  values inside `bootstrap:`, enum-valued fields (`variant: ${{ vars.variant }}`), paths
+  (`script: ./roles/${{ vars.role }}.sh`) and an asset's inline `content`. Map keys are
+  never substituted.
+- **Where they are not:** the values under `vars:` themselves (a value is not expanded
+  against another variable), and a provision task's inline `content`. That is a script run
+  in the rootfs, so substituting into it would make an environment variable's value part
+  of the program — and `${{ … }}` there is left for the script's own syntax. A script that
+  needs a value should take it from a `script:` file selected by a variable.
+- A string is a reference only in the form `${{ vars.<name> }}` (spaces inside the braces
+  are optional). Any other `${{ … }}`, an unterminated `${{`, or a reference to an
+  undeclared variable is a parse error that names the field and line.
+- Substitution happens while the profile is parsed, so the JSON Schema sees the profile as
+  written: a reference in a string field validates, but one in an enum-valued field
+  (`variant`, `compression`, …) is flagged by an editor even though rsdebstrap accepts it.
+
+Driving a GitHub Actions matrix:
+
+```yaml
+strategy:
+  matrix:
+    suite: [bookworm, trixie]
+    arch: [amd64, arm64]
+steps:
+  - run: rsdebstrap apply -f profile.yml
+    env:
+      RSDEBSTRAP_VAR_SUITE: ${{ matrix.suite }}
+      RSDEBSTRAP_VAR_ARCH: ${{ matrix.arch }}
+```
+
 ## YAML scalar and null rules
 
 - String-typed fields (paths, suite/target names, mount sources/options, search domains) accept
   only YAML strings. Numbers, booleans, and `null` are parse errors — quote values that look like
   scalars (`suite: "13"`). `dir` must additionally be non-empty.
-- On defaulted section/list/map fields (`defaults`, `prepare`, `provision`, `assemble`,
+- On defaulted section/list/map fields (`vars`, `defaults`, `prepare`, `provision`, `assemble`,
   `assemble.output`, `assemble.output.assets`, `mounts`, `options`, `name_servers`, `search`, the
   apt `keyrings`, `repositories`, `preferences`, `components` and `architectures`, the apt
   provision task's `install`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty value

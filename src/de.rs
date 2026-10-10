@@ -11,7 +11,7 @@
 //! the schema needs — including why the raw-text coercion is context-dependent inside
 //! internally tagged enums — is in `docs/ARCHITECTURE.md` (JSON Schema generation).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use camino::Utf8PathBuf;
@@ -141,4 +141,24 @@ pub(crate) fn path_map<'de, D: Deserializer<'de>>(
     Ok(Option::<HashMap<String, StrictPath>>::deserialize(deserializer)?
         .map(|map| map.into_iter().map(|(key, value)| (key, value.0)).collect())
         .unwrap_or_default())
+}
+
+/// Deserializes the `vars:` map: `null` means empty, names must be valid variable names and
+/// values strict strings.
+pub(crate) fn var_map<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, String>, D::Error> {
+    let map =
+        Option::<BTreeMap<String, StrictString>>::deserialize(deserializer)?.unwrap_or_default();
+    map.into_iter()
+        .map(|(name, value)| {
+            if crate::vars::is_valid_name(&name) {
+                Ok((name, value.0))
+            } else {
+                Err(Error::custom(format!(
+                    "invalid variable name {name:?}: must match [a-z][a-z0-9_]*"
+                )))
+            }
+        })
+        .collect()
 }

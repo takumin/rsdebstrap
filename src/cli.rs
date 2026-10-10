@@ -116,6 +116,14 @@ pub struct CommonArgs {
     #[arg(short, long, default_value = "profile.yml", value_hint = ValueHint::FilePath)]
     pub file: Utf8PathBuf,
 
+    /// Override a variable declared under `vars:` in the profile.
+    ///
+    /// May be given more than once. Takes precedence over the environment
+    /// variable `RSDEBSTRAP_VAR_<NAME>`, which in turn takes precedence over the
+    /// profile's own value. Naming a variable the profile does not declare is an error.
+    #[arg(long = "var", value_name = "NAME=VALUE", value_parser = crate::vars::parse_assignment)]
+    pub vars: Vec<(String, String)>,
+
     /// Set the log level for controlling verbosity of output.
     ///
     /// This determines the amount of information logged during execution.

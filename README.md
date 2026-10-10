@@ -98,6 +98,9 @@ rsdebstrap apply -f profile.yml
 
 `-f`/`--file` defaults to `profile.yml`, and `-l`/`--log-level` controls
 verbosity (`trace`, `debug`, `info`, `warn`, `error`; default `info`).
+`--var <name>=<value>` (or the environment variable `RSDEBSTRAP_VAR_<NAME>`)
+overrides a variable the profile declares under `vars:` — see
+[Variables](docs/PROFILE.md#variables).
 
 ### Shell completions
 

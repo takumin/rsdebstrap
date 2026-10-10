@@ -73,6 +73,27 @@ impl JsonSchema for IpAddrSchema {
     }
 }
 
+/// Schema proxy for the `vars:` map.
+///
+/// A plain `BTreeMap<String, String>` would accept any key, while
+/// [`var_map`](crate::de::var_map) rejects names that cannot be spelled as an
+/// `RSDEBSTRAP_VAR_*` environment variable. `propertyNames` carries the same rule.
+pub(crate) struct VarsSchema;
+
+impl JsonSchema for VarsSchema {
+    fn schema_name() -> Cow<'static, str> {
+        "Vars".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+            "additionalProperties": { "type": "string" }
+        })
+    }
+}
+
 /// The `oneOf` mirroring the `script` / `content` mutual exclusion.
 ///
 /// Both provisioners accept a script either as a path (`script`) or inline

@@ -129,6 +129,7 @@ fn run_apply_uses_executor_with_built_args() {
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let common = cli::CommonArgs {
         file: path.to_owned(),
+        vars: Vec::new(),
         log_level: cli::LogLevel::Error,
     };
     let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
@@ -151,6 +152,7 @@ fn run_apply_uses_executor_with_debootstrap_args() {
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let common = cli::CommonArgs {
         file: path.to_owned(),
+        vars: Vec::new(),
         log_level: cli::LogLevel::Error,
     };
     let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
@@ -183,6 +185,7 @@ fn run_validate_succeeds_on_valid_profile() {
     let opts = cli::ValidateArgs {
         common: cli::CommonArgs {
             file: path.to_owned(),
+            vars: Vec::new(),
             log_level: cli::LogLevel::Error,
         },
     };
@@ -196,6 +199,7 @@ fn run_apply_with_pipeline_tasks_uses_isolation() {
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let common = cli::CommonArgs {
         file: path.to_owned(),
+        vars: Vec::new(),
         log_level: cli::LogLevel::Error,
     };
     let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
@@ -263,6 +267,7 @@ fn run_apply_propagates_provision_failure() {
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let common = cli::CommonArgs {
         file: path.to_owned(),
+        vars: Vec::new(),
         log_level: cli::LogLevel::Error,
     };
 
@@ -299,6 +304,7 @@ fn a_dry_run_creates_no_directory() {
     let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
     let common = cli::CommonArgs {
         file: path.to_owned(),
+        vars: Vec::new(),
         log_level: cli::LogLevel::Error,
     };
 
