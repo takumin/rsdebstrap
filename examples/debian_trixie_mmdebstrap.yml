@@ -35,13 +35,14 @@ defaults:
     binary:
       x86_64: /usr/local/bin/mitamae-x86_64-linux
       aarch64: /usr/local/bin/mitamae-aarch64-linux
-      # Optional: mitamae plugins for every mitamae task (mitamae >= v1.10.1)
-      # plugins:
-      #   - path: ./plugins/mitamae-plugin-recipe-docker
-      #   - url: https://github.com/<owner>/mitamae-plugin-resource-foo.git
-      #     commit: <full commit ID>
-      #   - url: https://github.com/<owner>/mitamae-plugin-resource-bar/archive/<commit>.tar.gz
-      #     checksum: sha256:<64 hex digits>
+
+    # Optional: mitamae plugins for every mitamae task (mitamae >= v1.10.1)
+    # plugins:
+    #   - path: ./plugins/mitamae-plugin-recipe-docker
+    #   - url: https://github.com/<owner>/mitamae-plugin-resource-foo.git
+    #     commit: <full commit ID>
+    #   - url: https://github.com/<owner>/mitamae-plugin-resource-bar/archive/<commit>.tar.gz
+    #     checksum: sha256:<64 hex digits>
 
 # Supported types: mmdebstrap, debootstrap
 #
@@ -193,8 +194,8 @@ provision:
 #     end
 #   binary: /path/to/mitamae  # Override defaults.mitamae for this task
 #   plugins: []               # Replace defaults.mitamae.plugins for this task
-#   External recipe alternative:
-#     script: ./recipes/setup.rb
+#   # External recipe alternative:
+#   script: ./recipes/setup.rb
 
 # Assemble phase: finalization after provisioning.
 assemble:
