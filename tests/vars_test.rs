@@ -364,3 +364,166 @@ fn a_condition_on_an_undeclared_variable_fails_the_load() {
     assert!(msg.contains("apt:install"), "{msg}");
     assert!(msg.contains("failed to evaluate"), "{msg}");
 }
+
+// editorconfig-checker-disable
+const CONDITIONAL_APT: &str = r#"---
+vars:
+  distrib: debian
+dir: /tmp/rootfs
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+prepare:
+  apt:
+    keyrings:
+    - name: ubuntu-archive
+      when: vars.distrib == 'ubuntu'
+      path: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+    repositories:
+    - name: debian
+      when: vars.distrib == 'debian'
+      sources:
+      - uris: [https://deb.debian.org/debian]
+        suites: [trixie, trixie-updates]
+        components: [main]
+        signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
+    - name: ubuntu
+      when: vars.distrib == 'ubuntu'
+      sources:
+      - uris: [http://archive.ubuntu.com/ubuntu]
+        suites: [noble, noble-updates]
+        components: [main, universe]
+        signed_by: ubuntu-archive
+    preferences:
+    - name: debian-backports
+      when: vars.distrib == 'debian'
+      pins:
+      - packages: ['*']
+        pin: release n=trixie-backports
+        priority: 100
+assemble:
+  apt:
+    repositories:
+    - name: ubuntu
+      when: vars.distrib == 'ubuntu'
+      sources:
+      - uris: [http://archive.ubuntu.com/ubuntu]
+        suites: [noble, noble-updates, noble-security]
+        components: [main, universe]
+        signed_by: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+"#;
+// editorconfig-checker-enable
+
+fn names<'a>(entries: impl IntoIterator<Item = &'a String>) -> Vec<&'a str> {
+    entries.into_iter().map(String::as_str).collect()
+}
+
+#[test]
+fn apt_entries_are_kept_only_when_their_condition_holds() -> Result<()> {
+    let profile =
+        helpers::load_profile_from_yaml_with_vars(CONDITIONAL_APT, &VarOverrides::default())?;
+    let apt = profile.prepare.apt.as_ref().expect("prepare.apt");
+    assert!(apt.keyrings.is_empty());
+    assert_eq!(names(apt.repositories.iter().map(|r| &r.name)), ["debian"]);
+    assert_eq!(names(apt.preferences.iter().map(|p| &p.name)), ["debian-backports"]);
+    assert_eq!(
+        apt.repositories[0].when.as_ref().map(|c| c.source()),
+        Some("vars.distrib == 'debian'")
+    );
+    // Every entry it declared was skipped, so the task is left out rather than refused as
+    // one that declares nothing.
+    assert!(profile.assemble.apt.is_none());
+
+    let profile = helpers::load_profile_from_yaml_with_vars(
+        CONDITIONAL_APT,
+        &overrides(&[], &[("distrib", "ubuntu")]),
+    )?;
+    let apt = profile.prepare.apt.as_ref().expect("prepare.apt");
+    assert_eq!(names(apt.keyrings.iter().map(|k| &k.name)), ["ubuntu-archive"]);
+    assert_eq!(names(apt.repositories.iter().map(|r| &r.name)), ["ubuntu"]);
+    assert!(apt.preferences.is_empty());
+    let apt = profile.assemble.apt.as_ref().expect("assemble.apt");
+    assert_eq!(names(apt.repositories.iter().map(|r| &r.name)), ["ubuntu"]);
+    Ok(())
+}
+
+#[test]
+fn a_repository_signed_by_a_skipped_keyring_is_refused() -> Result<()> {
+    // The keyring and the repository disagree on when they apply; the repository must not
+    // be written without the key it names.
+    let yaml = format!(
+        "vars:\n  distrib: debian\n{MINIMAL_BODY}prepare:\n  apt:\n    keyrings:\n    \
+        - name: ubuntu-archive\n      when: vars.distrib == 'ubuntu'\n      \
+        path: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n    repositories:\n    \
+        - name: ubuntu\n      sources:\n      - uris: [http://archive.ubuntu.com/ubuntu]\n        \
+        suites: [noble]\n        components: [main]\n        signed_by: ubuntu-archive\n"
+    );
+    let profile = helpers::load_profile_from_yaml_with_vars(yaml, &VarOverrides::default())?;
+    let msg = profile.validate().unwrap_err().to_string();
+    assert!(msg.contains("names no entry in keyrings"), "{msg}");
+    Ok(())
+}
+
+#[test]
+fn a_skipped_apt_repository_is_not_validated() -> Result<()> {
+    // The skipped repository names a keyring that does not exist, which `validate` refuses
+    // for a repository that is written.
+    let yaml = format!(
+        "vars:\n  distrib: debian\n{MINIMAL_BODY}prepare:\n  apt:\n    repositories:\n    \
+        - name: ubuntu\n      when: vars.distrib == 'ubuntu'\n      sources:\n      \
+        - uris: [http://archive.ubuntu.com/ubuntu]\n        suites: [noble]\n        \
+        components: [main]\n        signed_by: missing\n"
+    );
+    let profile = helpers::load_profile_from_yaml_with_vars(yaml, &VarOverrides::default())?;
+    assert!(profile.prepare.apt.is_none());
+    profile.validate()?;
+    Ok(())
+}
+
+#[test]
+fn an_apt_repository_condition_on_an_undeclared_variable_fails_the_load() {
+    let yaml = format!(
+        "vars:\n  suite: trixie\n{MINIMAL_BODY}prepare:\n  apt:\n    repositories:\n    \
+        - name: extra\n      when: vars.sutie == 'trixie'\n      sources:\n      \
+        - uris: [https://e.com]\n        suites: [trixie]\n        components: [main]\n"
+    );
+    let err =
+        helpers::load_profile_from_yaml_with_vars(yaml, &VarOverrides::default()).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("apt repository 'extra'"), "{msg}");
+    assert!(msg.contains("failed to evaluate"), "{msg}");
+}
+
+#[test]
+fn an_apt_entry_condition_is_not_substituted() {
+    // Substituted first, the reference would become `trixie == 'trixie'` and fail only at
+    // evaluation; left verbatim, the parse refuses the braces and points at the key.
+    let when = "when: \"${{ vars.suite }} == 'trixie'\"";
+    for (list, entry) in [
+        ("keyrings", format!("- name: k\n      {when}\n      url: https://e.com/k.asc\n")),
+        (
+            "repositories",
+            format!(
+                "- name: r\n      {when}\n      sources:\n      - uris: [https://e.com]\n        \
+                suites: [trixie]\n        components: [main]\n"
+            ),
+        ),
+        (
+            "preferences",
+            format!(
+                "- name: p\n      {when}\n      pins:\n      - packages: ['*']\n        \
+                pin: release n=trixie\n        priority: 500\n"
+            ),
+        ),
+    ] {
+        let yaml = format!(
+            "vars:\n  suite: trixie\n{MINIMAL_BODY}prepare:\n  apt:\n    {list}:\n    {entry}"
+        );
+        let msg = config_error(
+            helpers::load_profile_from_yaml_with_vars(yaml, &VarOverrides::default()).unwrap_err(),
+        );
+        assert!(msg.contains("without the braces"), "{list}: {msg}");
+        assert!(msg.contains(&format!("prepare.apt.{list}[0]")), "{list}: {msg}");
+    }
+}

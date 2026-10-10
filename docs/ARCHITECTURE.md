@@ -153,9 +153,20 @@ the shape:
   prevent. The parse is checked during deserialization, so a syntax error carries the
   profile location. Serde buffers the internally tagged `ProvisionTask`, so that location
   is the task, not the `when:` key.
-- **Only provision.** Prepare and assemble are named-field structs of at-most-one items
-  whose meaning does not depend on a matrix entry in the cases seen so far; add `when:`
-  there only with a concrete need.
+- **Apt entries are removed at load.** An entry of `keyrings`, `repositories` or
+  `preferences` in `prepare.apt` or `assemble.apt` may also carry `when:` — a Debian and an
+  Ubuntu build differing in archive URL, key and pins is the concrete need. Unlike a
+  provision task, an apt task has no resolved value: the pipeline, the `Prepared` guard
+  check and `AptChanges` all borrow it as declared. So `drop_disabled_apt_entries` removes
+  a skipped entry from the profile once, before anything reads it, instead of having each
+  reader filter; a skipped one is then neither validated nor written. Removing it before
+  validation also means a repository whose `signed_by` names a skipped keyring is refused
+  like one naming a keyring that does not exist. A task left with nothing to do by that is
+  set to `None`, since what it declared was not the empty task `validate` refuses.
+- **Nowhere else, yet.** The other prepare and assemble items are named-field structs of
+  at-most-one items whose meaning does not depend on a matrix entry in the cases seen so
+  far; add `when:` there only with a concrete need. `vars::Scope` names each path where
+  `when` is verbatim, so a new one has to be added there too.
 
 ## Phases & the pipeline
 

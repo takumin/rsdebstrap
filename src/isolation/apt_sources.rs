@@ -270,6 +270,7 @@ mod tests {
                 priority: 500,
                 explanation: None,
             }],
+            when: None,
         }
     }
 
@@ -284,6 +285,7 @@ mod tests {
                 architectures: vec![],
                 signed_by: signed_by.map(str::to_string),
             }],
+            when: None,
         }
     }
 
@@ -292,6 +294,7 @@ mod tests {
             name: name.to_string(),
             source,
             sha256: None,
+            when: None,
         }
     }
 

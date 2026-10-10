@@ -37,6 +37,7 @@ prepare:                    # Optional preparation steps (named-field struct)
   apt:                      # APT keyrings, repositories and preferences; they stay (at most one)
     keyrings:               # Optional: OpenPGP keyrings
       - name: docker        # -> /etc/apt/keyrings/docker.{asc,gpg}
+        # when: vars.distrib == 'debian'  # Optional: CEL condition; written only when true
         url: https://download.docker.com/linux/debian/gpg
         # OR
         # path: ./keys/docker.asc  # Host file, relative to the profile
@@ -45,6 +46,7 @@ prepare:                    # Optional preparation steps (named-field struct)
         sha256: <64 hex digits>  # Optional: pin the key's bytes
     repositories:           # Optional: deb822 repositories
       - name: docker        # -> /etc/apt/sources.list.d/docker.sources
+        # when: vars.distrib == 'debian'  # Optional: CEL condition; written only when true
         sources:            # One stanza per source
           - types: [deb]    # Optional: deb | deb-src (default [deb])
             uris: [https://download.docker.com/linux/debian]
@@ -54,6 +56,7 @@ prepare:                    # Optional preparation steps (named-field struct)
             signed_by: docker  # Optional: keyrings entry or absolute rootfs path -> Signed-By
     preferences:            # Optional: apt_preferences(5) pins
       - name: backports     # -> /etc/apt/preferences.d/backports.pref
+        # when: vars.distrib == 'debian'  # Optional: CEL condition; written only when true
         pins:               # One stanza per pin
           - packages: [linux-image-amd64]  # Package: names, globs, /regex/, src:name, *
             pin: release n=trixie-backports  # Pin: release … | origin … | version …
@@ -214,6 +217,53 @@ provision:
   `false`. A key that may be absent can be tested with `'name' in vars`, but since only
   declared variables exist, that is always known when the profile is written.
 - Numbering in run logs (`provision 2/3`) counts the tasks that run.
+
+An entry of `keyrings`, `repositories` or `preferences` in `prepare.apt` or `assemble.apt`
+may declare `when:` the same way, to write it for only some variables. One profile can then
+point a Debian and an Ubuntu build at their own archives:
+
+```yaml
+vars:
+  distrib: debian
+  suite: trixie
+prepare:
+  apt:
+    keyrings:
+      - name: ubuntu-archive
+        when: vars.distrib == 'ubuntu'
+        path: ./keys/ubuntu-archive-keyring.gpg
+    repositories:
+      - name: debian
+        when: vars.distrib == 'debian'
+        sources:
+          - uris: [https://deb.debian.org/debian]
+            suites: ['${{ vars.suite }}', '${{ vars.suite }}-updates']
+            components: [main]
+            signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
+      - name: ubuntu
+        when: vars.distrib == 'ubuntu'
+        sources:
+          - uris: [http://archive.ubuntu.com/ubuntu]
+            suites: ['${{ vars.suite }}', '${{ vars.suite }}-updates']
+            components: [main, universe]
+            signed_by: ubuntu-archive
+    preferences:
+      - name: backports
+        when: vars.distrib == 'debian'
+        pins:
+          - packages: [linux-image-amd64]
+            pin: release n=${{ vars.suite }}-backports
+            priority: 990
+    remove_sources_list: true
+```
+
+Run it as `--var distrib=ubuntu --var suite=noble` for the Ubuntu build.
+
+The rules above apply: a skipped entry is neither validated nor written, and is logged at
+`info`. A repository's `signed_by` must name a keyring that is written under the same
+variables — naming one that was skipped is the same error as naming one that does not
+exist. An `apt` section whose every entry is skipped is left out of the run rather than
+refused as empty.
 
 ## YAML scalar and null rules
 

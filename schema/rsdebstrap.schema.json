@@ -66,6 +66,14 @@
 						"string",
 						"null"
 					]
+				},
+				"when": {
+					"description": "CEL expression over the profile's variables (`vars.<name>`); the keyring is written\nonly when it evaluates to `true`, e.g. `vars.distrib == 'ubuntu'`.",
+					"minLength": 1,
+					"type": [
+						"string",
+						"null"
+					]
 				}
 			},
 			"required": [
@@ -122,6 +130,14 @@
 						"$ref": "#/$defs/AptPin"
 					},
 					"type": "array"
+				},
+				"when": {
+					"description": "CEL expression over the profile's variables (`vars.<name>`); the preferences file is\nwritten only when it evaluates to `true`, e.g. `vars.distrib == 'ubuntu'`.",
+					"minLength": 1,
+					"type": [
+						"string",
+						"null"
+					]
 				}
 			},
 			"required": [
@@ -144,6 +160,14 @@
 						"$ref": "#/$defs/AptSource"
 					},
 					"type": "array"
+				},
+				"when": {
+					"description": "CEL expression over the profile's variables (`vars.<name>`); the repository is\nwritten only when it evaluates to `true`, e.g. `vars.distrib == 'ubuntu'`.",
+					"minLength": 1,
+					"type": [
+						"string",
+						"null"
+					]
 				}
 			},
 			"required": [
@@ -1433,6 +1457,7 @@
 							"type": "boolean"
 						},
 						"when": {
+							"default": null,
 							"description": "CEL expression over the profile's variables (`vars.<name>`); the task runs only\nwhen it evaluates to `true`, e.g. `vars.suite == 'trixie'`.",
 							"minLength": 1,
 							"type": [

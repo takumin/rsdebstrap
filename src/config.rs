@@ -21,6 +21,7 @@ use crate::bootstrap::{
 use crate::error::RsdebstrapError;
 use crate::executor::{CommandSpec, PrivilegedProgram};
 use crate::isolation::{ChrootProvider, IsolationProvider};
+use crate::phase::prepare::apt::retain_enabled_entries;
 use crate::phase::{AssembleConfig, PrepareConfig, ProvisionTask};
 use crate::pipeline::Pipeline;
 use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
@@ -749,6 +750,41 @@ fn parse_profile_yaml(
     Ok(profile)
 }
 
+/// Removes the apt keyrings, repositories and preferences whose `when:` is false from
+/// `prepare.apt` and `assemble.apt`.
+fn drop_disabled_apt_entries(profile: &mut Profile) -> Result<(), RsdebstrapError> {
+    // Unlike a provision task, which the pipeline resolves into its own value, an apt task is
+    // borrowed by the pipeline, the rootfs guard and the writer as declared, so a skipped
+    // entry is removed here once rather than filtered by each of them. A task left with
+    // nothing to do by that is dropped as well: what it declared was not empty, so it is not
+    // the mistake `validate` refuses.
+    if let Some(apt) = &mut profile.prepare.apt {
+        let declared = !apt.is_empty();
+        retain_enabled_entries(
+            &mut apt.keyrings,
+            &mut apt.repositories,
+            &mut apt.preferences,
+            &profile.vars,
+        )?;
+        if declared && apt.is_empty() {
+            profile.prepare.apt = None;
+        }
+    }
+    if let Some(apt) = &mut profile.assemble.apt {
+        let declared = !apt.is_empty();
+        retain_enabled_entries(
+            &mut apt.keyrings,
+            &mut apt.repositories,
+            &mut apt.preferences,
+            &profile.vars,
+        )?;
+        if declared && apt.is_empty() {
+            profile.assemble.apt = None;
+        }
+    }
+    Ok(())
+}
+
 fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError> {
     let arch = std::env::consts::ARCH;
     let default_binary = profile.defaults.mitamae.binary.get(arch);
@@ -875,6 +911,7 @@ pub fn load_profile_with_vars(
         ))
     })?;
     resolve_profile_paths(&mut profile, profile_dir);
+    drop_disabled_apt_entries(&mut profile)?;
     apply_defaults_to_tasks(&mut profile)?;
     debug!("loaded profile:\n{:#?}", profile);
     Ok(profile)
