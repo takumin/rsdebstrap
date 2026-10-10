@@ -55,14 +55,18 @@ impl AssembleAptTask {
         resolve_keyring_paths(&mut self.keyrings, base_dir);
     }
 
-    /// Validates every entry as `prepare.apt` does, and that the task does something.
-    pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        if !self.dist_clean
+    /// Whether the task declares nothing to do.
+    pub fn is_empty(&self) -> bool {
+        !self.dist_clean
             && !self.remove_sources_list
             && self.keyrings.is_empty()
             && self.repositories.is_empty()
             && self.preferences.is_empty()
-        {
+    }
+
+    /// Validates every entry as `prepare.apt` does, and that the task does something.
+    pub fn validate(&self) -> Result<(), RsdebstrapError> {
+        if self.is_empty() {
             return Err(RsdebstrapError::Validation(
                 "apt must declare at least one keyring, repository or preference, or set \
                 dist_clean or remove_sources_list"

@@ -10,7 +10,7 @@ use std::fmt;
 
 use cel::{Context, Program, Value};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A CEL expression that decides whether a task runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +79,12 @@ impl<'de> Deserialize<'de> for Condition {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let source = String::deserialize(deserializer)?;
         Self::new(source).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for Condition {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.source)
     }
 }
 

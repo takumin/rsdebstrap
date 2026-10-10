@@ -201,9 +201,15 @@ enum Scope {
     Root,
     Provision,
     ProvisionTask,
+    // `prepare:` / `assemble:`, their `apt:`, one of its entry lists (`keyrings:`,
+    // `repositories:`, `preferences:`), and one entry.
+    Phase,
+    Apt,
+    AptEntries,
+    AptEntry,
     Substitute,
     // `vars:` itself (values are literal, not expressions over each other), a provision
-    // task's inline `content` (a script; see `docs/ARCHITECTURE.md`) and its `when:` (a CEL
+    // task's inline `content` (a script; see `docs/ARCHITECTURE.md`), and a `when:` (a CEL
     // expression that reads the variables itself).
     Verbatim,
 }
@@ -214,7 +220,11 @@ impl Scope {
             (Self::Verbatim, _) => Self::Verbatim,
             (Self::Root, Some("vars")) => Self::Verbatim,
             (Self::Root, Some("provision")) => Self::Provision,
+            (Self::Root, Some("prepare" | "assemble")) => Self::Phase,
+            (Self::Phase, Some("apt")) => Self::Apt,
+            (Self::Apt, Some("keyrings" | "repositories" | "preferences")) => Self::AptEntries,
             (Self::ProvisionTask, Some("content" | "when")) => Self::Verbatim,
+            (Self::AptEntry, Some("when")) => Self::Verbatim,
             _ => Self::Substitute,
         }
     }
@@ -223,6 +233,7 @@ impl Scope {
         match self {
             Self::Verbatim => Self::Verbatim,
             Self::Provision => Self::ProvisionTask,
+            Self::AptEntries => Self::AptEntry,
             _ => Self::Substitute,
         }
     }

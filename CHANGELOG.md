@@ -93,7 +93,10 @@ and this project adheres to
 - `when:` on provision tasks: a CEL expression over the profile's variables
   (`when: vars.suite == 'trixie'`). A task whose condition is false is left out
   of the run, and is neither resolved nor validated; a condition that fails to
-  parse or evaluate, or that is not a bool, fails the load.
+  parse or evaluate, or that is not a bool, fails the load. Entries of
+  `keyrings`, `repositories` and `preferences` in `prepare.apt` and
+  `assemble.apt` accept `when:` too; an entry whose condition is false is
+  neither validated nor written.
 - `assemble.output`, which writes build artifacts into `dir` once the rootfs is
   final: `kernel` and `initramfs` copy the images out of the rootfs (by default
   through Debian's `/vmlinuz` and `/initrd.img` links, confined to the rootfs),

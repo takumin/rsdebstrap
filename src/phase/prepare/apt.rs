@@ -8,12 +8,13 @@
 //! entry types are shared with `assemble.apt`.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
+use crate::condition::Condition;
 use crate::error::RsdebstrapError;
 use crate::phase::PhaseItem;
 use crate::rootfs::RelPath;
@@ -98,6 +99,10 @@ pub struct AptPreference {
     pub name: String,
     /// The pins, written as stanzas in this order.
     pub pins: Vec<AptPin>,
+    /// CEL expression over the profile's variables (`vars.<name>`); the preferences file is
+    /// written only when it evaluates to `true`, e.g. `vars.distrib == 'ubuntu'`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<Condition>,
 }
 
 /// One apt_preferences(5) stanza.
@@ -134,6 +139,10 @@ pub struct AptRepository {
     pub name: String,
     /// The sources, written as stanzas in this order.
     pub sources: Vec<AptSource>,
+    /// CEL expression over the profile's variables (`vars.<name>`); the repository is
+    /// written only when it evaluates to `true`, e.g. `vars.distrib == 'ubuntu'`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<Condition>,
 }
 
 /// One deb822 stanza.
@@ -223,6 +232,8 @@ pub struct AptKeyring {
     pub source: AptKeySource,
     /// Lowercase hex SHA-256 of the key's bytes.
     pub sha256: Option<String>,
+    /// Condition under which the keyring is written, as declared in the profile.
+    pub when: Option<Condition>,
 }
 
 // Wire shape of a keyring: one type drives both deserialization and schema generation, so
@@ -266,6 +277,10 @@ struct RawAptKeyring {
         skip_serializing_if = "Option::is_none"
     )]
     sha256: Option<String>,
+    /// CEL expression over the profile's variables (`vars.<name>`); the keyring is written
+    /// only when it evaluates to `true`, e.g. `vars.distrib == 'ubuntu'`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    when: Option<Condition>,
 }
 
 // The schema's copy of the rule `AptKeyring::deserialize` enforces. Each branch pins its
@@ -303,6 +318,7 @@ impl<'de> Deserialize<'de> for AptKeyring {
             name: raw.name,
             source,
             sha256: raw.sha256,
+            when: raw.when,
         })
     }
 }
@@ -320,6 +336,7 @@ impl Serialize for AptKeyring {
             content,
             url,
             sha256: self.sha256.clone(),
+            when: self.when.clone(),
         }
         .serialize(serializer)
     }
@@ -397,14 +414,18 @@ impl AptTask {
         resolve_keyring_paths(&mut self.keyrings, base_dir);
     }
 
-    /// Validates every entry, that names are unique, and that each `signed_by` is a rootfs
-    /// path or names a keyring.
-    pub fn validate(&self) -> Result<(), RsdebstrapError> {
-        if self.keyrings.is_empty()
+    /// Whether the task declares nothing to do.
+    pub fn is_empty(&self) -> bool {
+        self.keyrings.is_empty()
             && self.repositories.is_empty()
             && self.preferences.is_empty()
             && !self.remove_sources_list
-        {
+    }
+
+    /// Validates every entry, that names are unique, and that each `signed_by` is a rootfs
+    /// path or names a keyring.
+    pub fn validate(&self) -> Result<(), RsdebstrapError> {
+        if self.is_empty() {
             return Err(RsdebstrapError::Validation(
                 "apt must declare at least one keyring, repository or preference, or set \
                 remove_sources_list"
@@ -424,6 +445,88 @@ pub(crate) fn resolve_keyring_paths(keyrings: &mut [AptKeyring], base_dir: &Utf8
             *path = base_dir.join(&*path);
         }
     }
+}
+
+/// An apt entry that may declare `when:`.
+trait Conditional {
+    const KIND: &'static str;
+    fn name(&self) -> &str;
+    fn when(&self) -> Option<&Condition>;
+}
+
+impl Conditional for AptKeyring {
+    const KIND: &'static str = "keyring";
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn when(&self) -> Option<&Condition> {
+        self.when.as_ref()
+    }
+}
+
+impl Conditional for AptRepository {
+    const KIND: &'static str = "repository";
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn when(&self) -> Option<&Condition> {
+        self.when.as_ref()
+    }
+}
+
+impl Conditional for AptPreference {
+    const KIND: &'static str = "preference";
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn when(&self) -> Option<&Condition> {
+        self.when.as_ref()
+    }
+}
+
+fn retain_enabled<T: Conditional>(
+    entries: &mut Vec<T>,
+    vars: &BTreeMap<String, String>,
+) -> Result<(), RsdebstrapError> {
+    let mut enabled = Vec::with_capacity(entries.len());
+    for entry in entries.drain(..) {
+        let Some(condition) = entry.when() else {
+            enabled.push(entry);
+            continue;
+        };
+        let holds = condition.evaluate(vars).map_err(|e| {
+            RsdebstrapError::Validation(format!("apt {} '{}': {e}", T::KIND, entry.name()))
+        })?;
+        if holds {
+            enabled.push(entry);
+        } else {
+            tracing::info!(
+                "apt {} '{}' is skipped: `when: {condition}` is false",
+                T::KIND,
+                entry.name()
+            );
+        }
+    }
+    *entries = enabled;
+    Ok(())
+}
+
+/// Removes the keyrings, repositories and preferences whose `when:` condition is false
+/// under `vars`.
+///
+/// # Errors
+///
+/// Returns `RsdebstrapError::Validation` if a condition fails to evaluate or does not
+/// evaluate to a `bool`.
+pub(crate) fn retain_enabled_entries(
+    keyrings: &mut Vec<AptKeyring>,
+    repositories: &mut Vec<AptRepository>,
+    preferences: &mut Vec<AptPreference>,
+    vars: &BTreeMap<String, String>,
+) -> Result<(), RsdebstrapError> {
+    retain_enabled(keyrings, vars)?;
+    retain_enabled(repositories, vars)?;
+    retain_enabled(preferences, vars)
 }
 
 /// Validates every entry, that names are unique within each list, and that each
@@ -877,6 +980,7 @@ mod tests {
         AptRepository {
             name: name.to_string(),
             sources: vec![source()],
+            when: None,
         }
     }
 
@@ -885,6 +989,7 @@ mod tests {
             name: name.to_string(),
             source,
             sha256: None,
+            when: None,
         }
     }
 
@@ -914,6 +1019,7 @@ mod tests {
         AptPreference {
             name: name.to_string(),
             pins,
+            when: None,
         }
     }
 
