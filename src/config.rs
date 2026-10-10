@@ -7,9 +7,7 @@
 //! The configuration is typically loaded from YAML files using the
 //! `load_profile` function.
 
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
+use std::collections::{BTreeMap, HashMap};
 use std::net::IpAddr;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -27,6 +25,7 @@ use crate::phase::{AssembleConfig, PrepareConfig, ProvisionTask};
 use crate::pipeline::Pipeline;
 use crate::privilege::{Privilege, PrivilegeDefaults, PrivilegeMethod};
 use crate::rootfs::RelPath;
+use crate::vars::{Substituting, VarOverrides};
 
 /// Known pseudo-filesystem source names.
 ///
@@ -439,6 +438,14 @@ pub struct Profile {
     #[serde(deserialize_with = "crate::de::path")]
     #[schemars(with = "crate::schema::Utf8PathSchema")]
     pub dir: Utf8PathBuf,
+    /// Variables and their default values. Any string elsewhere in the profile may
+    /// reference one as `${{ vars.<name> }}`, except a provision task's inline `content`.
+    /// A value is overridden by the environment variable `RSDEBSTRAP_VAR_<NAME>` (the
+    /// name in uppercase), and that by `--var <name>=<value>`; only declared variables
+    /// can be overridden.
+    #[serde(default, deserialize_with = "crate::de::var_map")]
+    #[schemars(with = "Option<crate::schema::VarsSchema>")]
+    pub vars: BTreeMap<String, String>,
     /// Default settings (isolation backend, etc.)
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
     #[schemars(with = "Option<Defaults>")]
@@ -696,13 +703,13 @@ fn format_pathed_parse_error(
     }
 }
 
-fn read_profile_file(path: &Utf8Path) -> Result<(BufReader<File>, Utf8PathBuf), RsdebstrapError> {
+fn read_profile_file(path: &Utf8Path) -> Result<(String, Utf8PathBuf), RsdebstrapError> {
     let canonical_path = path
         .canonicalize_utf8()
         .map_err(|e| RsdebstrapError::io(path.to_string(), e))?;
 
-    // On Linux, File::open on a directory succeeds silently, so we must
-    // check explicitly before attempting to open.
+    // On Linux, opening a directory succeeds and only the read fails, with an error
+    // that does not say what was wrong, so this is checked explicitly first.
     if canonical_path.is_dir() {
         return Err(RsdebstrapError::Validation(format!(
             "expected a file, not a directory: {}",
@@ -710,17 +717,34 @@ fn read_profile_file(path: &Utf8Path) -> Result<(BufReader<File>, Utf8PathBuf), 
         )));
     }
 
-    let file = File::open(&canonical_path)
+    let text = std::fs::read_to_string(&canonical_path)
         .map_err(|e| RsdebstrapError::io(canonical_path.to_string(), e))?;
-    Ok((BufReader::new(file), canonical_path))
+    Ok((text, canonical_path))
+}
+
+// Only `vars:` is read here; the rest of the document is skipped, so it is checked once,
+// in the second pass, with the variables already known.
+#[derive(Deserialize)]
+struct DeclaredVars {
+    #[serde(default, deserialize_with = "crate::de::var_map")]
+    vars: BTreeMap<String, String>,
 }
 
 fn parse_profile_yaml(
-    reader: BufReader<File>,
+    text: &str,
     file_path: &Utf8Path,
+    overrides: &VarOverrides,
 ) -> Result<Profile, RsdebstrapError> {
-    let de = yaml_serde::Deserializer::from_reader(reader);
-    serde_path_to_error::deserialize(de).map_err(|e| format_pathed_parse_error(e, file_path))
+    let declared: DeclaredVars =
+        serde_path_to_error::deserialize(yaml_serde::Deserializer::from_str(text))
+            .map_err(|e| format_pathed_parse_error(e, file_path))?;
+    let vars = overrides.apply(declared.vars)?;
+
+    let de = Substituting::new(yaml_serde::Deserializer::from_str(text), &vars);
+    let mut profile: Profile = serde_path_to_error::deserialize(de)
+        .map_err(|e| format_pathed_parse_error(e, file_path))?;
+    profile.vars = vars;
+    Ok(profile)
 }
 
 fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError> {
@@ -802,10 +826,29 @@ fn resolve_profile_paths(profile: &mut Profile, profile_dir: &Utf8Path) {
 ///     config::load_profile(Utf8Path::new("./examples/debian_trixie_mmdebstrap.yml")).unwrap();
 /// println!("Profile directory: {}", profile.dir);
 /// ```
-#[tracing::instrument]
 pub fn load_profile(path: &Utf8Path) -> Result<Profile, RsdebstrapError> {
-    let (reader, canonical_path) = read_profile_file(path)?;
-    let mut profile = parse_profile_yaml(reader, &canonical_path)?;
+    load_profile_with_vars(path, &VarOverrides::default())
+}
+
+/// Loads a bootstrap profile from a YAML file, overriding the variables it declares.
+///
+/// The profile's `vars:` defaults are replaced by `overrides`, and every
+/// `${{ vars.<name> }}` reference is substituted before the profile is checked, so the
+/// returned [`Profile`] holds the values a run will use. [`Profile::vars`] holds the
+/// variables after the overrides.
+///
+/// # Errors
+///
+/// As [`load_profile`], and also `RsdebstrapError::Validation` if an override names a
+/// variable the profile does not declare, or `RsdebstrapError::Config` if a reference is
+/// malformed or names an undeclared variable.
+#[tracing::instrument(skip(overrides))]
+pub fn load_profile_with_vars(
+    path: &Utf8Path,
+    overrides: &VarOverrides,
+) -> Result<Profile, RsdebstrapError> {
+    let (text, canonical_path) = read_profile_file(path)?;
+    let mut profile = parse_profile_yaml(&text, &canonical_path, overrides)?;
 
     // Checked before path resolution: joining an empty `dir` onto the profile's
     // directory would silently target that directory itself.
@@ -928,19 +971,11 @@ mod tests {
 
     #[test]
     fn test_parse_profile_yaml_valid() {
-        let mut tmpfile = NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            "dir: /tmp/rootfs\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: rootfs\n"
-        )
-        .unwrap();
-        tmpfile.flush().unwrap();
+        let text =
+            "dir: /tmp/rootfs\nbootstrap:\n  type: mmdebstrap\n  suite: trixie\n  target: rootfs\n";
+        let file_path = Utf8Path::new("/tmp/profile.yml");
 
-        let file = File::open(tmpfile.path()).unwrap();
-        let reader = BufReader::new(file);
-        let file_path = Utf8Path::from_path(tmpfile.path()).unwrap();
-
-        let result = parse_profile_yaml(reader, file_path);
+        let result = parse_profile_yaml(text, file_path, &VarOverrides::default());
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result.unwrap_err());
 
         let profile = result.unwrap();
@@ -949,15 +984,10 @@ mod tests {
 
     #[test]
     fn test_parse_profile_yaml_invalid() {
-        let mut tmpfile = NamedTempFile::new().unwrap();
-        write!(tmpfile, "not: valid\n  yaml_content").unwrap();
-        tmpfile.flush().unwrap();
+        let file_path = Utf8Path::new("/tmp/profile.yml");
 
-        let file = File::open(tmpfile.path()).unwrap();
-        let reader = BufReader::new(file);
-        let file_path = Utf8Path::from_path(tmpfile.path()).unwrap();
-
-        let result = parse_profile_yaml(reader, file_path);
+        let result =
+            parse_profile_yaml("not: valid\n  yaml_content", file_path, &VarOverrides::default());
         let err = result.unwrap_err();
         assert!(
             matches!(&err, RsdebstrapError::Config(msg) if msg.contains("YAML parse error")),

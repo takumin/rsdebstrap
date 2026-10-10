@@ -11,6 +11,7 @@ pub mod pipeline;
 pub mod privilege;
 pub mod rootfs;
 pub mod schema;
+pub mod vars;
 
 pub use error::RsdebstrapError;
 
@@ -223,8 +224,7 @@ pub fn run_apply(common: &cli::CommonArgs, executor: Arc<dyn CommandExecutor>) -
         warn!("DRY-RUN MODE: No changes will be made");
     }
 
-    let profile = config::load_profile(common.file.as_path())
-        .with_context(|| format!("failed to load profile from {}", common.file))?;
+    let profile = load_profile(common)?;
     let validated = profile.validate().context("profile validation failed")?;
 
     if !dry_run && !profile.dir.exists() {
@@ -238,9 +238,14 @@ pub fn run_apply(common: &cli::CommonArgs, executor: Arc<dyn CommandExecutor>) -
     Ok(())
 }
 
+fn load_profile(common: &cli::CommonArgs) -> Result<config::Profile> {
+    let overrides = vars::VarOverrides::from_process_env(common.vars.iter().cloned())?;
+    config::load_profile_with_vars(common.file.as_path(), &overrides)
+        .with_context(|| format!("failed to load profile from {}", common.file))
+}
+
 pub fn run_validate(opts: &cli::ValidateArgs) -> Result<()> {
-    let profile = config::load_profile(opts.common.file.as_path())
-        .with_context(|| format!("failed to load profile from {}", opts.common.file))?;
+    let profile = load_profile(&opts.common)?;
     profile.validate().context("profile validation failed")?;
     info!("validation successful:\n{:#?}", profile);
     Ok(())

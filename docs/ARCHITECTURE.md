@@ -14,7 +14,8 @@ CLI (src/cli.rs) → Config (src/config.rs) → Bootstrap (src/bootstrap/) → P
 ```
 
 1. **CLI** parses arguments (clap): `apply`, `validate`, `completions`, `schema`.
-2. **Config** loads/validates the YAML profile, resolves relative paths, applies defaults.
+2. **Config** loads/validates the YAML profile (substituting [profile variables](#profile-variables)),
+   resolves relative paths, applies defaults.
 3. **Bootstrap** runs a backend (`mmdebstrap`/`debootstrap`) to create the rootfs.
 4. **Pipeline** runs the `prepare` → `provision` → `assemble` phases in order.
 
@@ -79,6 +80,54 @@ putting that attribute on the enum itself would be a silent serde no-op, but on 
 payload it is enforced because serde consumes the `type` tag before handing the remaining
 keys to the payload (see [JSON Schema generation](#json-schema-generation)). Adding a
 backend (bwrap, nspawn, …) means adding a variant with its own payload struct.
+
+## Profile variables
+
+`vars:` (`src/vars.rs`) is substitution of `${{ vars.<name> }}` into the profile's strings,
+with the defaults declared in the profile and overrides from `RSDEBSTRAP_VAR_<NAME>` and
+`--var`. Its purpose is to build one profile across a CI matrix. The user-facing rules are
+in [`PROFILE.md`](PROFILE.md#variables); this section records why it is shaped this way.
+
+**Why variables and not more `defaults` fields.** The first idea was typed
+`defaults.suite`/`defaults.arch` that the bootstrap backends fall back to. Only those two
+map onto a backend field; what else differs between matrix entries (a kernel package name,
+the apt suites `<suite>-updates`/`-security`, the mirror, `dir`, a role's script) appears
+*inside* other strings. And `defaults` means "a setting each task resolves against"
+(see above); build parameters are a different thing.
+
+**Why substitution happens inside deserialization.** `config::parse_profile_yaml` reads
+`vars:` in a first pass, applies the overrides, and deserializes the profile in a second
+pass through `vars::Substituting`, a `Deserializer` wrapper that forwards every request
+unchanged and rewrites only the strings handed to a visitor. Two alternatives were rejected:
+
+- *Text substitution before parsing* (envsubst-style). A value containing `]`, `: ` or a
+  newline would change the document's structure, and an override comes from the
+  environment.
+- *Substitution on a parsed `yaml_serde::Value`, then deserializing the value.* That
+  deserializes through a different deserializer than every other profile: the text
+  deserializer's scalar handling (see [JSON Schema generation](#json-schema-generation))
+  would no longer apply, and parse errors would lose their line and column.
+
+The wrapper keeps both: a profile without references takes exactly the path it took before,
+and an error — including an undefined variable — carries the location `yaml_serde` attaches.
+The result of a substitution is always one string scalar, so a value cannot add structure.
+
+**Where substitution is suppressed.** The wrapper tracks only as much position as it needs
+(`vars::Scope`): the top-level `vars:` (declarations are literal, so there is no evaluation
+order to define) and `provision[*].content`. Inline provision content is a program run in
+the rootfs, under privilege when the task resolves to one; substituting into it would make
+an environment variable's value part of that program, and `${{ … }}` there belongs to the
+script's own language. An asset's or keyring's inline `content` is data and is substituted.
+The tracking relies on the map key being deserialized before its value, which also holds
+when serde buffers an internally tagged enum (`ProvisionTask`): the buffering visitor is
+wrapped like any other.
+
+**Only declared variables can be overridden.** An override for an undeclared name is an
+error rather than ignored. A matrix key that is misspelled, or a profile that forgot to
+declare what the workflow sets, would otherwise build the default silently — the failure
+the feature exists to prevent. It also means the environment cannot introduce a name the
+profile did not ask for. Names are lowercase so that `RSDEBSTRAP_VAR_<NAME>` maps back to
+exactly one variable.
 
 ## Phases & the pipeline
 

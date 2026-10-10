@@ -85,6 +85,11 @@ and this project adheres to
 
 ### Added
 
+- `vars:`, profile variables referenced from any string as `${{ vars.<name> }}`
+  (except a provision task's inline `content`). Each declared value can be
+  overridden with the environment variable `RSDEBSTRAP_VAR_<NAME>` or with
+  `--var <name>=<value>`, so one profile can drive a CI matrix; overriding an
+  undeclared variable is an error.
 - `assemble.output`, which writes build artifacts into `dir` once the rootfs is
   final: `kernel` and `initramfs` copy the images out of the rootfs (by default
   through Debian's `/vmlinuz` and `/initrd.img` links, confined to the rootfs),
