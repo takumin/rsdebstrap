@@ -20,6 +20,13 @@ defaults:                   # Optional default settings
     binary:
       x86_64: /path/to/mitamae-x86_64
       aarch64: /path/to/mitamae-aarch64
+    plugins:                # Optional: mitamae plugins (see mitamae task rules)
+      - path: ./plugins/mitamae-plugin-recipe-docker  # Plugin checkout on the host
+      - url: https://github.com/<owner>/mitamae-plugin-resource-foo.git
+        commit: <40 hex digits>  # Git repository at a full commit ID (host's git)
+      - url: https://github.com/<owner>/mitamae-plugin-resource-bar/archive/<commit>.tar.gz
+        sha256: <64 hex digits>  # Archive (.tar.gz / .tar) over https
+        # name: mitamae-plugin-resource-bar  # Optional: override the derived name
 bootstrap:
   type: mmdebstrap          # Backend type: mmdebstrap | debootstrap
   suite: trixie             # Debian suite
@@ -87,6 +94,7 @@ provision:                  # Optional main provisioning steps (ordered list)
     # OR
     content: "..."          # Inline recipe
     binary: /path/to/mitamae  # Optional: override defaults.mitamae
+    plugins: []             # Optional: replace defaults.mitamae.plugins ([] = none)
     privilege:               # Optional: override defaults.privilege
       method: doas
     isolation:               # Optional: override defaults.isolation
@@ -273,9 +281,10 @@ refused as empty.
 - On defaulted section/list/map fields (`vars`, `defaults`, `prepare`, `provision`, `assemble`,
   `assemble.output`, `assemble.output.assets`, `mounts`, `options`, `name_servers`, `search`, the
   apt `keyrings`, `repositories`, `preferences`, `components` and `architectures`, the apt
-  provision task's `install`, `mitamae`, `mitamae.binary`), an explicit `null`, an empty value
-  (e.g. a section whose entries are all commented out), and omitting the key are equivalent — all
-  mean "use the default".
+  provision task's `install`, `mitamae`, `mitamae.binary`, `mitamae.plugins`), an explicit
+  `null`, an empty value (e.g. a section whose entries are all commented out), and omitting the
+  key are equivalent — all mean "use the default". A mitamae task's own `plugins` is the
+  exception: absent or `null` inherits `defaults.mitamae.plugins`, while `[]` means none.
 - That list is exhaustive: the list fields inside the internally tagged `bootstrap:` maps
   (`include`, `components`, `keyring`, hook lists, …) and the tagged `isolation:` config stay
   strict — an explicit `null` or an empty value (e.g. a list whose entries are all commented
@@ -464,6 +473,47 @@ on the host. Two consequences follow, and both are enforced rather than document
   `apt-get` as an option
 - `privilege` works as on the other provision tasks. `isolation: false` is refused: it would
   run the host's `apt-get` against the host
+
+## mitamae task rules
+
+- The binary is `binary` on the task, else `defaults.mitamae.binary.<arch>` for the host's
+  architecture (`x86_64`, `aarch64`, …). A task with neither is a validation error
+- `plugins` lists the plugins mitamae runs with, each from one source:
+  - `path` — a plugin checkout on the host (the directory holding `mrblib`), resolved against
+    the profile's directory
+  - `url` + `commit` — a git repository (`https://`, `ssh://` or `user@host:path`) at a full
+    commit ID (40 or 64 hex digits), fetched with the host's `git`. Abbreviated IDs, branches
+    and tags are refused, so the content cannot change under the profile. Credentials come
+    from git's own configuration (ssh agent, credential helper); git never prompts
+  - `url` + `sha256` — an `https` archive (`.tar.gz` or plain `.tar`, told apart by content)
+    pinned to the SHA-256 of the downloaded bytes, such as a forge's
+    `.../archive/<commit>.tar.gz`. `mrblib` is looked for at the top of the archive and, failing
+    that, inside its single top-level directory
+- Each plugin is staged under a name, which is what mitamae knows it by (`include_recipe
+  'docker'` finds `mitamae-plugin-recipe-docker`). It is `name` if given, else derived: the
+  last component of `path`, the repository name of a git `url` (without `.git`), or the
+  repository name before `/archive/` in an archive `url` (else the file name without its
+  `.tar.gz`/`.tgz`/`.tar`). It must start with `mitamae-plugin-resource-`,
+  `mitamae-plugin-recipe-` or their `itamae-` forms — mitamae ignores any other directory —
+  and must be unique within the list
+- The task's `plugins` replaces `defaults.mitamae.plugins` rather than adding to it; `[]` runs
+  the task with no plugins
+- Only what mitamae loads is copied into the rootfs: each plugin's `mrblib` directory, in
+  full (a recipe plugin's templates and files sit next to its recipes there). Everything
+  outside it (`.git`, specs, README) stays on the host. A plugin without `mrblib` is an error
+- The copy is staged under `/tmp` in the rootfs for the task's run, passed as
+  `mitamae local --plugins=<dir>`, and removed afterwards, including when the recipe fails.
+  This needs mitamae v1.10.1 or later
+- Inside `mrblib`, only directories and regular files are accepted: a symlink (in a `path`
+  checkout or an archive) or a hard link or device (in an archive) is a validation error
+  rather than followed. A `path` plugin that is itself a symlink is refused too, as for every
+  host file a profile names. An archive member that is absolute or climbs with `..` fails
+  the whole archive, wherever it is. Each plugin's `mrblib` is limited to 64 MiB and 10,000
+  entries, a download to 64 MiB, and what an archive unpacks to to 256 MiB
+- Every plugin is read or fetched when the profile is validated, before the bootstrap runs, so
+  a failed download or a missing commit fails the run up front — `--dry-run` included. A
+  plugin listed in `defaults.mitamae.plugins` is fetched once per run however many tasks use
+  it, and the bytes that were checked are the ones staged
 
 ## Assemble apt rules
 

@@ -25,7 +25,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub use apt::AptGetTask;
-pub use mitamae::MitamaeTask;
+pub use mitamae::{MitamaePlugin, MitamaePluginSource, MitamaeTask};
 pub use shell::ShellTask;
 
 use crate::condition::Condition;

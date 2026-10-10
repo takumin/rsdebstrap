@@ -371,6 +371,15 @@ patterns run throughout `src/isolation/`:
   The mode travels as a `FileMode` rather than a `u32`, which masks the file-type bits off at
   construction: `take` reads a full `st_mode`, and the value it records is fed straight back to
   `write_file` by `put_back`.
+  mitamae plugins are a tree rather than a file. Every source -- a host checkout, a git
+  commit, an https archive -- is reduced to the plugin's `mrblib` tree in memory before
+  anything reaches the rootfs, and the tree is laid down with `RootfsOps::create_dir`/
+  `write_file`; `StagedDirGuard` removes it with `clear_dir` and `remove_dir`. A host checkout
+  is walked by descriptor (`O_NOFOLLOW` on every directory, each file read through the
+  descriptor it was listed in). A git commit is fetched into a scratch bare repository by the
+  host's `git`, unprivileged, and read back as a `git archive` tar stream, so git sources go
+  through the same tar reader -- and the same refusals of links and `..` -- as downloaded
+  archives, and nothing is ever checked out or unpacked on disk.
 
   **Direct execution names an inode too.** With `isolation: false` the program a task
   declares would otherwise be resolved by the kernel on the host, so it is resolved against
