@@ -21,6 +21,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
 use tracing::{debug, info};
 
+use crate::checksum::Checksum;
 use crate::error::RsdebstrapError;
 use crate::rootfs::{FileMode, RelPath, RootfsOps};
 
@@ -42,8 +43,8 @@ pub enum MitamaePluginSource {
     Path(Utf8PathBuf),
     /// A git repository, at a commit.
     Git { url: String, commit: String },
-    /// A tar archive (optionally gzip-compressed) downloaded over https, with its SHA-256.
-    Archive { url: String, sha256: String },
+    /// A tar archive (optionally gzip-compressed) downloaded over https, with its checksum.
+    Archive { url: String, checksum: Checksum },
 }
 
 impl PartialEq for MitamaePlugin {
@@ -84,16 +85,17 @@ struct RawMitamaePlugin {
     #[schemars(with = "Option<crate::schema::Utf8PathSchema>")]
     path: Option<Utf8PathBuf>,
     /// Git repository (`https://`, `ssh://` or `user@host:path`) with `commit`, or an
-    /// `https` URL of a `.tar.gz` / `.tar` archive with `sha256`.
+    /// `https` URL of a `.tar.gz` / `.tar` archive with `checksum`.
     #[serde(default, deserialize_with = "crate::de::opt_string")]
     url: Option<String>,
     /// Full commit ID (40 or 64 hex digits) to take from the git repository `url`. Fetched
     /// with the host's `git`.
     #[serde(default, deserialize_with = "crate::de::opt_string")]
     commit: Option<String>,
-    /// Expected SHA-256 of the archive at `url`, as 64 hex digits.
-    #[serde(default, deserialize_with = "crate::de::opt_string")]
-    sha256: Option<String>,
+    /// Expected digest of the archive at `url`, as `<algorithm>:<hex digest>` with
+    /// algorithm `md5`, `sha1`, `sha256` or `sha512`, e.g. `sha256:9f86d0…`.
+    #[serde(default)]
+    checksum: Option<Checksum>,
 }
 
 // The schema's copy of the rule `MitamaePlugin::deserialize` enforces. The fields a branch
@@ -105,15 +107,15 @@ fn plugin_source_one_of() -> serde_json::Value {
     serde_json::json!([
         {
             "required": ["path"],
-            "properties": { "path": text, "url": absent, "commit": absent, "sha256": absent }
+            "properties": { "path": text, "url": absent, "commit": absent, "checksum": absent }
         },
         {
             "required": ["url", "commit"],
-            "properties": { "url": text, "commit": text, "path": absent, "sha256": absent }
+            "properties": { "url": text, "commit": text, "path": absent, "checksum": absent }
         },
         {
-            "required": ["url", "sha256"],
-            "properties": { "url": text, "sha256": text, "path": absent, "commit": absent }
+            "required": ["url", "checksum"],
+            "properties": { "url": text, "checksum": text, "path": absent, "commit": absent }
         },
     ])
 }
@@ -126,23 +128,26 @@ impl<'de> Deserialize<'de> for MitamaePlugin {
         use serde::de::Error;
 
         let raw = RawMitamaePlugin::deserialize(deserializer)?;
-        let source = match (raw.path, raw.url, raw.commit, raw.sha256) {
+        let source = match (raw.path, raw.url, raw.commit, raw.checksum) {
             (Some(path), None, None, None) => MitamaePluginSource::Path(path),
             (None, Some(url), Some(commit), None) => MitamaePluginSource::Git { url, commit },
-            (None, Some(url), None, Some(sha256)) => MitamaePluginSource::Archive { url, sha256 },
+            (None, Some(url), None, Some(checksum)) => {
+                MitamaePluginSource::Archive { url, checksum }
+            }
             (Some(_), _, _, _) => {
                 return Err(D::Error::custom(
-                    "'path' cannot be combined with 'url', 'commit' or 'sha256'",
+                    "'path' cannot be combined with 'url', 'commit' or 'checksum'",
                 ));
             }
             (None, Some(_), Some(_), Some(_)) => {
                 return Err(D::Error::custom(
-                    "'commit' (a git repository) and 'sha256' (an archive) are mutually exclusive",
+                    "'commit' (a git repository) and 'checksum' (an archive) \
+                    are mutually exclusive",
                 ));
             }
             (None, Some(_), None, None) => {
                 return Err(D::Error::custom(
-                    "'url' requires 'commit' (a git repository) or 'sha256' (an archive), \
+                    "'url' requires 'commit' (a git repository) or 'checksum' (an archive), \
                     so a changed upstream fails the build",
                 ));
             }
@@ -190,11 +195,11 @@ impl MitamaePlugin {
         })
     }
 
-    /// A tar archive at an https `url`, pinned by `sha256`.
-    pub fn archive(url: impl Into<String>, sha256: impl Into<String>) -> Self {
+    /// A tar archive at an https `url`, pinned by `checksum`.
+    pub fn archive(url: impl Into<String>, checksum: Checksum) -> Self {
         Self::from_source(MitamaePluginSource::Archive {
             url: url.into(),
-            sha256: sha256.into(),
+            checksum,
         })
     }
 
@@ -311,17 +316,11 @@ impl MitamaePlugin {
                     )));
                 }
             }
-            MitamaePluginSource::Archive { url, sha256 } => {
+            MitamaePluginSource::Archive { url, .. } => {
                 let parsed = url::Url::parse(url)
                     .map_err(|e| invalid(format!("url '{}' is not a valid URL: {}", url, e)))?;
                 if parsed.scheme() != "https" {
                     return Err(invalid(format!("url '{}' must use https", url)));
-                }
-                if !(sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit())) {
-                    return Err(invalid(format!(
-                        "sha256 '{}' for '{}' is not 64 hex digits",
-                        sha256, url
-                    )));
                 }
             }
         }
@@ -344,10 +343,10 @@ impl MitamaePlugin {
                 info!("fetching mitamae plugin from {} at {}", url, commit);
                 fetch_git(url, &commit.to_ascii_lowercase())?
             }
-            MitamaePluginSource::Archive { url, sha256 } => {
+            MitamaePluginSource::Archive { url, checksum } => {
                 info!("downloading mitamae plugin from {}", url);
                 let bytes = crate::https::get_to_vec(url, MAX_ARCHIVE_SIZE, "mitamae plugin")?;
-                read_archive(&bytes, sha256, url)?
+                read_archive(&bytes, checksum, url)?
             }
         });
         Ok(Arc::clone(self.fetched.get_or_init(|| tree)))
@@ -672,23 +671,13 @@ fn list_host_dir(dir: &OwnedFd, path: &Utf8Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// Checks a downloaded archive against `sha256` and reads its `mrblib` tree.
+/// Checks a downloaded archive against `checksum` and reads its `mrblib` tree.
 ///
 /// The archive may be gzip-compressed or a plain tar; the gzip magic decides, not the URL.
-fn read_archive(bytes: &[u8], sha256: &str, url: &str) -> Result<PluginTree> {
-    use sha2::{Digest, Sha256};
-
-    let actual: String = Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect();
-    if !actual.eq_ignore_ascii_case(sha256) {
-        return Err(RsdebstrapError::Validation(format!(
-            "mitamae plugin {}: sha256 mismatch: expected {}, got {}",
-            url, sha256, actual
-        ))
-        .into());
-    }
+fn read_archive(bytes: &[u8], checksum: &Checksum, url: &str) -> Result<PluginTree> {
+    checksum
+        .verify(bytes)
+        .map_err(|e| RsdebstrapError::Validation(format!("mitamae plugin {}: {}", url, e)))?;
     if bytes.starts_with(&[0x1f, 0x8b]) {
         read_tar(flate2::read::GzDecoder::new(bytes), url)
     } else {
@@ -988,6 +977,7 @@ fn git_spawn_error(e: std::io::Error, source: &str) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checksum::Algorithm;
 
     enum Member<'a> {
         Dir(&'a str),
@@ -1034,17 +1024,8 @@ mod tests {
         encoder.finish().unwrap()
     }
 
-    fn sha256_hex(bytes: &[u8]) -> String {
-        use sha2::{Digest, Sha256};
-
-        Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
-    }
-
     fn read(archive: &[u8]) -> Result<Vec<(String, Option<String>)>> {
-        let tree = read_archive(archive, &sha256_hex(archive), "test")?;
+        let tree = read_archive(archive, &Checksum::of(Algorithm::Sha256, archive), "test")?;
         Ok(tree
             .entries
             .into_iter()
@@ -1098,8 +1079,9 @@ mod tests {
     #[test]
     fn refuses_a_checksum_mismatch() {
         let archive = gzip(&tar(&[Member::File("mrblib/a.rb", "a")]));
-        let err = read_archive(&archive, &"0".repeat(64), "test").unwrap_err();
-        assert!(message(err).contains("sha256 mismatch"));
+        let other = Checksum::of(Algorithm::Sha256, b"other");
+        let err = read_archive(&archive, &other, "test").unwrap_err();
+        assert!(message(err).contains("checksum mismatch"));
     }
 
     #[test]

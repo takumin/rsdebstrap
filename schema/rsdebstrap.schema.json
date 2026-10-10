@@ -35,6 +35,14 @@
 				}
 			],
 			"properties": {
+				"checksum": {
+					"description": "Expected digest of the key's bytes, as `<algorithm>:<hex digest>` with algorithm\n`md5`, `sha1`, `sha256` or `sha512`, e.g. `sha256:9f86d0…`. Checked before anything is\nwritten; recommended with `url`, where the bytes are the server's to choose.",
+					"pattern": "^(md5:[0-9a-fA-F]{32}|sha1:[0-9a-fA-F]{40}|sha256:[0-9a-fA-F]{64}|sha512:[0-9a-fA-F]{128})$",
+					"type": [
+						"string",
+						"null"
+					]
+				},
 				"content": {
 					"description": "The key inline, ASCII-armored (`-----BEGIN PGP PUBLIC KEY BLOCK-----`).",
 					"type": [
@@ -48,13 +56,6 @@
 				},
 				"path": {
 					"description": "Path to a key file on the host (ASCII-armored or binary). Relative paths are\nresolved against the profile's directory.",
-					"type": [
-						"string",
-						"null"
-					]
-				},
-				"sha256": {
-					"description": "Expected SHA-256 of the key's bytes, as 64 hex digits. Checked before anything is\nwritten; recommended with `url`, where the bytes are the server's to choose.",
 					"type": [
 						"string",
 						"null"
@@ -444,7 +445,7 @@
 			"oneOf": [
 				{
 					"properties": {
-						"sha256": {
+						"checksum": {
 							"type": "string"
 						},
 						"url": {
@@ -453,7 +454,7 @@
 					},
 					"required": [
 						"url",
-						"sha256"
+						"checksum"
 					]
 				},
 				{
@@ -488,6 +489,15 @@
 				}
 			],
 			"properties": {
+				"checksum": {
+					"default": null,
+					"description": "Expected digest of the file's bytes, as `<algorithm>:<hex digest>` with algorithm\n`md5`, `sha1`, `sha256` or `sha512`, e.g. `sha256:9f86d0…`. Checked before the file is put\nin place. Required with `url`, where the bytes are the server's to choose.",
+					"pattern": "^(md5:[0-9a-fA-F]{32}|sha1:[0-9a-fA-F]{40}|sha256:[0-9a-fA-F]{64}|sha512:[0-9a-fA-F]{128})$",
+					"type": [
+						"string",
+						"null"
+					]
+				},
 				"content": {
 					"default": null,
 					"description": "The file's contents inline.",
@@ -508,14 +518,6 @@
 						"null"
 					]
 				},
-				"sha256": {
-					"default": null,
-					"description": "Expected SHA-256 of the file's bytes, as 64 hex digits. Checked before the file is\nput in place. Required with `url`, where the bytes are the server's to choose.",
-					"type": [
-						"string",
-						"null"
-					]
-				},
 				"source": {
 					"default": null,
 					"description": "Absolute path inside the rootfs to copy from, like `kernel.source`. Symlinks are\nfollowed, confined to the rootfs, and the copy keeps the source's permission bits.",
@@ -526,7 +528,7 @@
 				},
 				"url": {
 					"default": null,
-					"description": "`https` URL to download the file from. Requires `sha256`.",
+					"description": "`https` URL to download the file from. Requires `checksum`.",
 					"type": [
 						"string",
 						"null"
@@ -977,14 +979,14 @@
 			"oneOf": [
 				{
 					"properties": {
+						"checksum": {
+							"type": "null"
+						},
 						"commit": {
 							"type": "null"
 						},
 						"path": {
 							"type": "string"
-						},
-						"sha256": {
-							"type": "null"
 						},
 						"url": {
 							"type": "null"
@@ -996,13 +998,13 @@
 				},
 				{
 					"properties": {
+						"checksum": {
+							"type": "null"
+						},
 						"commit": {
 							"type": "string"
 						},
 						"path": {
-							"type": "null"
-						},
-						"sha256": {
 							"type": "null"
 						},
 						"url": {
@@ -1016,14 +1018,14 @@
 				},
 				{
 					"properties": {
+						"checksum": {
+							"type": "string"
+						},
 						"commit": {
 							"type": "null"
 						},
 						"path": {
 							"type": "null"
-						},
-						"sha256": {
-							"type": "string"
 						},
 						"url": {
 							"type": "string"
@@ -1031,11 +1033,20 @@
 					},
 					"required": [
 						"url",
-						"sha256"
+						"checksum"
 					]
 				}
 			],
 			"properties": {
+				"checksum": {
+					"default": null,
+					"description": "Expected digest of the archive at `url`, as `<algorithm>:<hex digest>` with\nalgorithm `md5`, `sha1`, `sha256` or `sha512`, e.g. `sha256:9f86d0…`.",
+					"pattern": "^(md5:[0-9a-fA-F]{32}|sha1:[0-9a-fA-F]{40}|sha256:[0-9a-fA-F]{64}|sha512:[0-9a-fA-F]{128})$",
+					"type": [
+						"string",
+						"null"
+					]
+				},
 				"commit": {
 					"default": null,
 					"description": "Full commit ID (40 or 64 hex digits) to take from the git repository `url`. Fetched\nwith the host's `git`.",
@@ -1060,17 +1071,9 @@
 						"null"
 					]
 				},
-				"sha256": {
-					"default": null,
-					"description": "Expected SHA-256 of the archive at `url`, as 64 hex digits.",
-					"type": [
-						"string",
-						"null"
-					]
-				},
 				"url": {
 					"default": null,
-					"description": "Git repository (`https://`, `ssh://` or `user@host:path`) with `commit`, or an\n`https` URL of a `.tar.gz` / `.tar` archive with `sha256`.",
+					"description": "Git repository (`https://`, `ssh://` or `user@host:path`) with `commit`, or an\n`https` URL of a `.tar.gz` / `.tar` archive with `checksum`.",
 					"type": [
 						"string",
 						"null"

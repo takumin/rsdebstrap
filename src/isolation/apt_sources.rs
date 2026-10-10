@@ -65,7 +65,7 @@ impl AptChanges<'_> {
     /// then removes `/etc/apt/sources.list` if asked to.
     ///
     /// Every keyring is read, downloaded and checked before the first change, so a key that
-    /// is missing, fails its `sha256`, or is not a public key fails with the rootfs untouched.
+    /// is missing, fails its `checksum`, or is not a public key fails with the rootfs untouched.
     /// The removal comes last, so that a failed write leaves the bootstrap's sources in
     /// place. Nothing is rolled back after the first change: a failure here fails the build,
     /// and what it leaves is not an image anyone is handed.
@@ -179,7 +179,7 @@ fn keyring_bytes(keyring: &AptKeyring, fetch: KeyFetcher) -> Result<Vec<u8>> {
         ))
         .into());
     }
-    keyring.check_sha256(&bytes)?;
+    keyring.check_checksum(&bytes)?;
     Ok(bytes)
 }
 
@@ -246,6 +246,7 @@ mod tests {
     use camino::Utf8PathBuf;
 
     use super::*;
+    use crate::checksum::Checksum;
     use crate::phase::prepare::apt::{AptPin, AptSource, AptSourceType};
     use crate::rootfs::LocalRootfsOps;
 
@@ -293,7 +294,7 @@ mod tests {
         AptKeyring {
             name: name.to_string(),
             source,
-            sha256: None,
+            checksum: None,
             when: None,
         }
     }
@@ -455,13 +456,13 @@ mod tests {
     fn a_keyring_failing_its_checks_fails_before_anything_is_written() {
         let (_temp, rootfs) = rootfs_with_apt_dirs();
         let mut bad = keyring("bad", AptKeySource::Url("https://e.com/k".into()));
-        bad.sha256 = Some("0".repeat(64));
+        bad.checksum = Some(Checksum::new(&format!("sha256:{}", "0".repeat(64))).unwrap());
         // The first keyring and the repository are valid: nothing of them may be written
         // either, because keyrings are all checked before the first change.
         let t = task(vec![inline("good"), bad], vec![repo("x", None)]);
 
         let err = apply_with(&rootfs, &t, false, serve_armored).unwrap_err();
-        assert!(format!("{:#}", err).contains("sha256 mismatch"), "{:#}", err);
+        assert!(format!("{:#}", err).contains("checksum mismatch"), "{:#}", err);
         assert!(is_empty_dir(&rootfs.join("etc/apt/sources.list.d")));
         assert!(!rootfs.join("etc/apt/keyrings").exists());
     }

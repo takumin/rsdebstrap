@@ -97,6 +97,9 @@ and this project adheres to
   `keyrings`, `repositories` and `preferences` in `prepare.apt` and
   `assemble.apt` accept `when:` too; an entry whose condition is false is
   neither validated nor written.
+- `checksum:`, the pin on an apt keyring, an output asset and an archive mitamae
+  plugin, written `<algorithm>:<hex digest>` with algorithm `md5`, `sha1`,
+  `sha256` or `sha512` (`checksum: sha256:9f86d0…`). A malformed value fails the load.
 - `assemble.output`, which writes build artifacts into `dir` once the rootfs is
   final: `kernel` and `initramfs` copy the images out of the rootfs (by default
   through Debian's `/vmlinuz` and `/initrd.img` links, confined to the rootfs),
@@ -105,13 +108,13 @@ and this project adheres to
   renamed into place, so a failed build leaves no partial file.
 - `assemble.output.assets`, a list of files to place in `dir`, such as a
   Raspberry Pi's boot firmware. Each is downloaded over https (with a required
-  `sha256`), copied from the host (`path`), given inline (`content`), or copied
+  `checksum`), copied from the host (`path`), given inline (`content`), or copied
   out of the rootfs (`source`), and written under a path relative to `dir`
   whose missing directories are created. A symlink on the way is refused, and a
   path into the bootstrap target is rejected when the profile is validated.
 - `prepare.apt`, with two lists: `keyrings`, OpenPGP keys written to
   `/etc/apt/keyrings` (from a host file, inline, or downloaded over https with an
-  optional `sha256` pin), and `repositories`, deb822 `.sources` files with one
+  optional `checksum` pin), and `repositories`, deb822 `.sources` files with one
   stanza per entry of `sources`, each of which may name a keyring as its
   `Signed-By` through `signed_by`. `/etc/apt/keyrings` is
   created if the rootfs lacks it, without following symlinks. Entries stay in

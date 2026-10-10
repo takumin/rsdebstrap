@@ -19,10 +19,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 use rustix::fs::{self as rfs, AtFlags, CWD, Mode, OFlags};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use strum::Display;
 use tracing::info;
 
+use crate::checksum::{self, Checksum};
 use crate::error::RsdebstrapError;
 use crate::executor::{CommandExecutor, CommandSpec, PrivilegedProgram};
 use crate::phase::PhaseItem;
@@ -136,8 +136,8 @@ impl AssetSource {
 pub struct AssetOutput {
     pub file: String,
     pub source: AssetSource,
-    /// Lowercase or uppercase hex SHA-256 of the file's bytes.
-    pub sha256: Option<String>,
+    /// Expected digest of the file's bytes.
+    pub checksum: Option<Checksum>,
 }
 
 // Wire shape of an asset: one type drives both deserialization and schema generation, so the
@@ -150,7 +150,7 @@ struct RawAssetOutput {
     /// directories are created. It may not lead into the bootstrap target.
     #[serde(deserialize_with = "crate::de::string")]
     file: String,
-    /// `https` URL to download the file from. Requires `sha256`.
+    /// `https` URL to download the file from. Requires `checksum`.
     #[serde(default, deserialize_with = "crate::de::opt_string")]
     url: Option<String>,
     /// Path to a file on the host. Relative paths are resolved against the profile's
@@ -165,10 +165,11 @@ struct RawAssetOutput {
     /// followed, confined to the rootfs, and the copy keeps the source's permission bits.
     #[serde(default, deserialize_with = "crate::de::opt_string")]
     source: Option<String>,
-    /// Expected SHA-256 of the file's bytes, as 64 hex digits. Checked before the file is
-    /// put in place. Required with `url`, where the bytes are the server's to choose.
-    #[serde(default, deserialize_with = "crate::de::opt_string")]
-    sha256: Option<String>,
+    /// Expected digest of the file's bytes, as `<algorithm>:<hex digest>` with algorithm
+    /// `md5`, `sha1`, `sha256` or `sha512`, e.g. `sha256:9f86d0…`. Checked before the file is put
+    /// in place. Required with `url`, where the bytes are the server's to choose.
+    #[serde(default)]
+    checksum: Option<Checksum>,
 }
 
 // The schema's copy of the rule `AssetOutput::deserialize` enforces. Each branch pins its
@@ -176,8 +177,8 @@ struct RawAssetOutput {
 fn asset_source_one_of() -> serde_json::Value {
     serde_json::json!([
         {
-            "required": ["url", "sha256"],
-            "properties": { "url": { "type": "string" }, "sha256": { "type": "string" } }
+            "required": ["url", "checksum"],
+            "properties": { "url": { "type": "string" }, "checksum": { "type": "string" } }
         },
         { "required": ["path"], "properties": { "path": { "type": "string" } } },
         { "required": ["content"], "properties": { "content": { "type": "string" } } },
@@ -193,9 +194,9 @@ impl<'de> Deserialize<'de> for AssetOutput {
         let raw = RawAssetOutput::deserialize(deserializer)?;
         let source = match (raw.url, raw.path, raw.content, raw.source) {
             (Some(url), None, None, None) => {
-                if raw.sha256.is_none() {
+                if raw.checksum.is_none() {
                     return Err(serde::de::Error::custom(
-                        "'url' requires 'sha256', so a changed download fails the build",
+                        "'url' requires 'checksum', so a changed download fails the build",
                     ));
                 }
                 AssetSource::Url(url)
@@ -217,7 +218,7 @@ impl<'de> Deserialize<'de> for AssetOutput {
         Ok(Self {
             file: raw.file,
             source,
-            sha256: raw.sha256,
+            checksum: raw.checksum,
         })
     }
 }
@@ -238,11 +239,6 @@ impl AssetOutput {
         let invalid = |msg: String| {
             RsdebstrapError::Validation(format!("assemble output asset '{}': {}", self.file, msg))
         };
-        if let Some(sha256) = &self.sha256
-            && !(sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()))
-        {
-            return Err(invalid(format!("sha256 '{}' is not 64 hex digits", sha256)));
-        }
         match &self.source {
             AssetSource::Url(url) => {
                 let parsed = url::Url::parse(url)
@@ -555,7 +551,7 @@ fn write_asset(asset: &AssetOutput, ctx: &OutputContext<'_>) -> Result<()> {
         .expect("a validated asset file has at least one component");
     let (parent, display_parent) = open_asset_dir(ctx.dir, parents)?;
     let (staged, file) = StagedOutput::create_at(parent, display_parent, name)?;
-    let mut sink = HashingWriter::new(file);
+    let mut sink = HashingWriter::new(file, asset.checksum.as_ref());
 
     let mode = match &asset.source {
         AssetSource::Url(url) => {
@@ -589,15 +585,11 @@ fn write_asset(asset: &AssetOutput, ctx: &OutputContext<'_>) -> Result<()> {
         }
     };
 
-    let (file, digest, size) = sink.finish();
-    if let Some(expected) = &asset.sha256
-        && !digest.eq_ignore_ascii_case(expected)
-    {
-        return Err(RsdebstrapError::Validation(format!(
-            "assemble output asset '{}': sha256 mismatch: expected {}, got {}",
-            asset.file, expected, digest
-        ))
-        .into());
+    let (file, hasher, size) = sink.finish();
+    if let Some(hasher) = hasher {
+        hasher.verify().map_err(|e| {
+            RsdebstrapError::Validation(format!("assemble output asset '{}': {}", asset.file, e))
+        })?;
     }
     rfs::fchmod(&file, Mode::from_raw_mode(mode))
         .map_err(std::io::Error::from)
@@ -650,38 +642,34 @@ fn open_asset_dir(
 }
 
 /// Passes writes through to a file while hashing and counting them, so a download is checked
-/// against its `sha256` without being held in memory or read back.
-struct HashingWriter {
+/// against its `checksum` without being held in memory or read back.
+struct HashingWriter<'a> {
     file: File,
-    hasher: Sha256,
+    hasher: Option<checksum::Hasher<'a>>,
     size: u64,
 }
 
-impl HashingWriter {
-    fn new(file: File) -> Self {
+impl<'a> HashingWriter<'a> {
+    fn new(file: File, checksum: Option<&'a Checksum>) -> Self {
         Self {
             file,
-            hasher: Sha256::new(),
+            hasher: checksum.map(Checksum::hasher),
             size: 0,
         }
     }
 
-    /// Returns the file, the hex SHA-256 of what was written, and its size.
-    fn finish(self) -> (File, String, u64) {
-        let digest = self
-            .hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect();
-        (self.file, digest, self.size)
+    /// Returns the file, the hasher to check what was written against, and its size.
+    fn finish(self) -> (File, Option<checksum::Hasher<'a>>, u64) {
+        (self.file, self.hasher, self.size)
     }
 }
 
-impl Write for HashingWriter {
+impl Write for HashingWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.file.write(buf)?;
-        self.hasher.update(&buf[..written]);
+        if let Some(hasher) = &mut self.hasher {
+            hasher.update(&buf[..written]);
+        }
         self.size += written as u64;
         Ok(written)
     }
@@ -826,6 +814,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::checksum::Algorithm;
     use crate::executor::ExecutionResult;
     use crate::rootfs::LocalRootfsOps;
 
@@ -911,18 +900,11 @@ mod tests {
         }
     }
 
-    fn sha256_hex(bytes: &[u8]) -> String {
-        Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
-    }
-
-    fn asset(file: &str, source: AssetSource, sha256: Option<String>) -> AssetOutput {
+    fn asset(file: &str, source: AssetSource, checksum: Option<Checksum>) -> AssetOutput {
         AssetOutput {
             file: file.to_string(),
             source,
-            sha256,
+            checksum,
         }
     }
 
@@ -1190,7 +1172,7 @@ mod tests {
             "assets:\n",
             "- file: boot/start4.elf\n",
             "  url: https://example.com/start4.elf\n",
-            "  sha256: 0000000000000000000000000000000000000000000000000000000000000000\n",
+            "  checksum: sha256:0000000000000000000000000000000000000000000000000000000000000000\n",
             "- file: boot/config.txt\n  path: ./config.txt\n",
             "- file: boot/cmdline.txt\n  content: \"console=tty1\\n\"\n",
             "- file: boot/bcm2711-rpi-4-b.dtb\n  source: /usr/lib/firmware/bcm2711-rpi-4-b.dtb\n",
@@ -1222,10 +1204,17 @@ mod tests {
     // A downloaded file is the server's to choose, so an unpinned URL is not accepted at all
     // rather than warned about.
     #[test]
-    fn deserialize_rejects_a_url_without_sha256() {
+    fn deserialize_rejects_a_url_without_checksum() {
         let yaml = "assets:\n- file: a\n  url: https://example.com/a\n";
         let err = yaml_serde::from_str::<OutputConfig>(yaml).unwrap_err();
-        assert!(err.to_string().contains("sha256"), "{err}");
+        assert!(err.to_string().contains("checksum"), "{err}");
+    }
+
+    #[test]
+    fn deserialize_rejects_a_malformed_checksum() {
+        let yaml = "assets:\n- file: a\n  content: x\n  checksum: sha256:abc\n";
+        let err = yaml_serde::from_str::<OutputConfig>(yaml).unwrap_err();
+        assert!(err.to_string().contains("64 hex digits"), "{err}");
     }
 
     #[test]
@@ -1266,15 +1255,14 @@ mod tests {
     }
 
     #[test]
-    fn validate_refuses_a_plain_http_url_and_a_malformed_sha256() {
-        let http =
-            asset("a", AssetSource::Url("http://example.com/a".to_string()), Some("0".repeat(64)));
+    fn validate_refuses_a_plain_http_url() {
+        let http = asset(
+            "a",
+            AssetSource::Url("http://example.com/a".to_string()),
+            Some(Checksum::of(Algorithm::Sha256, b"a")),
+        );
         let err = OutputItem::Asset(&http).validate().unwrap_err();
         assert!(err.to_string().contains("https"), "{err}");
-
-        let short = asset("a", AssetSource::Content("x".to_string()), Some("abc".to_string()));
-        let err = OutputItem::Asset(&short).validate().unwrap_err();
-        assert!(err.to_string().contains("64 hex digits"), "{err}");
     }
 
     #[test]
@@ -1320,9 +1308,13 @@ mod tests {
             asset(
                 "boot/start4.elf",
                 AssetSource::Url("https://example.com/start4.elf".to_string()),
-                Some(sha256_hex(b"firmware")),
+                Some(Checksum::of(Algorithm::Sha512, b"firmware")),
             ),
-            asset("boot/config.txt", AssetSource::Path(host), None),
+            asset(
+                "boot/config.txt",
+                AssetSource::Path(host),
+                Some(Checksum::of(Algorithm::Md5, b"arm_64bit=1\n")),
+            ),
             content("boot/overlays/README", "overlays"),
         ];
 
@@ -1368,18 +1360,18 @@ mod tests {
     }
 
     #[test]
-    fn a_sha256_mismatch_leaves_the_existing_file() {
+    fn a_checksum_mismatch_leaves_the_existing_file() {
         let (_tmp, dir, rootfs) = build_dir();
         std::fs::write(dir.join("start4.elf"), b"old firmware").unwrap();
         let a = asset(
             "start4.elf",
             AssetSource::Url("https://example.com/start4.elf".to_string()),
-            Some(sha256_hex(b"other firmware")),
+            Some(Checksum::of(Algorithm::Sha256, b"other firmware")),
         );
 
         let err = write_assets(&[a], &dir, &rootfs, &FakeMksquashfs::new()).unwrap_err();
 
-        assert!(err.to_string().contains("sha256 mismatch"), "{err}");
+        assert!(err.to_string().contains("checksum mismatch"), "{err}");
         assert_eq!(std::fs::read(dir.join("start4.elf")).unwrap(), b"old firmware");
         assert_eq!(entries(&dir), vec!["rootfs", "start4.elf"], "no staging entry is left");
     }
@@ -1390,7 +1382,7 @@ mod tests {
         let a = asset(
             "start4.elf",
             AssetSource::Url("https://example.com/missing".to_string()),
-            Some("0".repeat(64)),
+            Some(Checksum::of(Algorithm::Sha256, b"")),
         );
 
         let err = write_assets(&[a], &dir, &rootfs, &FakeMksquashfs::new()).unwrap_err();

@@ -41,6 +41,8 @@ bootstrap: {type: mmdebstrap, suite: trixie, target: rootfs}
 defaults: {isolation: {type: chroot}, privilege: {method: sudo}}
 ";
 
+const MD5_EMPTY: &str = "md5:d41d8cd98f00b204e9800998ecf8427e";
+
 fn with_provision(task: &str) -> String {
     format!("{BASE}provision:\n  - {task}\n")
 }
@@ -448,7 +450,9 @@ fn schema_matches_structural_deserializer() {
         ),
         (
             "mitamae plugin archive source",
-            with_provision("{type: mitamae, content: x, plugins: [{url: u, sha256: s}]}"),
+            with_provision(&format!(
+                "{{type: mitamae, content: x, plugins: [{{url: u, checksum: '{MD5_EMPTY}'}}]}}"
+            )),
             true,
         ),
         (
@@ -462,10 +466,11 @@ fn schema_matches_structural_deserializer() {
             false,
         ),
         (
-            "mitamae plugin commit and sha256",
-            with_provision(
-                "{type: mitamae, content: x, plugins: [{url: u, commit: c, sha256: s}]}",
-            ),
+            "mitamae plugin commit and checksum",
+            with_provision(&format!(
+                "{{type: mitamae, content: x, \
+                plugins: [{{url: u, commit: c, checksum: '{MD5_EMPTY}'}}]}}"
+            )),
             false,
         ),
         (

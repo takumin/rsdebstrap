@@ -4,6 +4,7 @@ use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use rsdebstrap::RsdebstrapError;
 use rsdebstrap::bootstrap::mmdebstrap::{self, Format};
+use rsdebstrap::checksum::Checksum;
 use rsdebstrap::config::load_profile;
 use rsdebstrap::phase::ProvisionTask;
 use rsdebstrap::phase::assemble::AssetSource;
@@ -1417,7 +1418,7 @@ defaults:
       - url: https://github.com/takumin/mitamae-plugin-resource-apt_repository.git
         commit: a91eaf1446778c13b9afc64177af17a2b2748636
       - url: https://github.com/takumin/mitamae-plugin-resource-apt_keyring/archive/5217372e85df6c94f0a1dec05c7739114b35d570.tar.gz
-        sha256: 0000000000000000000000000000000000000000000000000000000000000000
+        checksum: sha256:0000000000000000000000000000000000000000000000000000000000000000
 bootstrap:
   type: mmdebstrap
   suite: bookworm
@@ -1471,7 +1472,7 @@ provision:
                             "/archive/5217372e85df6c94f0a1dec05c7739114b35d570.tar.gz",
                         )
                         .to_string(),
-                        sha256: "0".repeat(64),
+                        checksum: Checksum::new(&format!("sha256:{}", "0".repeat(64))).unwrap(),
                     },
                 ],
                 "defaults.mitamae.plugins should apply, paths resolved against the profile"
@@ -1496,7 +1497,10 @@ provision:
 fn test_load_profile_mitamae_plugin_source_must_be_unambiguous() {
     let cases = [
         ("{url: https://x/r.git}", "requires 'commit'"),
-        ("{url: https://x/r.git, commit: a, sha256: b}", "mutually exclusive"),
+        (
+            "{url: https://x/r.git, commit: a, checksum: 'md5:d41d8cd98f00b204e9800998ecf8427e'}",
+            "mutually exclusive",
+        ),
         ("{path: ./p, url: https://x/r.git, commit: a}", "cannot be combined"),
         ("{commit: a}", "one of 'path' or 'url'"),
         ("{path: ./p, tag: v1}", "unknown field"),
