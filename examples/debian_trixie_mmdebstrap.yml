@@ -171,6 +171,12 @@ provision:
   # External script alternative:
   #   script: ./scripts/setup.sh
 
+# `when:` runs a task only if the CEL expression is true. It reads the variables
+# directly (`vars.<name>`, always strings) rather than through ${{ ... }}.
+- type: apt
+  when: vars.suite != 'bookworm'
+  install: [systemd-resolved]
+
 # Mitamae provisioner with inline recipe
 # Requires mitamae binary at the path specified in defaults.mitamae
 # - type: mitamae

@@ -10,6 +10,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tracing::{error, info, warn};
 
+use crate::condition::Condition;
 use crate::error::RsdebstrapError;
 use crate::isolation::{IsolationContext, TaskIsolation};
 use crate::privilege::{Privilege, PrivilegeMethod};
@@ -60,6 +61,11 @@ pub struct AptGetTask {
     /// host's `apt-get` against the host.
     #[serde(default)]
     isolation: TaskIsolation,
+
+    /// CEL expression over the profile's variables (`vars.<name>`); the task runs only
+    /// when it evaluates to `true`, e.g. `vars.suite == 'trixie'`.
+    #[serde(default)]
+    when: Option<Condition>,
 }
 
 impl AptGetTask {
@@ -74,6 +80,7 @@ impl AptGetTask {
             recommends: false,
             privilege: Privilege::default(),
             isolation: TaskIsolation::default(),
+            when: None,
         }
     }
 
@@ -116,6 +123,11 @@ impl AptGetTask {
     /// Returns the isolation setting as written in the profile.
     pub fn task_isolation(&self) -> &TaskIsolation {
         &self.isolation
+    }
+
+    /// Returns the `when:` condition as written in the profile.
+    pub fn when(&self) -> Option<&Condition> {
+        self.when.as_ref()
     }
 
     /// Validates the task configuration.

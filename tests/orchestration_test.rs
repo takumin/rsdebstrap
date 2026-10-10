@@ -312,3 +312,63 @@ fn a_dry_run_creates_no_directory() {
 
     assert!(!absent.exists(), "a dry run created {absent}");
 }
+
+fn conditional_yaml() -> &'static str {
+    // The skipped task names a script that does not exist: a task left out by `when:` is
+    // not validated either, so a role script need only exist for the variables it serves.
+    // editorconfig-checker-disable
+    r#"---
+vars:
+  distrib: debian
+dir: /tmp/orchestration-test-conditional
+defaults:
+  privilege:
+    method: sudo
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+provision:
+- type: shell
+  when: vars.distrib == 'debian'
+  shell: /bin/sh
+  content: echo debian
+- type: shell
+  when: vars.distrib == 'ubuntu'
+  shell: /bin/bash
+  content: echo ubuntu
+- type: shell
+  when: vars.distrib == 'none'
+  script: /nonexistent/role.sh
+"#
+    // editorconfig-checker-enable
+}
+
+fn chroot_shells(vars: Vec<(String, String)>) -> Vec<String> {
+    let file = write_yaml_tempfile(conditional_yaml());
+    let path = Utf8Path::from_path(file.path()).expect("temp path should be valid UTF-8");
+    let common = cli::CommonArgs {
+        file: path.to_owned(),
+        vars,
+        log_level: cli::LogLevel::Error,
+    };
+    let calls: CommandCalls = Arc::new(Mutex::new(Vec::new()));
+    let executor: Arc<dyn CommandExecutor> = Arc::new(RecordingExecutor {
+        calls: Arc::clone(&calls),
+    });
+
+    run_apply(&common, executor).expect("run_apply should succeed");
+
+    let calls = calls.lock().unwrap();
+    calls
+        .iter()
+        .filter(|(command, _)| command == "chroot")
+        .map(|(_, args)| args[1].clone())
+        .collect()
+}
+
+#[test]
+fn provision_tasks_run_only_when_their_condition_holds() {
+    assert_eq!(chroot_shells(Vec::new()), ["/bin/sh"]);
+    assert_eq!(chroot_shells(vec![("distrib".to_owned(), "ubuntu".to_owned())]), ["/bin/bash"]);
+}

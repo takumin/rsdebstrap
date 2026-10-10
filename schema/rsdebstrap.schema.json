@@ -1309,6 +1309,14 @@
 						"type": {
 							"const": "shell",
 							"type": "string"
+						},
+						"when": {
+							"description": "CEL expression over the profile's variables (`vars.<name>`); the task runs only\nwhen it evaluates to `true`, e.g. `vars.suite == 'trixie'`.",
+							"minLength": 1,
+							"type": [
+								"string",
+								"null"
+							]
 						}
 					},
 					"required": [
@@ -1371,6 +1379,14 @@
 						"type": {
 							"const": "mitamae",
 							"type": "string"
+						},
+						"when": {
+							"description": "CEL expression over the profile's variables (`vars.<name>`); the task runs only\nwhen it evaluates to `true`, e.g. `vars.suite == 'trixie'`.",
+							"minLength": 1,
+							"type": [
+								"string",
+								"null"
+							]
 						}
 					},
 					"required": [
@@ -1415,6 +1431,14 @@
 							"default": false,
 							"description": "Run `apt-get update` before installing. Defaults to `false`, so that splitting\ninstalls over several apt tasks does not refresh the package lists each time; set\nit on the first apt task, since a freshly bootstrapped rootfs has no package lists\n(mmdebstrap) or only the ones for its bootstrap mirror (debootstrap).",
 							"type": "boolean"
+						},
+						"when": {
+							"description": "CEL expression over the profile's variables (`vars.<name>`); the task runs only\nwhen it evaluates to `true`, e.g. `vars.suite == 'trixie'`.",
+							"minLength": 1,
+							"type": [
+								"string",
+								"null"
+							]
 						}
 					},
 					"required": [
@@ -1588,7 +1612,7 @@
 				}
 			],
 			"default": {},
-			"description": "Variables and their default values. Any string elsewhere in the profile may\nreference one as `${{ vars.<name> }}`, except a provision task's inline `content`.\nA value is overridden by the environment variable `RSDEBSTRAP_VAR_<NAME>` (the\nname in uppercase), and that by `--var <name>=<value>`; only declared variables\ncan be overridden."
+			"description": "Variables and their default values. Any string elsewhere in the profile may\nreference one as `${{ vars.<name> }}`, except a provision task's inline `content`\nand `when:` (which reads them as `vars.<name>`).\nA value is overridden by the environment variable `RSDEBSTRAP_VAR_<NAME>` (the\nname in uppercase), and that by `--var <name>=<value>`; only declared variables\ncan be overridden."
 		}
 	},
 	"required": [

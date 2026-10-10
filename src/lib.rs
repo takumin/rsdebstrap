@@ -1,5 +1,6 @@
 pub mod bootstrap;
 pub mod cli;
+pub mod condition;
 pub mod config;
 pub(crate) mod de;
 pub mod error;
