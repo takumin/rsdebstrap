@@ -329,6 +329,13 @@ provision:
     Ok(())
 }
 
+fn apt_task_with_condition(when: &str) -> String {
+    format!(
+        "vars:\n  suite: trixie\n{MINIMAL_BODY}\
+        provision:\n- type: apt\n  when: {when}\n  install: [curl]\n"
+    )
+}
+
 #[test]
 fn a_malformed_condition_reports_the_task_and_line() {
     // serde buffers an internally tagged enum, so the error is located at the task rather
@@ -337,9 +344,7 @@ fn a_malformed_condition_reports_the_task_and_line() {
         ("vars.suite ==", "not a valid CEL expression"),
         ("${{ vars.suite }} == 'trixie'", "without the braces"),
     ] {
-        let yaml = format!(
-            "vars:\n  suite: trixie\n{MINIMAL_BODY}provision:\n- type: apt\n  when: \"{when}\"\n  install: [curl]\n"
-        );
+        let yaml = apt_task_with_condition(&format!("\"{when}\""));
         let msg = config_error(
             helpers::load_profile_from_yaml_with_vars(yaml, &VarOverrides::default()).unwrap_err(),
         );
@@ -352,9 +357,7 @@ fn a_malformed_condition_reports_the_task_and_line() {
 #[test]
 fn a_condition_on_an_undeclared_variable_fails_the_load() {
     // A misspelled name must not read as `false` and quietly skip the task.
-    let yaml = format!(
-        "vars:\n  suite: trixie\n{MINIMAL_BODY}provision:\n- type: apt\n  when: vars.sutie == 'trixie'\n  install: [curl]\n"
-    );
+    let yaml = apt_task_with_condition("vars.sutie == 'trixie'");
     let err =
         helpers::load_profile_from_yaml_with_vars(yaml, &VarOverrides::default()).unwrap_err();
     let msg = err.to_string();
