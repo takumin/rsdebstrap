@@ -33,7 +33,7 @@ jobs:
       id: aqua-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        key: aqua-doc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.aqua/**/*.yaml') }}
+        key: aqua-doc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.aqua/**/*.yaml', '.github/workflows/*.yml') }}
         restore-keys: |-
           aqua-doc-${{ runner.os }}-${{ runner.arch }}-
         path: ~/.local/share/aquaproj-aqua/
@@ -41,6 +41,9 @@ jobs:
       uses: aquaproj/aqua-installer@82d0e83878a8657c4a6f2ff1755d3bfbfc67f329 # v4.1.0
       with:
         aqua_version: v2.64.0
+        # The cache key hashes the workflows that pin aqua_version, so only an
+        # exact hit is known to hold this aqua; a prefix hit reinstalls it.
+        skip_install_aqua: ${{ steps.aqua-cache.outputs.cache-hit == 'true' }}
     - name: Restore cargo deps cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
