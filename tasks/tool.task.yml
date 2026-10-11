@@ -43,6 +43,41 @@ tasks:
         TAG: '{{index .MATCH 0}}'
         ARGS: -t {{index .MATCH 0}}
 
+  # Prunes the aqua root before CI saves it as a cache. A restore that falls
+  # back to an older key carries that key's packages forward, so without this
+  # every version bump would add to the cache for good.
+  aqua:vacuum:
+    desc: '{{.TASK}}'
+    dir: '{{.ROOT_DIR}}'
+    vars:
+      # sed rather than rg: rg is itself an aqua package, and running it here
+      # would keep it alive in every job's cache.
+      REGISTRY_REF:
+        sh: sed -n -E 's/^[[:space:]]*ref:[[:space:]]*([^[:space:]#]+).*/\1/p' .aqua/aqua.yaml
+      AQUA_ROOT:
+        sh: echo "${AQUA_ROOT_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/aquaproj-aqua}"
+    cmds:
+    # Running a package refreshes its last-used time, so what the job just ran
+    # survives; versions idle for a week go.
+    - aqua vacuum -d 7
+    # vacuum does not track registries, and each registry bump adds a copy.
+    - |-
+      test -n '{{.REGISTRY_REF}}'
+      registry='{{.AQUA_ROOT}}/registries/github_content/github.com/aquaproj/aqua-registry'
+      if [ -d "$registry" ]; then
+        find "$registry" -mindepth 1 -maxdepth 1 ! -name '{{.REGISTRY_REF}}' -exec rm -rf {} +
+      fi
+    # Nor does it track aqua itself or aqua-proxy, which aqua installs under
+    # internal/ and every aqua bump adds a copy of (about 27 MB for aqua). The
+    # version in use is the one bin/aqua and aqua-proxy link to; drop the rest.
+    - |-
+      for link in '{{.AQUA_ROOT}}/bin/aqua' '{{.AQUA_ROOT}}/aqua-proxy'; do
+        [ -L "$link" ] || continue
+        version_dir=$(readlink -f "$link" | sed -n -E 's#^(.*/internal/pkgs/github_release/github\.com/aquaproj/[^/]+/[^/]+)/.+#\1#p')
+        [ -d "$version_dir" ] || continue
+        find "$(dirname "$version_dir")" -mindepth 1 -maxdepth 1 ! -path "$version_dir" -exec rm -rf {} +
+      done
+
   rustup:toolchain:
     desc: '{{.TASK}}'
     label: rustup:toolchain

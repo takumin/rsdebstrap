@@ -59,6 +59,9 @@ jobs:
       run: task audit:policy
     - name: Advisories
       run: task audit:advisories
+    - name: Vacuum aqua packages
+      if: github.ref == 'refs/heads/main' && steps.aqua-cache.outputs.cache-hit != 'true'
+      run: task tool:aqua:vacuum
     - name: Save aqua cache
       if: github.ref == 'refs/heads/main' && steps.aqua-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
