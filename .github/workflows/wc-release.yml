@@ -3,6 +3,9 @@ name: Release
 on:
   workflow_call:
 permissions: {}
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -26,29 +29,13 @@ jobs:
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         path: dist
-        pattern: rsdebstrap-release-*
-        merge-multiple: true
+        name: release-artifacts
     - name: Check artifacts
       run: tree --charset ASCII dist/
-    - name: Rename artifacts
-      run: |-
-        cd dist
-        for f in ./*; do mv -n "$f" "${f/-release-/-}"; done
-        sed -i -E 's/-release-/-/' ./*.sha256sum
-    - name: Merge sha256sum
-      run: |-
-        cd dist
-        echo -n > SHA256SUMS
-        for f in $(find . -type f -name '*.sha256sum' -printf '%f\n' | sort); do
-          < "$f" tee -a SHA256SUMS
-          rm "$f"
-        done
-    - name: Verify sha256sum
+    - name: Verify sha256sums
       run: |-
         cd dist
         sha256sum -c SHA256SUMS
-    - name: Check artifacts
-      run: tree --charset ASCII dist/
     - name: Release
       if: startsWith(github.ref, 'refs/tags/')
       run: |-

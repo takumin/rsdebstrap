@@ -8,6 +8,12 @@ on:
     - 'v*'
   pull_request:
 permissions: {}
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   format:
     name: Format
@@ -56,9 +62,16 @@ jobs:
     name: Build
     permissions:
       contents: read
+    uses: ./.github/workflows/wc-build.yml
+  sign:
+    needs:
+    - build
+    name: Sign
+    permissions:
+      contents: read
       id-token: write
       attestations: write
-    uses: ./.github/workflows/wc-build.yml
+    uses: ./.github/workflows/wc-sign.yml
   release:
     needs:
     - format
@@ -67,6 +80,7 @@ jobs:
     - audit
     - doc
     - build
+    - sign
     name: Release
     permissions:
       contents: write
@@ -80,6 +94,7 @@ jobs:
     - audit
     - doc
     - build
+    - sign
     - release
     name: CI
     runs-on: ubuntu-latest

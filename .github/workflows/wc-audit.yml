@@ -3,6 +3,9 @@ name: Audit
 on:
   workflow_call:
 permissions: {}
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
 concurrency:
   group: audit-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}

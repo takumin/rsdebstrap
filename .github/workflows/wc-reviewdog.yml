@@ -3,6 +3,9 @@ name: Reviewdog
 on:
   workflow_call:
 permissions: {}
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
 env:
   CARGO_INCREMENTAL: '0'
   RUSTC_WRAPPER: ${{ !startsWith(github.ref, 'refs/tags/') && 'sccache' || '' }}
@@ -34,7 +37,6 @@ jobs:
         aqua_version: v2.64.0
     - name: Generate Matrix
       id: matrix
-      shell: bash
       run: echo "result=$(task reviewdog:matrix)" >> "$GITHUB_OUTPUT"
     - name: Check Matrix
       env:

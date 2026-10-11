@@ -3,6 +3,9 @@ name: Test
 on:
   workflow_call:
 permissions: {}
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
 env:
   CARGO_INCREMENTAL: '0'
   RUSTC_WRAPPER: ${{ !startsWith(github.ref, 'refs/tags/') && 'sccache' || '' }}
