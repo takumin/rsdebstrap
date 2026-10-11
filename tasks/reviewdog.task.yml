@@ -28,7 +28,7 @@ tasks:
     cmds:
     - task: editorconfig-checker
     - task: shellcheck
-    - task: actionlint
+    - task: jactionlint
     - task: ghalint-run
     - task: ghalint-act
     - task: zizmor
@@ -98,10 +98,10 @@ tasks:
     - cmd: touch .task/.done_{{.TASK}}
       silent: true
 
-  actionlint:
+  jactionlint:
     desc: '{{.TASK}}'
     deps:
-    - task: tool:aqua:tag:actionlint
+    - task: tool:aqua:tag:jactionlint
     sources:
     - '.github/**/*.yml'
     - '.github/**/*.yaml'

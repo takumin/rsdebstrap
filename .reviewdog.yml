@@ -10,10 +10,9 @@ runner:
   shellcheck:
     cmd: fd -H -E .git/ -E .task/ -t f -e sh -e bash -X shellcheck -f json {} | jq -M -f scripts/reviewdog-shellcheck.jq
     format: rdjson
-  actionlint:
-    cmd: actionlint -shellcheck shellcheck -oneline -no-color
-    errorformat:
-    - '%f:%l:%c: %m'
+  jactionlint:
+    cmd: jactionlint --shellcheck shellcheck --format sarif
+    format: sarif
   ghalint-run:
     cmd: ghalint --log-color never run
     errorformat:
