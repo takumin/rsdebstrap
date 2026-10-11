@@ -36,6 +36,14 @@ jobs:
           scripts
           src
           tasks
+    - name: Restore aqua cache
+      id: aqua-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: aqua-build-matrix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.aqua/**/*.yaml') }}
+        restore-keys: |-
+          aqua-build-matrix-${{ runner.os }}-${{ runner.arch }}-
+        path: ~/.local/share/aquaproj-aqua/
     - name: Setup aqua
       uses: aquaproj/aqua-installer@82d0e83878a8657c4a6f2ff1755d3bfbfc67f329 # v4.1.0
       with:
@@ -48,6 +56,12 @@ jobs:
         BUILD_MATRIX: ${{ steps.matrix.outputs.result }}
       run: |-
         echo "${BUILD_MATRIX}" | jq
+    - name: Save aqua cache
+      if: github.ref == 'refs/heads/main' && steps.aqua-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.aqua-cache.outputs.cache-primary-key }}
+        path: ~/.local/share/aquaproj-aqua/
   build:
     needs: matrix
     name: ${{ matrix.profile }}:${{ matrix.target }}
@@ -63,6 +77,14 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
+    - name: Restore aqua cache
+      id: aqua-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: aqua-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.aqua/**/*.yaml') }}
+        restore-keys: |-
+          aqua-build-${{ runner.os }}-${{ runner.arch }}-
+        path: ~/.local/share/aquaproj-aqua/
     - name: Setup aqua
       uses: aquaproj/aqua-installer@82d0e83878a8657c4a6f2ff1755d3bfbfc67f329 # v4.1.0
       with:
@@ -74,13 +96,6 @@ jobs:
         restore-keys: |-
           deps-
         path: ~/.cargo/registry/
-    - name: Restore setup build aqua cache
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        key: setup-build-aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
-        restore-keys: |-
-          setup-build-aqua-
-        path: ~/.local/share/aquaproj-aqua/
     - name: Restore sccache (deps)
       id: sccache
       if: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -135,3 +150,9 @@ jobs:
       with:
         key: ${{ steps.sccache.outputs.cache-primary-key }}
         path: ~/.cache/sccache
+    - name: Save aqua cache
+      if: github.ref == 'refs/heads/main' && steps.aqua-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.aqua-cache.outputs.cache-primary-key }}
+        path: ~/.local/share/aquaproj-aqua/
