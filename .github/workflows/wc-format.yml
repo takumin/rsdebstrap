@@ -21,10 +21,21 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
+    - name: Restore aqua cache
+      id: aqua-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: aqua-format-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.aqua/**/*.yaml', '.github/workflows/*.yml') }}
+        restore-keys: |-
+          aqua-format-${{ runner.os }}-${{ runner.arch }}-
+        path: ~/.local/share/aquaproj-aqua/
     - name: Setup aqua
       uses: aquaproj/aqua-installer@82d0e83878a8657c4a6f2ff1755d3bfbfc67f329 # v4.1.0
       with:
         aqua_version: v2.64.0
+        # The cache key hashes the workflows that pin aqua_version, so only an
+        # exact hit is known to hold this aqua; a prefix hit reinstalls it.
+        skip_install_aqua: ${{ steps.aqua-cache.outputs.cache-hit == 'true' }}
     - name: Format files
       run: |-
         task format
@@ -33,3 +44,12 @@ jobs:
         git reset
         git -c core.fileMode=false add --all
         git diff --name-only --staged --no-renames --exit-code
+    - name: Vacuum aqua packages
+      if: github.ref == 'refs/heads/main' && steps.aqua-cache.outputs.cache-hit != 'true'
+      run: task tool:aqua:vacuum
+    - name: Save aqua cache
+      if: github.ref == 'refs/heads/main' && steps.aqua-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.aqua-cache.outputs.cache-primary-key }}
+        path: ~/.local/share/aquaproj-aqua/
