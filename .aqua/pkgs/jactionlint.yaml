@@ -1,0 +1,5 @@
+---
+packages:
+- name: jdx/jactionlint@v2.1.0
+  tags:
+  - jactionlint

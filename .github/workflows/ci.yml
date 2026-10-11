@@ -19,7 +19,7 @@ jobs:
     name: Format
     permissions:
       contents: read
-    uses: ./.github/workflows/wc-format.yml
+    uses: $/.github/workflows/wc-format.yml
   reviewdog:
     name: Reviewdog
     permissions:
@@ -27,17 +27,17 @@ jobs:
       checks: write
       contents: read
       pull-requests: write
-    uses: ./.github/workflows/wc-reviewdog.yml
+    uses: $/.github/workflows/wc-reviewdog.yml
   fetch:
     name: Fetch
     permissions:
       contents: read
-    uses: ./.github/workflows/wc-fetch.yml
+    uses: $/.github/workflows/wc-fetch.yml
   test:
     name: Test
     permissions:
       contents: read
-    uses: ./.github/workflows/wc-test.yml
+    uses: $/.github/workflows/wc-test.yml
   # Informational only (see #732): reports a coverage number for visibility but
   # is intentionally left out of the `release` and `ci` gates below, so it never
   # blocks a merge or release. Test correctness is already gated by `test`.
@@ -47,22 +47,22 @@ jobs:
       contents: read
       actions: read
       pull-requests: write
-    uses: ./.github/workflows/wc-coverage.yml
+    uses: $/.github/workflows/wc-coverage.yml
   audit:
     name: Audit
     permissions:
       contents: read
-    uses: ./.github/workflows/wc-audit.yml
+    uses: $/.github/workflows/wc-audit.yml
   doc:
     name: Doc
     permissions:
       contents: read
-    uses: ./.github/workflows/wc-doc.yml
+    uses: $/.github/workflows/wc-doc.yml
   build:
     name: Build
     permissions:
       contents: read
-    uses: ./.github/workflows/wc-build.yml
+    uses: $/.github/workflows/wc-build.yml
   sign:
     needs:
     - build
@@ -71,7 +71,7 @@ jobs:
       contents: read
       id-token: write
       attestations: write
-    uses: ./.github/workflows/wc-sign.yml
+    uses: $/.github/workflows/wc-sign.yml
   release:
     needs:
     - format
@@ -84,7 +84,7 @@ jobs:
     name: Release
     permissions:
       contents: write
-    uses: ./.github/workflows/wc-release.yml
+    uses: $/.github/workflows/wc-release.yml
   ci:
     needs:
     - format
