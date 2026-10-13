@@ -56,6 +56,10 @@ defaults:
     #   - url: https://github.com/<owner>/mitamae-plugin-resource-bar/archive/<commit>.tar.gz
     #     checksum: sha256:<64 hex digits>
 
+    # Optional: node attributes for every mitamae task; a task's `node` is merged over them
+    # node:
+    #   locale: ja_JP.UTF-8
+
 # Supported types: mmdebstrap, debootstrap
 #
 # debootstrap alternative:
@@ -206,6 +210,8 @@ provision:
 #     end
 #   binary: /path/to/mitamae  # Override defaults.mitamae for this task
 #   plugins: []               # Replace defaults.mitamae.plugins for this task
+#   node:                     # Merged over defaults.mitamae.node; read as node[:suite]
+#     suite: ${{ vars.suite }}
 #   # External recipe alternative:
 #   script: ./recipes/setup.rb
 

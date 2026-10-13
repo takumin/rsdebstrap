@@ -1542,6 +1542,93 @@ provision:
 }
 
 #[test]
+fn test_load_profile_mitamae_defaults_node_is_merged_under_each_tasks_node() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  mitamae:
+    node:
+      locale: ja_JP.UTF-8
+      packages: [vim, git]
+      users: {alice: {uid: 1000, shell: /bin/bash}}
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+provision:
+  - type: mitamae
+    content: "x"
+  - type: mitamae
+    content: "x"
+    node:
+      locale: C.UTF-8
+      packages: [curl]
+      users: {alice: {shell: /bin/zsh}, bob: {uid: 1001}}
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    let nodes: Vec<_> = profile
+        .provision
+        .iter()
+        .map(|task| match task {
+            ProvisionTask::Mitamae(m) => serde_json::Value::Object(m.node().unwrap().clone()),
+            other => panic!("expected a mitamae task, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        nodes,
+        vec![
+            serde_json::json!({
+                "locale": "ja_JP.UTF-8",
+                "packages": ["vim", "git"],
+                "users": {"alice": {"uid": 1000, "shell": "/bin/bash"}},
+            }),
+            // Mappings merge at every depth; the task's list replaces the default's.
+            serde_json::json!({
+                "locale": "C.UTF-8",
+                "packages": ["curl"],
+                "users": {"alice": {"uid": 1000, "shell": "/bin/zsh"}, "bob": {"uid": 1001}},
+            }),
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_load_profile_mitamae_without_node_defaults_leaves_node_unset() -> Result<()> {
+    // `node: null` under defaults means "no defaults", so the task still passes no
+    // --node-json rather than an empty one.
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml(crate::yaml!(
+        r#"---
+dir: /tmp/test
+defaults:
+  mitamae:
+    node: null
+bootstrap:
+  type: mmdebstrap
+  suite: bookworm
+  target: rootfs
+provision:
+  - type: mitamae
+    content: "x"
+"#
+    ))?;
+    // editorconfig-checker-enable
+
+    match profile.provision.as_slice() {
+        [ProvisionTask::Mitamae(mitamae)] => assert_eq!(mitamae.node(), None),
+        _ => panic!("expected one mitamae task"),
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_load_profile_mitamae_defaults_no_matching_arch() -> Result<()> {
     let temp_dir = tempdir()?;
     let profile_path = temp_dir.path().join("profile.yml");

@@ -33,6 +33,8 @@ defaults:                   # Optional default settings
       - url: https://github.com/<owner>/mitamae-plugin-resource-bar/archive/<commit>.tar.gz
         checksum: sha256:<64 hex digits>  # Archive (.tar.gz / .tar) over https
         # name: mitamae-plugin-resource-bar  # Optional: override the derived name
+    node:                   # Optional: node attributes for every mitamae task
+      locale: ja_JP.UTF-8
 bootstrap:
   type: mmdebstrap          # Backend type: mmdebstrap | debootstrap
   suite: trixie             # Debian suite
@@ -101,6 +103,8 @@ provision:                  # Optional main provisioning steps (ordered list)
     content: "..."          # Inline recipe
     binary: /path/to/mitamae  # Optional: override defaults.mitamae
     plugins: []             # Optional: replace defaults.mitamae.plugins ([] = none)
+    node:                   # Optional: node attributes, merged over defaults.mitamae.node
+      role: web
     privilege:               # Optional: override defaults.privilege
       method: doas
     isolation:               # Optional: override defaults.isolation
@@ -177,7 +181,9 @@ bootstrap:
   in the rootfs, so substituting into it would make an environment variable's value part
   of the program — and `${{ … }}` there is left for the script's own syntax. A script that
   needs a value should take it from a `script:` file selected by a variable, or from one of
-  several tasks chosen by [`when:`](#conditions). A task's `when:` is not substituted either.
+  several tasks chosen by [`when:`](#conditions); a mitamae recipe can read one from the
+  task's [`node`](#mitamae-task-rules), whose values are substituted. A task's `when:` is not
+  substituted either.
 - A string is a reference only in the form `${{ vars.<name> }}` (spaces inside the braces
   are optional). Any other `${{ … }}`, an unterminated `${{`, or a reference to an
   undeclared variable is a parse error that names the field and line.
@@ -350,10 +356,10 @@ checksum: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85
 - On defaulted section/list/map fields (`vars`, `envs`, `defaults`, `prepare`, `provision`, `assemble`,
   `assemble.output`, `assemble.output.assets`, `mounts`, `options`, `name_servers`, `search`, the
   apt `keyrings`, `repositories`, `preferences`, `components` and `architectures`, the apt
-  provision task's `install`, `mitamae`, `mitamae.binary`, `mitamae.plugins`), an explicit
-  `null`, an empty value (e.g. a section whose entries are all commented out), and omitting the
-  key are equivalent — all mean "use the default". A mitamae task's own `plugins` is the
-  exception: absent or `null` inherits `defaults.mitamae.plugins`, while `[]` means none.
+  provision task's `install`, `mitamae`, `mitamae.binary`, `mitamae.plugins`, `mitamae.node`),
+  an explicit `null`, an empty value (e.g. a section whose entries are all commented out), and
+  omitting the key are equivalent — all mean "use the default". A mitamae task's own `plugins`
+  is the exception: absent or `null` inherits `defaults.mitamae.plugins`, while `[]` means none.
 - That list is exhaustive: the list fields inside the internally tagged `bootstrap:` maps
   (`include`, `components`, `keyring`, hook lists, …) and the tagged `isolation:` config stay
   strict — an explicit `null` or an empty value (e.g. a list whose entries are all commented
@@ -579,6 +585,16 @@ on the host. Two consequences follow, and both are enforced rather than document
   host file a profile names. An archive member that is absolute or climbs with `..` fails
   the whole archive, wherever it is. Each plugin's `mrblib` is limited to 64 MiB and 10,000
   entries, a download to 64 MiB, and what an archive unpacks to to 256 MiB
+- `node` is a mapping of node attributes the recipe reads as `node[...]` (`node: {role: web}`
+  gives `node[:role]`). It is written into the rootfs's `/tmp` as JSON for the task's run,
+  passed as `mitamae local --node-json=<file>`, and removed afterwards like the recipe.
+  Values keep their YAML types (`13` is a number, `"13"` a string); profile variables are
+  substituted in string values but not in keys
+- `defaults.mitamae.node` gives every mitamae task the same attributes, and a task's `node` is
+  merged over it rather than replacing it: mappings are merged key by key at any depth, and
+  anything else the task sets (a list, a string, a number, `null`) replaces the default's
+  value whole. A task that should not get a default key has to set that key itself. With
+  neither set (absent or `null`), no `--node-json` is passed
 - Every plugin is read or fetched when the profile is validated, before the bootstrap runs, so
   a failed download or a missing commit fails the run up front — `--dry-run` included. A
   plugin listed in `defaults.mitamae.plugins` is fetched once per run however many tasks use

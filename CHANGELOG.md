@@ -85,6 +85,11 @@ and this project adheres to
 
 ### Added
 
+- A mitamae task's `node:`, a mapping of node attributes passed to the recipe
+  as `mitamae local --node-json`, and `defaults.mitamae.node`, which every
+  task's `node` is deep-merged over. Profile variables are substituted in
+  their string values, so a recipe can read a value overridden from a CI
+  matrix.
 - `vars:`, profile variables referenced from any string as `${{ vars.<name> }}`
   (except a provision task's inline `content`). Each declared value can be
   overridden with the environment variable `RSDEBSTRAP_VAR_<NAME>` or with

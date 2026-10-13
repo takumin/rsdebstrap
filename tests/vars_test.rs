@@ -196,6 +196,51 @@ provision:
 }
 
 #[test]
+fn mitamae_node_values_are_substituted_but_not_their_keys() -> Result<()> {
+    // editorconfig-checker-disable
+    let profile = helpers::load_profile_from_yaml_with_vars(
+        crate::yaml!(
+            r#"---
+vars:
+  role: server
+dir: /tmp/rootfs
+defaults:
+  mitamae:
+    node:
+      default_role: ${{ vars.role }}
+bootstrap:
+  type: mmdebstrap
+  suite: trixie
+  target: rootfs
+provision:
+- type: mitamae
+  content: "include_recipe node[:role]"
+  node:
+    role: ${{ vars.role }}
+    ${{ vars.role }}: 1
+    nested: {list: ['${{ vars.role }}', 13, true, null]}
+"#
+        ),
+        &overrides(&[], &[("role", "desktop")]),
+    )?;
+    // editorconfig-checker-enable
+
+    match profile.provision.as_slice() {
+        [ProvisionTask::Mitamae(mitamae)] => assert_eq!(
+            serde_json::Value::Object(mitamae.node().unwrap().clone()),
+            serde_json::json!({
+                "default_role": "desktop",
+                "role": "desktop",
+                "${{ vars.role }}": 1,
+                "nested": {"list": ["desktop", 13, true, null]},
+            })
+        ),
+        other => panic!("expected one mitamae task, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[test]
 fn declared_values_are_not_expanded_against_each_other() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml_with_vars(

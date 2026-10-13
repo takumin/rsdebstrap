@@ -477,6 +477,104 @@ fn test_execute_dry_run_passes_plugins_option_without_staging() {
     assert!(!rootfs.join("tmp").exists(), "dry run must not stage anything");
 }
 
+#[test]
+fn test_execute_stages_node_attributes_and_passes_node_json_option() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = rootfs_with_tmp(&temp_dir);
+    let binary = create_fake_binary(&temp_dir);
+    let resource = create_resource_plugin(&temp_dir);
+
+    let node = serde_json::json!({"hostname": "web01", "users": [{"name": "alice", "uid": 1000}]});
+    let task = MitamaeTask::new(ScriptSource::Content("x".into()), binary)
+        .with_plugins(vec![MitamaePlugin::path(resource)])
+        .with_node(node.as_object().unwrap().clone());
+
+    let context = MockContext::new(&rootfs).with_tree_probe("/tmp");
+    task.execute(&context, None)
+        .expect("execute should succeed");
+
+    let command = &context.executed_commands()[0];
+    assert_eq!(
+        command.len(),
+        5,
+        "expected binary, local, --plugins, --node-json, recipe: {:?}",
+        command
+    );
+    assert!(command[2].starts_with("--plugins=/tmp/"), "{:?}", command);
+    let node_file = command[3]
+        .strip_prefix("--node-json=/tmp/")
+        .unwrap_or_else(|| panic!("expected a --node-json=/tmp/... option, got: {:?}", command));
+    assert!(command[4].starts_with("/tmp/recipe-"), "recipe must stay last: {:?}", command);
+
+    let staged = context.tree_probed()[0]
+        .iter()
+        .find(|e| e.path == node_file)
+        .cloned()
+        .unwrap_or_else(|| panic!("node attributes were not staged as {}", node_file));
+    assert_eq!(staged.mode, 0o600);
+    let staged: serde_json::Value = serde_json::from_slice(&staged.content.unwrap()).unwrap();
+    assert_eq!(staged, node);
+
+    let remaining = tmp_entries(&rootfs);
+    assert!(remaining.is_empty(), "staged files must be cleaned up, found: {:?}", remaining);
+}
+
+#[test]
+fn test_execute_without_node_passes_no_node_json_option() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = rootfs_with_tmp(&temp_dir);
+    let binary = create_fake_binary(&temp_dir);
+
+    let task = MitamaeTask::new(ScriptSource::Content("x".into()), binary);
+    let context = MockContext::new(&rootfs);
+    task.execute(&context, None)
+        .expect("execute should succeed");
+
+    let command = &context.executed_commands()[0];
+    assert!(!command.iter().any(|a| a.starts_with("--node-json")), "{:?}", command);
+}
+
+#[test]
+fn test_execute_cleans_up_node_attributes_when_mitamae_fails() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = rootfs_with_tmp(&temp_dir);
+    let binary = create_fake_binary(&temp_dir);
+
+    let task = MitamaeTask::new(ScriptSource::Content("x".into()), binary)
+        .with_node(serde_json::Map::new());
+    let context = MockContext::with_failure(&rootfs, 1).with_tree_probe("/tmp");
+    assert!(task.execute(&context, None).is_err());
+
+    assert!(
+        context.tree_probed()[0]
+            .iter()
+            .any(|e| e.path.starts_with("node-")),
+        "node attributes should have been staged while mitamae ran"
+    );
+    let remaining = tmp_entries(&rootfs);
+    assert!(remaining.is_empty(), "staged files must be cleaned up, found: {:?}", remaining);
+}
+
+#[test]
+fn test_execute_dry_run_passes_node_json_option_without_staging() {
+    let temp_dir = tempdir().expect("failed to create temp dir");
+    let rootfs = utf8(temp_dir.path().to_path_buf());
+
+    let task = MitamaeTask::new(
+        ScriptSource::Content("package 'vim'".to_string()),
+        "/usr/local/bin/mitamae".into(),
+    )
+    .with_node(serde_json::Map::new());
+
+    let context = MockContext::new_dry_run(&rootfs);
+    task.execute(&context, None)
+        .expect("dry run should succeed");
+
+    let commands = context.executed_commands();
+    assert!(commands[0][2].starts_with("--node-json=/tmp/node-"), "got: {:?}", commands[0]);
+    assert!(!rootfs.join("tmp").exists(), "dry run must not stage anything");
+}
+
 fn git(repo: &std::path::Path, args: &[&str]) -> String {
     let output = std::process::Command::new("git")
         .arg("-C")
