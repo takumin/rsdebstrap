@@ -1003,6 +1003,15 @@
 						"null"
 					]
 				},
+				"node": {
+					"additionalProperties": true,
+					"default": {},
+					"description": "Node attributes for every mitamae task. A task's own `node` is merged over these:\nmappings are merged key by key at every depth, and any other value (a list, a\nstring, ...) from the task replaces the default.",
+					"type": [
+						"object",
+						"null"
+					]
+				},
 				"plugins": {
 					"description": "mitamae plugins staged for every mitamae task that does not declare its own\n`plugins`. Each is a host directory (`path`), a git repository at a commit (`url` +\n`commit`) or an https archive (`url` + `sha256`). Requires mitamae v1.10.1 or later.",
 					"items": {
@@ -1554,7 +1563,7 @@
 						},
 						"node": {
 							"additionalProperties": true,
-							"description": "Node attributes for the recipe, read there as `node[...]`. Passed to mitamae as a JSON\nfile (`--node-json`); profile variables are substituted in its string values.",
+							"description": "Node attributes for the recipe, read there as `node[...]`, merged over\n`defaults.mitamae.node`. Passed to mitamae as a JSON file (`--node-json`); profile\nvariables are substituted in its string values.",
 							"type": [
 								"object",
 								"null"

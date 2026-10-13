@@ -413,6 +413,12 @@ pub struct MitamaeDefaults {
     #[serde(default, deserialize_with = "crate::de::null_to_default")]
     #[schemars(with = "Option<Vec<crate::phase::provision::MitamaePlugin>>")]
     pub plugins: Vec<crate::phase::provision::MitamaePlugin>,
+    /// Node attributes for every mitamae task. A task's own `node` is merged over these:
+    /// mappings are merged key by key at every depth, and any other value (a list, a
+    /// string, ...) from the task replaces the default.
+    #[serde(default, deserialize_with = "crate::de::null_to_default")]
+    #[schemars(with = "Option<serde_json::Map<String, serde_json::Value>>")]
+    pub node: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Default settings that apply across the profile.
@@ -805,6 +811,7 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
     let arch = std::env::consts::ARCH;
     let default_binary = profile.defaults.mitamae.binary.get(arch);
     let default_plugins = profile.defaults.mitamae.plugins.clone();
+    let default_node = &profile.defaults.mitamae.node;
     let privilege_defaults = profile.defaults.privilege.as_ref();
     let isolation_defaults = profile.defaults.isolation.clone();
 
@@ -830,6 +837,9 @@ fn apply_defaults_to_tasks(profile: &mut Profile) -> Result<(), RsdebstrapError>
             }
             if !default_plugins.is_empty() {
                 mitamae_task.set_plugins_if_absent(&default_plugins);
+            }
+            if !default_node.is_empty() {
+                mitamae_task.merge_node_defaults(default_node);
             }
         }
         // A skipped task is not resolved either: its settings may only make sense for the

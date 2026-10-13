@@ -196,7 +196,7 @@ provision:
 }
 
 #[test]
-fn a_mitamae_tasks_node_values_are_substituted_but_not_its_keys() -> Result<()> {
+fn mitamae_node_values_are_substituted_but_not_their_keys() -> Result<()> {
     // editorconfig-checker-disable
     let profile = helpers::load_profile_from_yaml_with_vars(
         crate::yaml!(
@@ -204,6 +204,10 @@ fn a_mitamae_tasks_node_values_are_substituted_but_not_its_keys() -> Result<()> 
 vars:
   role: server
 dir: /tmp/rootfs
+defaults:
+  mitamae:
+    node:
+      default_role: ${{ vars.role }}
 bootstrap:
   type: mmdebstrap
   suite: trixie
@@ -225,6 +229,7 @@ provision:
         [ProvisionTask::Mitamae(mitamae)] => assert_eq!(
             serde_json::Value::Object(mitamae.node().unwrap().clone()),
             serde_json::json!({
+                "default_role": "desktop",
                 "role": "desktop",
                 "${{ vars.role }}": 1,
                 "nested": {"list": ["desktop", 13, true, null]},

@@ -74,8 +74,9 @@ struct RawMitamaeTask {
     /// mitamae plugins for this task, replacing `defaults.mitamae.plugins`; `[]` runs the
     /// task with none.
     plugins: Option<Vec<MitamaePlugin>>,
-    /// Node attributes for the recipe, read there as `node[...]`. Passed to mitamae as a JSON
-    /// file (`--node-json`); profile variables are substituted in its string values.
+    /// Node attributes for the recipe, read there as `node[...]`, merged over
+    /// `defaults.mitamae.node`. Passed to mitamae as a JSON file (`--node-json`); profile
+    /// variables are substituted in its string values.
     node: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     privilege: Privilege,
@@ -188,6 +189,18 @@ impl MitamaeTask {
     /// Returns the node attributes, if set.
     pub fn node(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
         self.node.as_ref()
+    }
+
+    /// Merges default node attributes under the task's own (used for applying defaults).
+    ///
+    /// Mappings are merged key by key at every depth; where both sides hold anything else,
+    /// the task's value wins.
+    pub fn merge_node_defaults(&mut self, defaults: &serde_json::Map<String, serde_json::Value>) {
+        let mut merged = defaults.clone();
+        if let Some(node) = self.node.take() {
+            merge_node(&mut merged, node);
+        }
+        self.node = Some(merged);
     }
 
     fn active_plugins(&self) -> &[MitamaePlugin] {
@@ -368,5 +381,21 @@ impl MitamaeTask {
 
         info!("mitamae recipe completed successfully");
         Ok(())
+    }
+}
+
+fn merge_node(
+    base: &mut serde_json::Map<String, serde_json::Value>,
+    over: serde_json::Map<String, serde_json::Value>,
+) {
+    for (key, value) in over {
+        match (base.get_mut(&key), value) {
+            (Some(serde_json::Value::Object(base)), serde_json::Value::Object(over)) => {
+                merge_node(base, over)
+            }
+            (_, value) => {
+                base.insert(key, value);
+            }
+        }
     }
 }

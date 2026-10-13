@@ -353,6 +353,26 @@ fn schema_matches_structural_deserializer() {
             true,
         ),
         (
+            "null mitamae node defaults",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: {node: null}}\n",
+            )
+            .to_string(),
+            true,
+        ),
+        (
+            "list mitamae node defaults",
+            concat!(
+                "dir: /o\n",
+                "bootstrap: {type: mmdebstrap, suite: t, target: r}\n",
+                "defaults: {mitamae: {node: [a]}}\n",
+            )
+            .to_string(),
+            false,
+        ),
+        (
             "null mitamae defaults",
             concat!(
                 "dir: /o\n",
