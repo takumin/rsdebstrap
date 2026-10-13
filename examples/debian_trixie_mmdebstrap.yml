@@ -206,6 +206,8 @@ provision:
 #     end
 #   binary: /path/to/mitamae  # Override defaults.mitamae for this task
 #   plugins: []               # Replace defaults.mitamae.plugins for this task
+#   node:                     # Node attributes, read in the recipe as node[:suite]
+#     suite: ${{ vars.suite }}
 #   # External recipe alternative:
 #   script: ./recipes/setup.rb
 

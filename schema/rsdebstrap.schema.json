@@ -1552,6 +1552,14 @@
 							"$ref": "#/$defs/TaskIsolation",
 							"default": null
 						},
+						"node": {
+							"additionalProperties": true,
+							"description": "Node attributes for the recipe, read there as `node[...]`. Passed to mitamae as a JSON\nfile (`--node-json`); profile variables are substituted in its string values.",
+							"type": [
+								"object",
+								"null"
+							]
+						},
 						"plugins": {
 							"description": "mitamae plugins for this task, replacing `defaults.mitamae.plugins`; `[]` runs the\ntask with none.",
 							"items": {

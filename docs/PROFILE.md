@@ -177,7 +177,9 @@ bootstrap:
   in the rootfs, so substituting into it would make an environment variable's value part
   of the program — and `${{ … }}` there is left for the script's own syntax. A script that
   needs a value should take it from a `script:` file selected by a variable, or from one of
-  several tasks chosen by [`when:`](#conditions). A task's `when:` is not substituted either.
+  several tasks chosen by [`when:`](#conditions); a mitamae recipe can read one from the
+  task's [`node`](#mitamae-task-rules), whose values are substituted. A task's `when:` is not
+  substituted either.
 - A string is a reference only in the form `${{ vars.<name> }}` (spaces inside the braces
   are optional). Any other `${{ … }}`, an unterminated `${{`, or a reference to an
   undeclared variable is a parse error that names the field and line.
@@ -579,6 +581,12 @@ on the host. Two consequences follow, and both are enforced rather than document
   host file a profile names. An archive member that is absolute or climbs with `..` fails
   the whole archive, wherever it is. Each plugin's `mrblib` is limited to 64 MiB and 10,000
   entries, a download to 64 MiB, and what an archive unpacks to to 256 MiB
+- `node` is a mapping of node attributes the recipe reads as `node[...]` (`node: {role: web}`
+  gives `node[:role]`). It is written into the rootfs's `/tmp` as JSON for the task's run,
+  passed as `mitamae local --node-json=<file>`, and removed afterwards like the recipe.
+  Values keep their YAML types (`13` is a number, `"13"` a string); profile variables are
+  substituted in string values but not in keys. Absent or `null` passes no `--node-json`.
+  There is no `defaults.mitamae.node`
 - Every plugin is read or fetched when the profile is validated, before the bootstrap runs, so
   a failed download or a missing commit fails the run up front — `--dry-run` included. A
   plugin listed in `defaults.mitamae.plugins` is fetched once per run however many tasks use

@@ -6,8 +6,9 @@
 //! - Binary copying to rootfs /tmp with 0o700 permissions
 //! - Plugin staging: each plugin's `mrblib` tree, passed to mitamae as `--plugins`
 //!   (see [`plugin`])
+//! - Node attributes: the task's `node` mapping, staged as JSON and passed as `--node-json`
 //! - Security validation (path traversal, file existence)
-//! - RAII cleanup of the binary, the recipe and the plugin tree
+//! - RAII cleanup of the binary, the recipe, the node attributes and the plugin tree
 
 pub mod plugin;
 
@@ -47,6 +48,8 @@ pub struct MitamaeTask {
     binary: Option<Utf8PathBuf>,
     /// Plugins as declared on the task (None when relying on defaults)
     plugins: Option<Vec<MitamaePlugin>>,
+    /// Node attributes passed to mitamae as `--node-json` (None passes none)
+    node: Option<serde_json::Map<String, serde_json::Value>>,
     /// Privilege escalation setting as declared in the profile
     privilege: Privilege,
     /// Isolation setting as declared in the profile
@@ -71,6 +74,9 @@ struct RawMitamaeTask {
     /// mitamae plugins for this task, replacing `defaults.mitamae.plugins`; `[]` runs the
     /// task with none.
     plugins: Option<Vec<MitamaePlugin>>,
+    /// Node attributes for the recipe, read there as `node[...]`. Passed to mitamae as a JSON
+    /// file (`--node-json`); profile variables are substituted in its string values.
+    node: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     privilege: Privilege,
     #[serde(default)]
@@ -91,6 +97,7 @@ impl<'de> Deserialize<'de> for MitamaeTask {
             source,
             binary: raw.binary,
             plugins: raw.plugins,
+            node: raw.node,
             privilege: raw.privilege,
             isolation: raw.isolation,
             when: raw.when,
@@ -115,6 +122,7 @@ impl MitamaeTask {
             source,
             binary: Some(binary),
             plugins: None,
+            node: None,
             privilege: Privilege::default(),
             isolation: TaskIsolation::default(),
             when: None,
@@ -127,6 +135,7 @@ impl MitamaeTask {
             source,
             binary: None,
             plugins: None,
+            node: None,
             privilege: Privilege::default(),
             isolation: TaskIsolation::default(),
             when: None,
@@ -168,6 +177,17 @@ impl MitamaeTask {
         if self.plugins.is_none() {
             self.plugins = Some(plugins.to_vec());
         }
+    }
+
+    /// Sets the node attributes.
+    pub fn with_node(mut self, node: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.node = Some(node);
+        self
+    }
+
+    /// Returns the node attributes, if set.
+    pub fn node(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        self.node.as_ref()
     }
 
     fn active_plugins(&self) -> &[MitamaePlugin] {
@@ -252,9 +272,10 @@ impl MitamaeTask {
     /// This method:
     /// 1. Validates /tmp in rootfs (unless dry_run)
     /// 2. Sets up RAII guards for cleanup of temp files
-    /// 3. Stages the mitamae binary (0o700), recipe (0o600) and plugins (directories
-    ///    0o700, files 0o600) through `RootfsOps`
-    /// 4. Executes `mitamae local [--plugins=<dir>] <recipe>` via the isolation context
+    /// 3. Stages the mitamae binary (0o700), recipe (0o600), node attributes (0o600) and
+    ///    plugins (directories 0o700, files 0o600) through `RootfsOps`
+    /// 4. Executes `mitamae local [--plugins=<dir>] [--node-json=<file>] <recipe>` via the
+    ///    isolation context
     /// 5. Returns an error if the process fails or exits without status
     pub fn execute(
         &self,
@@ -291,12 +312,18 @@ impl MitamaeTask {
         let staged_binary = crate::rootfs::RelPath::parse(&binary_path_in_isolation)?;
         let staged_recipe = crate::rootfs::RelPath::parse(&recipe_path_in_isolation)?;
 
+        let node_path_in_isolation = format!("/tmp/node-{}.json", uuid);
+        let staged_node = crate::rootfs::RelPath::parse(&node_path_in_isolation)?;
         let plugins_path_in_isolation = format!("/tmp/mitamae-plugins-{}", uuid);
         let staged_plugins = crate::rootfs::RelPath::parse(&plugins_path_in_isolation)?;
 
         let ops = context.rootfs_ops();
         let _binary_guard = StagedFileGuard::new(ops, staged_binary.clone(), dry_run);
         let _recipe_guard = StagedFileGuard::new(ops, staged_recipe.clone(), dry_run);
+        let _node_guard = self
+            .node
+            .is_some()
+            .then(|| StagedFileGuard::new(ops, staged_node.clone(), dry_run));
         let plugins = self.active_plugins();
         let _plugins_guard = (!plugins.is_empty())
             .then(|| StagedDirGuard::new(ops, staged_plugins.clone(), dry_run));
@@ -316,6 +343,13 @@ impl MitamaeTask {
                 crate::rootfs::FileMode::new(0o600),
                 "recipe",
             )?;
+            if let Some(node) = &self.node {
+                let json = serde_json::to_vec(node).context("failed to encode node attributes")?;
+                ops.write_file(&staged_node, &json, crate::rootfs::FileMode::new(0o600))
+                    .with_context(|| {
+                        format!("failed to stage node attributes at {}", staged_node)
+                    })?;
+            }
             if !plugins.is_empty() {
                 plugin::stage_plugins(ops, plugins, &staged_plugins)?;
             }
@@ -323,6 +357,9 @@ impl MitamaeTask {
         let mut command: Vec<String> = vec![binary_path_in_isolation, "local".to_string()];
         if !plugins.is_empty() {
             command.push(format!("--plugins={}", plugins_path_in_isolation));
+        }
+        if self.node.is_some() {
+            command.push(format!("--node-json={}", node_path_in_isolation));
         }
         command.push(recipe_path_in_isolation);
 

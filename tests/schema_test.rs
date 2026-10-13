@@ -189,6 +189,14 @@ fn schema_matches_structural_deserializer() {
             true,
         ),
         ("mitamae content-only", with_provision("{type: mitamae, content: 'x'}"), true),
+        (
+            "mitamae node mapping",
+            with_provision("{type: mitamae, content: x, node: {a: 1, b: [x, {c: true}]}}"),
+            true,
+        ),
+        ("mitamae null node", with_provision("{type: mitamae, content: x, node: null}"), true),
+        ("mitamae list node", with_provision("{type: mitamae, content: x, node: [a]}"), false),
+        ("mitamae string node", with_provision("{type: mitamae, content: x, node: a}"), false),
         ("debootstrap backend", debootstrap, true),
         // script/content mutual exclusion (#2): both set or neither -> rejected by both.
         (
