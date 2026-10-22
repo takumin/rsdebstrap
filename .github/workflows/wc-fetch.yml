@@ -37,7 +37,7 @@ jobs:
     - name: Setup aqua
       uses: aquaproj/aqua-installer@611554c6f0137ba41c8dd15aca8bee82504ea461 # v4.1.1
       with:
-        aqua_version: v2.65.1
+        aqua_version: v2.65.2
         # The cache key hashes the workflows that pin aqua_version, so only an
         # exact hit is known to hold this aqua; a prefix hit reinstalls it.
         skip_install_aqua: ${{ steps.aqua-cache.outputs.cache-hit == 'true' }}
