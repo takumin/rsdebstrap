@@ -51,7 +51,7 @@ patterns_allowed = [
 
 [actions.oidc_subject_claim]
 use_default = true
-use_immutable_subject = false
+use_immutable_subject = true
 
 [ruleset.main]
 target = "branch"
