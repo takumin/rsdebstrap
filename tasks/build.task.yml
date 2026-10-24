@@ -36,6 +36,24 @@ tasks:
     - task: build
     - task: sha256sum
 
+  debug:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task: sha256sum
+      vars:
+        PROFILE: debug
+        TARGET: '{{.TARGET}}'
+
+  release:
+    desc: '{{.TASK}}'
+    silent: true
+    cmds:
+    - task: sha256sum
+      vars:
+        PROFILE: release
+        TARGET: '{{.TARGET}}'
+
   matrix:
     desc: '{{.TASK}}'
     silent: true
