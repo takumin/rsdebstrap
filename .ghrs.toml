@@ -32,6 +32,22 @@ topics = [
   "yaml",
 ]
 
+[actions]
+enabled = true
+allowed_actions = "selected"
+sha_pinning_required = true
+default_workflow_permissions = "read"
+can_approve_pull_request_reviews = false
+
+[actions.selected_actions]
+github_owned_allowed = true
+verified_allowed = true
+patterns_allowed = [
+  "aquaproj/aqua-installer@*",
+  "autofix-ci/action@*",
+  "sigstore/cosign-installer@*",
+]
+
 [ruleset.main]
 target = "branch"
 enforcement = "active"
@@ -45,7 +61,7 @@ exclude = []
 restrict_deletions = true
 required_signatures = true
 block_force_pushes = true
-copilot_code_review = true
+copilot_code_review = false
 
 [ruleset.main.rules.pull_request]
 allowed_merge_methods = ["merge", "squash"]
@@ -73,10 +89,12 @@ exclude = []
 
 [ruleset.tags.rules]
 restrict_creations = true
-restrict_updates = true
 restrict_deletions = true
 required_signatures = true
 block_force_pushes = true
+
+[ruleset.tags.rules.restrict_updates]
+update_allows_fetch_and_merge = false
 
 [ruleset.tags.rules.required_status_checks]
 require_up_to_date = false
