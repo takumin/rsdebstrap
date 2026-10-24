@@ -4,6 +4,12 @@
 
 version: '3'
 
+env:
+  # cargo runs the RUSTC_WRAPPER from each crate's source dir, where aqua can't
+  # find .aqua/aqua.yaml by upward search; point it at the repo config so the
+  # `sccache` command resolves regardless of the working directory.
+  AQUA_GLOBAL_CONFIG: '{{.ROOT_DIR}}/.aqua/aqua.yaml'
+
 includes:
   tool: ./tasks/tool.task.yml
   setup: ./tasks/setup.task.yml
