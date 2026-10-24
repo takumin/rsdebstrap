@@ -1,0 +1,84 @@
+#:schema https://raw.githubusercontent.com/takumin/ghrs/v0.2.0/schema/ghrs.schema.json
+# Take key meanings from `ghrs explain`, not from key names or the GitHub API.
+
+[repository]
+description = "A declarative CLI tool to build Debian-based rootfs images using mmdebstrap and YAML manifests"
+homepage = ""
+visibility = "public"
+has_issues = true
+has_wiki = false
+has_projects = false
+has_discussions = false
+allow_merge_commit = true
+allow_squash_merge = true
+allow_rebase_merge = false
+allow_auto_merge = true
+delete_branch_on_merge = true
+default_branch = "main"
+topics = [
+  "chroot",
+  "cli",
+  "debian",
+  "debootstrap",
+  "declarative",
+  "iac",
+  "infrastructure-as-code",
+  "linux",
+  "mmdebstrap",
+  "rootfs",
+  "rust",
+  "ubuntu",
+  "unshare",
+  "yaml",
+]
+
+[ruleset.main]
+target = "branch"
+enforcement = "active"
+bypass_actors = [{ type = "repository_role", name = "admin", mode = "always" }]
+
+[ruleset.main.conditions]
+include = ["~DEFAULT_BRANCH"]
+exclude = []
+
+[ruleset.main.rules]
+restrict_deletions = true
+required_signatures = true
+block_force_pushes = true
+copilot_code_review = true
+
+[ruleset.main.rules.pull_request]
+allowed_merge_methods = ["merge", "squash"]
+dismiss_stale_reviews_on_push = true
+require_code_owner_review = true
+require_extra_approval_for_unattributed_changes = true
+require_last_push_approval = true
+required_approving_review_count = 1
+required_review_thread_resolution = true
+required_reviewers = []
+
+[ruleset.main.rules.required_status_checks]
+require_up_to_date = true
+do_not_enforce_on_create = false
+checks = [{ context = "CI", integration = "github-actions" }]
+
+[ruleset.tags]
+target = "tag"
+enforcement = "active"
+bypass_actors = [{ type = "repository_role", name = "admin", mode = "always" }]
+
+[ruleset.tags.conditions]
+include = ["~ALL"]
+exclude = []
+
+[ruleset.tags.rules]
+restrict_creations = true
+restrict_updates = true
+restrict_deletions = true
+required_signatures = true
+block_force_pushes = true
+
+[ruleset.tags.rules.required_status_checks]
+require_up_to_date = false
+do_not_enforce_on_create = false
+checks = [{ context = "CI", integration = "github-actions" }]
