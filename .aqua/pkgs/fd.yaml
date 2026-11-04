@@ -1,5 +1,5 @@
 ---
 packages:
-- name: sharkdp/fd@v10.5.0
+- name: sharkdp/fd@v10.5.1
   tags:
   - reviewdog
