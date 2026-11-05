@@ -1,5 +1,5 @@
 ---
 packages:
-- name: k1LoW/octocov@v0.83.4
+- name: k1LoW/octocov@v0.83.5
   tags:
   - octocov
