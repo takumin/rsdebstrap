@@ -25,7 +25,7 @@ base64 = "0.23.0"
 camino = { version = "1.1.9", features = ["serde1"] }
 # Evaluates a provision task's `when:` condition. The default features (regex, chrono,
 # base64 encoders) back CEL functions a condition over string variables does not need.
-cel = { version = "0.15.0", default-features = false }
+cel = { version = "0.16.0", default-features = false }
 clap = { version = "4.5.37", features = ["derive"] }
 clap_complete = "4.5.65"
 # Decompresses a mitamae plugin given as a `.tar.gz` archive by `url`.
