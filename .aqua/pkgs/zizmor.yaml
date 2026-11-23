@@ -1,5 +1,5 @@
 ---
 packages:
-- name: zizmorcore/zizmor@v1.33.0
+- name: zizmorcore/zizmor@v1.33.1
   tags:
   - zizmor
