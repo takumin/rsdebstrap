@@ -1,5 +1,5 @@
 ---
 packages:
-- name: EmbarkStudios/cargo-deny@0.22.1
+- name: EmbarkStudios/cargo-deny@0.22.2
   tags:
   - cargo-deny
